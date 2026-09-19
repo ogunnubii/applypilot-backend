@@ -1,0 +1,24 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/applypilot.sqlite
+      UPLOAD_DIR: /app/data/resumes
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - applypilot_data:/app/data
+  worker:
+    build: .
+    command: node worker.js
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/applypilot.sqlite
+      UPLOAD_DIR: /app/data/resumes
+    volumes:
+      - applypilot_data:/app/data
+volumes:
+  applypilot_data:

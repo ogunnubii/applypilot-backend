@@ -13,3 +13,13 @@ export function canonicalJobURL(value){
  if(['boards.greenhouse.io','job-boards.greenhouse.io'].includes(u.hostname)){u.hostname='boards.greenhouse.io';u.pathname=u.pathname.replace(/\/$/,'');}
  return u.toString().replace(/\/$/,'');
 }
+
+export function approvedRadioIndex(options,answers){
+ const norm=s=>String(s||'').trim().replace(/\s+/g,' ').replace(/\s*\*$/,'').toLowerCase();
+ const matches=options.map((o,index)=>({o,index})).filter(({o})=>{
+  if(!o.question||!o.label)return false;
+  const keys=Object.keys(answers).filter(k=>norm(k)===norm(o.question));
+  return keys.length===1&&norm(answers[keys[0]])===norm(o.label);
+ });
+ return matches.length===1?matches[0].index:-1;
+}

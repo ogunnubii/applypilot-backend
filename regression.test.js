@@ -56,3 +56,12 @@ test('Canonical URLs collapse Lever apply aliases; upload selection rejects ambi
  assert.equal(pickResumeField([{label:'Cover letter'}]),-1);
  assert.equal(pickResumeField([{name:'resume upload'},{name:'portfolio'}]),0);
 });
+
+test('Radio choices require an exact approved question and unambiguous option',async()=>{
+ const {approvedRadioIndex}=await import('./form-policy.js');
+ const options=[{question:'Work authorized? *',label:'Yes'},{question:'Work authorized? *',label:'No'}];
+ assert.equal(approvedRadioIndex(options,{'Work authorized?':'Yes'}),0);
+ assert.equal(approvedRadioIndex(options,{'Different question':'Yes'}),-1);
+ assert.equal(approvedRadioIndex([...options,options[0]],{'Work authorized?':'Yes'}),-1);
+ assert.equal(approvedRadioIndex(options,{}),-1);
+});

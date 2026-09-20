@@ -47,6 +47,8 @@ function renderJobs(jobs){
    const msg=element('p');msg.setAttribute('role','status');details.append(msg);
    const answersForm=element('form');answersForm.append(element('h4','Answer for this application'));
    const q=inputLabel(answersForm,'Exact question label'),a=inputLabel(answersForm,'Your answer','textarea');
+   let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}
+   if(questions.length){const choices=element('div');choices.append(element('p','Detected required fields — select a question to answer:'));for(const question of questions){const pick=element('button',question);pick.type='button';pick.onclick=()=>{q.value=question;a.focus()};choices.append(pick)}answersForm.prepend(choices);}
    const save=element('button','Save answer');answersForm.append(save);
    answersForm.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{await api('/jobs/'+job.id+'/answers','PUT',{question:q.value,answer:a.value});msg.textContent='Answer saved for this application. Retry when ready.';}catch(e){msg.textContent=e.message}finally{save.disabled=false}};
    details.append(answersForm);const saved=element('div');details.append(saved);details.ontoggle=async()=>{if(!details.open)return;try{const d=await api('/jobs/'+job.id+'/answers');saved.replaceChildren(...Object.entries(d.answers).map(([q,a])=>element('p',q+': '+a)));}catch(e){msg.textContent=e.message}};

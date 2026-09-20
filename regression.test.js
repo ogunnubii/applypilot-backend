@@ -32,6 +32,8 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   const id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   db.prepare("INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,challenge,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'needs_review','Unconfirmed submission',?,?)").run(id,'u','a','SRE','Example','https://jobs.lever.co/example/def','https://jobs.lever.co/example/def',now(),now());
   assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers,body:'{}'})).status,409);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/handoff/open',{method:'POST',headers,body:'{}'})).status,409);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/handoff/view',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
   const save=await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers,body:JSON.stringify({question:'Why this role?',answer:'I enjoy infrastructure operations.'})});assert.equal(save.status,200);
   assert.equal((await (await fetch(base+'/api/jobs/'+id+'/answers',{headers})).json()).answers['Why this role?'],'I enjoy infrastructure operations.');
   assert.equal((await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
@@ -70,4 +72,17 @@ test('Radio choices require an exact approved question and unambiguous option',a
  assert.equal(approvedRadioIndex(options,{'Different question':'Yes'}),-1);
  assert.equal(approvedRadioIndex([...options,options[0]],{'Work authorized?':'Yes'}),-1);
  assert.equal(approvedRadioIndex(options,{}),-1);
+});
+
+test('Live handoff isolates owners, preserves context on resume and expires idle sessions',async()=>{
+ const {Handoffs}=await import('./handoff.js');let time=0,closed=0,resumed=0,submitted=0,body='Application form';
+ const page={isClosed:()=>false,locator:()=>({innerText:async()=>body}),frames:()=>[page],screenshot:async()=>Buffer.from('mock-image'),url:()=> 'https://jobs.lever.co/example/abc',keyboard:{insertText:async()=>{},press:async()=>{}},mouse:{click:async()=>{},wheel:async()=>{}},evaluate:async()=>false};
+ const context={pages:()=>[page],close:async()=>{closed++}};
+ const h=new Handoffs({clock:()=>time,onResume:async(j,s)=>{assert.equal(s.context,context);resumed++},onClose:()=>{},onSubmitted:()=>{submitted++},onPossibleSubmit:()=>{}});
+ await h.hold({id:'job',user_id:'owner'},context,page);
+ await assert.rejects(h.command('other','job','view'),/No live browser/);
+ assert((await h.command('owner','job','view')).image);
+ await h.command('owner','job','resume');assert.equal(resumed,1);assert.equal(closed,0);assert.equal(h.sessions.size,0);
+ await h.hold({id:'job',user_id:'owner'},context,page);body='Thank you for applying';assert.equal((await h.command('owner','job','view')).submitted,true);assert.equal(submitted,1);assert.equal(closed,1);
+ body='Application form';await h.hold({id:'job',user_id:'owner'},context,page);time=16*60*1000;await h.expire();assert.equal(h.sessions.size,0);assert.equal(closed,2);
 });

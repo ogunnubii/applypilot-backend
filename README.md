@@ -35,3 +35,8 @@ No live applications or paid AI calls were made. Mobile microphone, live AI resp
 
 ## Expanded discovery and progress
 Seven default employer boards, up to 50 custom boards, five Arbeitnow pages, and up to 250 new matches per run. Cached feeds are refreshed hourly. Existing saved matches can enter the queue when an automatic search is enabled; paused/uncertain applications never auto-requeue. Last scan counts and recent application events are shown in /assistant and the Netlify progress page. Account sign-in and saved applicant consent/email/resume are required before queuing.
+
+## Live browser handoff
+Blocked contexts stay in worker memory (maximum three). The authenticated app proxies controls to a loopback-only service on 127.0.0.1:8081; that service independently validates the signed account token and session owner. Browser images and typed input use no-store responses and are not written to the database. File uploads stay in memory and are limited to PDF/DOCX, 6 MB. Idle sessions expire after 15 minutes, with a 45-minute absolute limit. Restart/redeployment loses browser sessions but retains saved answers. Pending jobs wait when all three browser slots are occupied.
+
+A user opens Take over, operates the same browser, and clicks Resume worker. Human and worker control are exclusive. A possible manual submission blocks automatic resubmission until receipt is checked. Newly appearing employer confirmation text can mark submitted; unrecognized receipts require the existing manual receipt flow. This is an image-based control panel, not a full remote desktop or guaranteed support for all login/CAPTCHA providers. Native passkeys and non-web OS dialogs are not supported.

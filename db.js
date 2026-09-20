@@ -40,3 +40,5 @@ db.exec('BEGIN IMMEDIATE');try{
 }catch(e){db.exec('ROLLBACK');throw e}
 
 if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='required_fields_json'))db.exec("ALTER TABLE jobs ADD COLUMN required_fields_json TEXT NOT NULL DEFAULT '[]'");
+
+if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='handoff_available'))db.exec('ALTER TABLE jobs ADD COLUMN handoff_available INTEGER NOT NULL DEFAULT 0');

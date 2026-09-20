@@ -19,3 +19,5 @@ export function normalizeURL(s){let u=new URL(s);if(u.protocol!=='https:')throw 
 db.exec(`CREATE TABLE IF NOT EXISTS worker_status(id INTEGER PRIMARY KEY,heartbeat TEXT NOT NULL);CREATE TABLE IF NOT EXISTS chat_usage(user_id TEXT NOT NULL,day TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(user_id,day));`);
 
 if(!db.prepare('PRAGMA table_info(searches)').all().some(c=>c.name==='last_result_json'))db.exec("ALTER TABLE searches ADD COLUMN last_result_json TEXT");
+
+if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='answers_json'))db.exec("ALTER TABLE jobs ADD COLUMN answers_json TEXT NOT NULL DEFAULT '{}'");

@@ -29,8 +29,17 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   const id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   db.prepare("INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,challenge,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'needs_review','Unconfirmed submission',?,?)").run(id,'u','a','SRE','Example','https://jobs.lever.co/example/def','https://jobs.lever.co/example/def',now(),now());
   assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers,body:'{}'})).status,409);
+  const save=await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers,body:JSON.stringify({question:'Why this role?',answer:'I enjoy infrastructure operations.'})});assert.equal(save.status,200);
+  assert.equal((await (await fetch(base+'/api/jobs/'+id+'/answers',{headers})).json()).answers['Why this role?'],'I enjoy infrastructure operations.');
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
+  db.prepare("UPDATE jobs SET status='running' WHERE id=?").run(id);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/confirm',{method:'POST',headers,body:JSON.stringify({receipt:'Employer confirmation 1234'})})).status,409);
+  db.prepare("UPDATE jobs SET status='needs_review' WHERE id=?").run(id);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/confirm',{method:'POST',headers,body:JSON.stringify({receipt:'Employer confirmation 1234'})})).status,200);
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(id).status,'submitted');
+
   assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
   assert.equal((await fetch(base+'/api/chat',{method:'POST',headers,body:JSON.stringify({applicant_id:'a',message:'Help'})})).status,400);
- }finally{child.kill();await new Promise(r=>child.once('exit',r));}
+ }finally{if(child.exitCode===null){child.kill();await new Promise(r=>child.once('exit',r));}}
 });
 test.after(()=>{db.close();rmSync(dir,{recursive:true,force:true})});

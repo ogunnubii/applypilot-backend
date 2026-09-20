@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS searches(id TEXT PRIMARY KEY,user_id TEXT NOT NULL RE
 CREATE INDEX IF NOT EXISTS searches_due ON searches(enabled,last_run);
 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT NOT NULL REFERENCES jobs(id),at TEXT NOT NULL,type TEXT NOT NULL,message TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(status,created_at);CREATE INDEX IF NOT EXISTS events_job ON events(job_id,id);`);
+if(!db.prepare('PRAGMA table_info(searches)').all().some(c=>c.name==='auto_generated'))db.exec('ALTER TABLE searches ADD COLUMN auto_generated INTEGER NOT NULL DEFAULT 0');
 export function event(id,type,message){db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(id,new Date().toISOString(),type,String(message).slice(0,800))}
 export const now=()=>new Date().toISOString();
 export function normalizeURL(s){let u=new URL(s);if(u.protocol!=='https:')throw Error('Use an HTTPS job link');u.hash='';for(let k of [...u.searchParams.keys()])if(k.startsWith('utm_')||['ref','source','gh_src'].includes(k))u.searchParams.delete(k);u.hostname=u.hostname.toLowerCase();return u.toString().replace(/\/$/,'')}

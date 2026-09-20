@@ -26,8 +26,9 @@ if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddres
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
 if(path==='/api/chat'&&req.method==='POST')return send(res,200,await chat(uid,JSON.parse(await body(req))));
 if(path==='/api/status'&&req.method==='GET'){const heartbeat=db.prepare('SELECT heartbeat FROM worker_status WHERE id=1').get()?.heartbeat;return send(res,200,{workerOnline:!!heartbeat&&Date.now()-Date.parse(heartbeat)<45000,heartbeat:heartbeat||null,queue:db.prepare('SELECT status,COUNT(*) AS count FROM jobs WHERE user_id=? GROUP BY status').all(uid)});}
+if(path==='/api/activity'&&req.method==='GET')return send(res,200,{events:db.prepare('SELECT e.at,e.type,e.message,j.title,j.company,j.applicant_id FROM events e JOIN jobs j ON j.id=e.job_id WHERE j.user_id=? ORDER BY e.id DESC LIMIT 100').all(uid)});
 if(path==='/api/me')return send(res,200,{email:db.prepare('SELECT email FROM users WHERE id=?').get(uid)?.email});
-if(path==='/api/searches'&&req.method==='GET')return send(res,200,{searches:db.prepare('SELECT * FROM searches WHERE user_id=? ORDER BY created_at DESC').all(uid).map(s=>({...s,boards:JSON.parse(s.boards_json),boards_json:undefined}))});
+if(path==='/api/searches'&&req.method==='GET')return send(res,200,{searches:db.prepare('SELECT * FROM searches WHERE user_id=? ORDER BY created_at DESC').all(uid).map(s=>({...s,boards:JSON.parse(s.boards_json),boards_json:undefined,last_result:s.last_result_json?JSON.parse(s.last_result_json):null,last_result_json:undefined}))});
 if(path==='/api/searches'&&req.method==='POST'){
   const x=JSON.parse(await body(req)),p=db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(x.applicant_id,uid);
   if(!p)return send(res,400,{error:'Select your applicant profile'});

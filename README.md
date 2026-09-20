@@ -32,3 +32,6 @@ CAPTCHA, sign-in and unfamiliar forms still pause. The browser context closes on
 `npm test`: isolated temporary SQLite database, mocked job feeds and local HTTP server. Tests cover role/location matching, direct-match queueing, deduplication, authentication/ownership, companion HTML delivery, missing heartbeat, AI consent, and uncertain-submission guards. All JavaScript files syntax-checked.
 
 No live applications or paid AI calls were made. Mobile microphone, live AI responses, dropdown filling and real employer forms require deployment testing. Existing dependency/container versions retained; a fresh Docker build was not tested. Existing Netlify UI has not been changed or deployed.
+
+## Expanded discovery and progress
+Seven default employer boards, up to 50 custom boards, five Arbeitnow pages, and up to 250 new matches per run. Cached feeds are refreshed hourly. Existing saved matches can enter the queue when an automatic search is enabled; paused/uncertain applications never auto-requeue. Last scan counts and recent application events are shown in /assistant and the Netlify progress page. Account sign-in and saved applicant consent/email/resume are required before queuing.

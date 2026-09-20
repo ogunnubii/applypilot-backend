@@ -50,6 +50,17 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(id).status,'submitted');
 
   assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
+  db.prepare("UPDATE jobs SET status='needs_review',challenge='Missing answers' WHERE id=?").run(id);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/local/claim',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/local/claim',{method:'POST',headers,body:'{}'})).status,200);
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(id).status,'local_browser');
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers,body:'{}'})).status,409);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/handoff/open',{method:'POST',headers,body:'{}'})).status,409);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/local/progress',{method:'POST',headers,body:JSON.stringify({fields:['Work authorization'],message:'Needs work authorization'})})).status,200);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/local/submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Thank you for applying',afterSubmit:false})})).status,400);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/local/submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Please complete the form',afterSubmit:true})})).status,400);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/local/submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Thank you for applying',afterSubmit:true})})).status,200);
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(id).status,'submitted');
   assert.equal((await fetch(base+'/api/chat',{method:'POST',headers,body:JSON.stringify({applicant_id:'a',message:'Help'})})).status,400);
  }finally{if(child.exitCode===null){child.kill();await new Promise(r=>child.once('exit',r));}}
 });

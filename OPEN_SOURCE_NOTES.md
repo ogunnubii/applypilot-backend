@@ -8,3 +8,6 @@ Reviewed 2026-09-20:
 No source code was copied, no new dependencies installed, and no hosted agent or proxy service enabled. The CAPTCHA visibility correction and duplicate migration are ApplyPilot-specific fixes. Visible challenges continue to pause. Existing applicant consent and uncertain-submission guards remain in place.
 
 Tests cover URL aliases, distinct jobs, ambiguous and cover-letter upload fields, duplicate queue guards, authenticated answers and manual submission confirmation. Tests use synthetic fixtures; they do not claim verified employer submissions.
+
+## Local browser handoff
+Simplify (https://simplify.jobs/copilot) and Teal (https://www.tealhq.com/tools/autofill-job-applications) document extension-based autofill and application tracking. ApplyPilot Local independently implements a limited Lever/Greenhouse version using Chrome Manifest V3, native DOM field setters, a dashboard-origin API bridge, local ownership of jobs, and post-submit receipt detection. No third-party source copied; no claim of universal CAPTCHA bypass.

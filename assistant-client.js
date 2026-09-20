@@ -6,23 +6,24 @@ async function refresh(force=false){
  if(busy||activeHandoff)return;
  const [{jobs},health]=await Promise.all([api('/jobs'),api('/status')]);
  $('#login').hidden=true;$('#workspace').hidden=false;$('#logout').hidden=false;
- const current=jobs.filter(j=>['queued','running','paused','needs_review'].includes(j.status));
+ const current=jobs.filter(j=>['queued','running','paused','needs_review','local_browser'].includes(j.status));
  $('#status').textContent=current.length?`${current.length} unfinished applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  const signature=JSON.stringify(current);
  if(!force&&(signature===lastSignature||$('#jobs').contains(document.activeElement)||$('#jobs').querySelector('[data-dirty="true"],details[open]')))return;
  lastSignature=signature;$('#jobs').replaceChildren();
- current.sort((a,b)=>(['needs_review','paused','running','queued'].indexOf(a.status)-['needs_review','paused','running','queued'].indexOf(b.status)));
+ current.sort((a,b)=>(['local_browser','needs_review','paused','running','queued'].indexOf(a.status)-['local_browser','needs_review','paused','running','queued'].indexOf(b.status)));
  for(const job of current){
   const card=el('article');card.append(el('h2',job.title),el('small',job.company));
   if(['running','queued'].includes(job.status)){card.append(el('p',job.status==='running'?'Applying with your saved answers…':'Waiting for the worker. No action needed.'));$('#jobs').append(card);continue}
-  card.append(el('p',job.blocker_message||job.challenge||'This application needs your input.'));
+  card.append(el('p',job.status==='local_browser'?(job.last_message||'Continue in your employer browser tab.'):job.blocker_message||job.challenge||'This application needs your input.'));
+  const localHelp=el('p');const setup=el('a','Use my normal browser');setup.href='https://applypilot-jobs.netlify.app/local-browser.html';setup.target='_blank';setup.rel='noopener';localHelp.append(setup);card.append(localHelp);
   const msg=el('p');msg.className='message';msg.setAttribute('role','status');card.append(msg);
   const human=['CAPTCHA','Sign-in','Unconfirmed submission','Submission in progress'].includes(job.challenge);
   let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}
   const upload=job.challenge==='Upload needs review'||/upload|resume.*not found/i.test(job.blocker_message||'');
   const takeover=el('button',job.handoff_available?'Take over filled application':'Prepare live application');
-  takeover.onclick=async()=>{takeover.disabled=true;try{const r=await api('/jobs/'+job.id+'/handoff/open','POST',{});if(r.available)await openHandoff(job);else{$('#notice').textContent='The worker is preparing your live form. It will show Take over when ready. Up to three sessions can stay open.';await refresh(true)}}catch(e){msg.textContent=e.message}finally{takeover.disabled=false}};card.append(takeover);
-  if(!human&&!upload&&!job.handoff_available){
+  takeover.onclick=async()=>{takeover.disabled=true;try{const r=await api('/jobs/'+job.id+'/handoff/open','POST',{});if(r.available)await openHandoff(job);else{$('#notice').textContent='The worker is preparing your live form. It will show Take over when ready. Up to three sessions can stay open.';await refresh(true)}}catch(e){msg.textContent=e.message}finally{takeover.disabled=false}};if(job.status!=='local_browser')card.append(takeover);
+  if(job.status!=='local_browser'&&!human&&!upload&&!job.handoff_available){
    const form=el('form');form.oninput=()=>{form.dataset.dirty='true'};
    const fields=[];
    if(questions.length){for(const question of [...new Set(questions)])fields.push({question,input:field(form,question)})}

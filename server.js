@@ -48,6 +48,47 @@ let m=path.match(/^\/api\/applicants\/([a-f0-9-]+)$/);if(m&&req.method==='PUT'){
 m=path.match(/^\/api\/applicants\/([a-f0-9-]+)\/resume$/);if(m&&req.method==='POST'){let p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(m[1],uid);if(!p)return send(res,404,{error:'Applicant not found'});let kind=req.headers['content-type'],ext=kind==='application/pdf'?'.pdf':kind==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'?'.docx':null;if(!ext)return send(res,415,{error:'Use PDF or DOCX'});let bytes=await body(req,limit);if(bytes.length<100)return send(res,400,{error:'Resume appears empty'});if(ext==='.pdf'&&!bytes.subarray(0,5).equals(Buffer.from('%PDF-')))return send(res,400,{error:'Invalid PDF'});if(ext==='.docx'&&!bytes.subarray(0,2).equals(Buffer.from('PK')))return send(res,400,{error:'Invalid DOCX'});await mkdir(uploadDir,{recursive:true,mode:0o700});let file=join(uploadDir,randomUUID()+ext);await writeFile(file,bytes,{mode:0o600});db.prepare('UPDATE applicants SET resume_path=? WHERE id=?').run(file,p.id);if(p.resume_path)await unlink(p.resume_path).catch(()=>{});let roles=[],instruction='',resumeNotice='';try{roles=await resumeRoles(file,ext);if(roles.length)instruction=createResumeSearch(uid,p,roles);else resumeNotice='No clear role titles found in the resume. Add a search manually.'}catch(e){console.error('Resume parsing:',e.message);resumeNotice='Resume saved, but its text could not be read. Add a search manually.'}return send(res,200,{ok:true,roles,instruction,resumeNotice})}
 if(path==='/api/jobs'&&req.method==='GET')return send(res,200,{jobs:db.prepare(`SELECT id,applicant_id,title,company,url,status,notes,confirmation,challenge,created_at,updated_at,required_fields_json,handoff_available,(SELECT message FROM events WHERE job_id=jobs.id AND type IN ('paused','needs_review') ORDER BY id DESC LIMIT 1) AS blocker_message,(SELECT message FROM events WHERE job_id=jobs.id ORDER BY id DESC LIMIT 1) AS last_message FROM jobs WHERE user_id=? AND status!='duplicate' ORDER BY created_at DESC`).all(uid)});
 if(path==='/api/jobs'&&req.method==='POST'){let x=JSON.parse(await body(req)),p=db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(x.applicant_id,uid);if(!p)return send(res,400,{error:'Select your applicant profile'});let url=normalizeURL(x.url),id=randomUUID(),date=now();try{db.prepare('INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,uid,p.id,text(x.title,200),text(x.company,200),url,url,text(x.notes,2000),date,date)}catch{return send(res,409,{error:'Job already tracked for this applicant'})}event(id,'saved','Job added');return send(res,201,{id})}
+// Local browser mode owns the application until a receipt is recorded.
+let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|submitted)$/);
+if(localRoute){
+ const j=ownJob(uid,localRoute[1]);if(!j)return send(res,404,{error:'Job not found'});
+ const action=localRoute[2];
+ if(action==='claim'&&req.method==='POST'){
+  if(j.status==='local_browser')return send(res,200,{ok:true});
+  if(!['saved','paused','needs_review'].includes(j.status)||['Unconfirmed submission','Submission in progress'].includes(j.challenge))return send(res,409,{error:'Wait for the worker or check the employer receipt before opening a local application'});
+  if(!/(^|\.)(greenhouse\.io|lever\.co)$/.test(new URL(j.url).hostname))return send(res,400,{error:'Local autofill currently supports Lever and Greenhouse employer links'});
+  const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
+  if(!p?.consent||!p.email||!p.resume_path)return send(res,400,{error:'Applicant consent, email and resume required'});
+  if(j.handoff_available){
+   try{const r=await fetch('http://127.0.0.1:8081/'+j.id+'/close',{method:'POST',headers:{authorization:req.headers.authorization,'content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(20000)});if(!r.ok)throw Error();}
+   catch{return send(res,409,{error:'Close the existing live session before switching to your browser'});}
+  }
+  const result=db.prepare("UPDATE jobs SET status='local_browser',handoff_available=0,challenge='Local browser',updated_at=? WHERE id=? AND status=? AND COALESCE(challenge,'')=COALESCE(?,'')").run(now(),j.id,j.status,j.challenge);
+  if(!result.changes)return send(res,409,{error:'Application changed. Refresh before continuing'});
+  event(j.id,'local_browser','Opening in your browser. Cloud retries disabled for this application.');return send(res,200,{ok:true});
+ }
+ if(j.status!=='local_browser')return send(res,409,{error:'This application is not active in your browser'});
+ if(action==='packet'&&req.method==='GET'){
+  const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
+  if(!p?.consent)return send(res,403,{error:'Applicant consent required'});
+  const bytes=await readFile(p.resume_path);if(bytes.length>limit)throw Error('Resume too large');
+  return send(res,200,{job:{id:j.id,url:j.url,title:j.title,company:j.company},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...JSON.parse(p.answers_json||'{}'),...JSON.parse(j.answers_json||'{}')},resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
+ }
+ if(action==='progress'&&req.method==='POST'){
+  const x=JSON.parse(await body(req)),fields=Array.isArray(x.fields)?x.fields.filter(v=>typeof v==='string').slice(0,100).map(v=>text(v,240)):[];
+  const message=text(x.message,500)||'Continue in your employer tab';
+  const previous=db.prepare("SELECT message FROM events WHERE job_id=? AND type='local_browser' ORDER BY id DESC LIMIT 1").get(j.id)?.message;
+  db.prepare('UPDATE jobs SET required_fields_json=?,updated_at=? WHERE id=?').run(JSON.stringify(fields),now(),j.id);
+  if(message!==previous)event(j.id,'local_browser',message);return send(res,200,{ok:true});
+ }
+ if(action==='submitted'&&req.method==='POST'){
+  const x=JSON.parse(await body(req)),receipt=text(x.receipt,300);
+  if(x.afterSubmit!==true||!/(?:application (?:has been |was )?(?:successfully )?(?:submitted|received)|thank you for applying|thanks for applying)/i.test(receipt))return send(res,400,{error:'An employer receipt after submission is required'});
+  db.prepare("UPDATE jobs SET status='submitted',confirmation=?,challenge=NULL,updated_at=? WHERE id=? AND status='local_browser'").run('Browser extension observed: '+receipt,now(),j.id);
+  event(j.id,'submitted','Browser extension observed employer confirmation: '+receipt);return send(res,200,{ok:true});
+ }
+ return send(res,405,{error:'Method not allowed'});
+}
 let handoffRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/handoff\/(open|view|click|drag|upload|text|key|scroll|resume|close)$/);
 if(handoffRoute&&req.method==='POST'){
  const j=ownJob(uid,handoffRoute[1]);if(!j)return send(res,404,{error:'Job not found'});

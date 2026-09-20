@@ -8,7 +8,7 @@ const filler=/\b(find|search|show|me|for|a|an|the|jobs?|roles?|positions?|openin
 
 export function parseBoards(input){
   const lines=String(input||'').split(/[\s,]+/).map(s=>s.trim()).filter(Boolean);
-  if(!lines.length||lines.length>8)throw Error('Enter 1 to 8 Greenhouse or Lever board links');
+  if(lines.length>12)throw Error('Enter up to 12 Greenhouse or Lever board links');
   return [...new Set(lines.map(s=>{
     let u;try{u=new URL(s)}catch{throw Error('Enter complete HTTPS board links')}
     if(u.protocol!=='https:'||!boardHosts.has(u.hostname)||u.username||u.password)throw Error('Only public Greenhouse and Lever board links are supported');
@@ -34,7 +34,7 @@ function matches(job,intent){
   const title=String(job.title||'').toLowerCase(),location=String(job.location||'').toLowerCase();
   if(!intent.roles.some(role=>role.split(/\s+/).every(word=>title.includes(word))))return false;
   if(intent.remote&&!(/\bremote\b/.test(location)||job.remote===true))return false;
-  if(intent.places.length&&!intent.places.some(place=>location.includes(place)||place==='canada'&&/\b(on|bc|ab|qc|mb|ns|nb|sk|pe|nl)\b/i.test(location)))return false;
+  if(intent.places.length&&!intent.places.some(place=>location.includes(place)||job.remote===true&&/\b(anywhere|worldwide|global)\b/.test(location)||place==='canada'&&/\b(on|bc|ab|qc|mb|ns|nb|sk|pe|nl)\b/i.test(location)))return false;
   return true;
 }
 
@@ -44,6 +44,28 @@ async function readJSON(url){
   if(Number(response.headers.get('content-length')||0)>8000000)throw Error('Job board response too large');
   const body=await response.text();if(body.length>8000000)throw Error('Job board response too large');
   return JSON.parse(body);
+}
+
+const feedCache=new Map();
+async function cachedJSON(url){
+  const hit=feedCache.get(url);if(hit&&Date.now()-hit.at<60*60*1000)return hit.data;
+  const data=await readJSON(url);feedCache.set(url,{at:Date.now(),data});return data;
+}
+
+async function broadListings(intent){
+  const errors=[],batches=[];
+  try{
+    const query=new URLSearchParams({count:'200'});
+    if(intent.places.includes('canada'))query.set('geo','canada');
+    else if(intent.places.includes('usa')||intent.places.includes('united states'))query.set('geo','usa');
+    const data=await cachedJSON(`https://jobicy.com/api/v2/remote-jobs?${query}`);
+    batches.push({source:'Jobicy',jobs:(data.jobs||[]).map(j=>({title:j.jobTitle,company:j.companyName,location:j.jobGeo,remote:true,url:j.url}))});
+  }catch(e){errors.push(`Jobicy: ${String(e.message).slice(0,150)}`)}
+  try{
+    const data=await cachedJSON('https://www.arbeitnow.com/api/job-board-api');
+    batches.push({source:'Arbeitnow',jobs:(data.data||[]).map(j=>({title:j.title,company:j.company_name,location:j.location,remote:j.remote,url:j.url}))});
+  }catch(e){errors.push(`Arbeitnow: ${String(e.message).slice(0,150)}`)}
+  return {batches,errors};
 }
 
 async function listBoard(board){
@@ -66,23 +88,31 @@ export async function runSearch(id,userId){
   const intent=parseIntent(search.instruction),boards=JSON.parse(search.boards_json);
   db.prepare('UPDATE searches SET last_run=?,last_error=NULL WHERE id=?').run(now(),id);
   let scanned=0,matched=0,added=0,queued=0,errors=[];
-  for(const board of boards){
+  const sources=[];
+  for(let i=0;i<boards.length;i+=4){
+    const group=boards.slice(i,i+4),results=await Promise.allSettled(group.map(listBoard));
+    results.forEach((result,index)=>{
+      if(result.status==='fulfilled')sources.push({source:group[index],jobs:result.value});
+      else errors.push(`${group[index]}: ${String(result.reason?.message).slice(0,150)}`);
+    });
+  }
+  const broad=await broadListings(intent);sources.push(...broad.batches);errors.push(...broad.errors);
+  for(const {source,jobs} of sources){
     try{
-      const jobs=await listBoard(board);
       scanned+=jobs.length;
       for(const job of jobs){
-        if(added>=30)break;
+        if(added>=60)break;
         if(!matches(job,intent))continue;
         matched++;
         let url;try{url=normalizeURL(job.url)}catch{continue}
-        if(!jobHosts.test(new URL(url).hostname))continue;
-        const canQueue=!!(search.auto_queue&&applicant.consent&&applicant.email&&applicant.resume_path);
+        const direct=jobHosts.test(new URL(url).hostname);
+        const canQueue=!!(direct&&search.auto_queue&&applicant.consent&&applicant.email&&applicant.resume_path);
         const id=randomUUID(),date=now();
         const result=db.prepare('INSERT OR IGNORE INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-          .run(id,userId,applicant.id,String(job.title).slice(0,200),String(job.company).slice(0,200),url,url,canQueue?'queued':'saved',`Found on ${board}${job.location?' · '+String(job.location).slice(0,100):''}`,date,date);
+          .run(id,userId,applicant.id,String(job.title).slice(0,200),String(job.company).slice(0,200),url,url,canQueue?'queued':'saved',`Source: ${source}${job.location?' · '+String(job.location).slice(0,100):''}${direct?'':' · Add employer application link to queue'}`,date,date);
         if(result.changes){added++;if(canQueue)queued++;event(id,canQueue?'queued':'saved',`Found by search: ${search.instruction}`)}
       }
-    }catch(e){errors.push(`${board}: ${String(e.message).slice(0,150)}`)}
+    }catch(e){errors.push(`${source}: ${String(e.message).slice(0,150)}`)}
   }
   db.prepare('UPDATE searches SET last_error=? WHERE id=?').run(errors.join('; ').slice(0,600)||null,id);
   return {scanned,matched,added,queued,errors};

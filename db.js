@@ -15,3 +15,5 @@ if(!db.prepare('PRAGMA table_info(searches)').all().some(c=>c.name==='auto_gener
 export function event(id,type,message){db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(id,new Date().toISOString(),type,String(message).slice(0,800))}
 export const now=()=>new Date().toISOString();
 export function normalizeURL(s){let u=new URL(s);if(u.protocol!=='https:')throw Error('Use an HTTPS job link');u.hash='';for(let k of [...u.searchParams.keys()])if(k.startsWith('utm_')||['ref','source','gh_src'].includes(k))u.searchParams.delete(k);u.hostname=u.hostname.toLowerCase();return u.toString().replace(/\/$/,'')}
+
+db.exec(`CREATE TABLE IF NOT EXISTS worker_status(id INTEGER PRIMARY KEY,heartbeat TEXT NOT NULL);CREATE TABLE IF NOT EXISTS chat_usage(user_id TEXT NOT NULL,day TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(user_id,day));`);

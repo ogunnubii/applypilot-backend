@@ -1,3 +1,4 @@
+import {matches} from './matching.js';
 import {randomUUID} from 'node:crypto';
 import {db,event,now,normalizeURL} from './db.js';
 
@@ -24,18 +25,10 @@ export function parseIntent(input){
   const lower=instruction.toLowerCase();
   const remote=/\bremote\b/.test(lower);
   const places=placeWords.filter(p=>new RegExp(`\\b${p}\\b`,'i').test(lower)&&p!=='remote');
-  let roleText=instruction.split(';')[0].replace(/\b(in|near|around)\s+(canada|toronto|ontario|united states|usa|uk|united kingdom)\b/gi,'').replace(/\bremote\b/gi,'').replace(filler,' ').replace(/\s+/g,' ').trim();
+  let roleText=instruction.split(';')[0].replace(/\b(in|near|around)\s+(canada|toronto|ontario|united states|usa|uk|united kingdom)\b/gi,'').replace(/\b(remote|canada|toronto|ontario|united states|usa|uk|united kingdom)\b/gi,'').replace(/\band\b/gi,',').replace(filler,' ').replace(/\s+/g,' ').trim();
   let roles=roleText.split(/\s*(?:,|\bor\b|\/|&)\s*/i).map(s=>s.toLowerCase().trim()).filter(Boolean);
   if(!roles.length)throw Error('Include a role, for example: DevOps engineer; remote; Canada');
   return {roles:roles.slice(0,8),remote,places};
-}
-
-function matches(job,intent){
-  const title=String(job.title||'').toLowerCase(),location=String(job.location||'').toLowerCase();
-  if(!intent.roles.some(role=>role.split(/\s+/).every(word=>title.includes(word))))return false;
-  if(intent.remote&&!(/\bremote\b/.test(location)||job.remote===true))return false;
-  if(intent.places.length&&!intent.places.some(place=>location.includes(place)||job.remote===true&&/\b(anywhere|worldwide|global)\b/.test(location)||place==='canada'&&/\b(on|bc|ab|qc|mb|ns|nb|sk|pe|nl)\b/i.test(location)))return false;
-  return true;
 }
 
 async function readJSON(url){
@@ -80,12 +73,19 @@ async function listBoard(board){
   return data.map(j=>({title:j.text,company:token,location:j.categories?.location||j.categories?.allLocations?.join(', '),remote:j.workplaceType==='remote',url:j.applyUrl||j.hostedUrl}));
 }
 
-export async function runSearch(id,userId){
+const activeSearches=new Map();
+export function runSearch(id,userId){
+ const key=userId+':'+id;
+ if(activeSearches.has(key))return activeSearches.get(key);
+ const task=executeSearch(id,userId).finally(()=>activeSearches.delete(key));
+ activeSearches.set(key,task);return task;
+}
+async function executeSearch(id,userId){
   const search=db.prepare('SELECT * FROM searches WHERE id=? AND user_id=?').get(id,userId);
   if(!search)throw Error('Search not found');
   const applicant=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(search.applicant_id,userId);
   if(!applicant)throw Error('Applicant not found');
-  const intent=parseIntent(search.instruction),boards=JSON.parse(search.boards_json);
+  const intent=parseIntent(search.instruction),boards=[...new Set([...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')])];
   db.prepare('UPDATE searches SET last_run=?,last_error=NULL WHERE id=?').run(now(),id);
   let scanned=0,matched=0,added=0,queued=0,errors=[];
   const sources=[];
@@ -119,7 +119,8 @@ export async function runSearch(id,userId){
 }
 
 export async function runDueSearches(){
-  const cutoff=new Date(Date.now()-6*60*60*1000).toISOString();
+  const hours=Math.max(1,Math.min(24,Number(process.env.SEARCH_INTERVAL_HOURS)||6));
+  const cutoff=new Date(Date.now()-hours*60*60*1000).toISOString();
   const due=db.prepare('SELECT id,user_id FROM searches WHERE enabled=1 AND (last_run IS NULL OR last_run<?) LIMIT 5').all(cutoff);
   for(const search of due){try{await runSearch(search.id,search.user_id)}catch(e){console.error('Discovery:',e.message)}}
 }

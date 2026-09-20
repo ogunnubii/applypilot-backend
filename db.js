@@ -1,3 +1,4 @@
+import {canonicalJobURL} from './form-policy.js';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
@@ -14,10 +15,26 @@ CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(status,created_at);CREATE INDEX IF
 if(!db.prepare('PRAGMA table_info(searches)').all().some(c=>c.name==='auto_generated'))db.exec('ALTER TABLE searches ADD COLUMN auto_generated INTEGER NOT NULL DEFAULT 0');
 export function event(id,type,message){db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(id,new Date().toISOString(),type,String(message).slice(0,800))}
 export const now=()=>new Date().toISOString();
-export function normalizeURL(s){let u=new URL(s);if(u.protocol!=='https:')throw Error('Use an HTTPS job link');u.hash='';for(let k of [...u.searchParams.keys()])if(k.startsWith('utm_')||['ref','source','gh_src'].includes(k))u.searchParams.delete(k);u.hostname=u.hostname.toLowerCase();return u.toString().replace(/\/$/,'')}
+export {canonicalJobURL as normalizeURL} from './form-policy.js';
 
 db.exec(`CREATE TABLE IF NOT EXISTS worker_status(id INTEGER PRIMARY KEY,heartbeat TEXT NOT NULL);CREATE TABLE IF NOT EXISTS chat_usage(user_id TEXT NOT NULL,day TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(user_id,day));`);
 
 if(!db.prepare('PRAGMA table_info(searches)').all().some(c=>c.name==='last_result_json'))db.exec("ALTER TABLE searches ADD COLUMN last_result_json TEXT");
 
 if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='answers_json'))db.exec("ALTER TABLE jobs ADD COLUMN answers_json TEXT NOT NULL DEFAULT '{}'");
+
+// Keep duplicate records and their event history, but exclude them from future work.
+const identityRows=db.prepare("SELECT * FROM jobs WHERE status!='duplicate' ORDER BY created_at,id").all();
+const identityGroups=new Map();for(const row of identityRows){let key;try{key=canonicalJobURL(row.url)}catch{continue}const group=row.applicant_id+'|'+key;if(!identityGroups.has(group))identityGroups.set(group,{key,rows:[]});identityGroups.get(group).rows.push(row);}
+db.exec('BEGIN IMMEDIATE');try{
+ for(const {key,rows} of identityGroups.values()){
+  const rank=r=>r.status==='submitted'?0:['Unconfirmed submission','Submission in progress'].includes(r.challenge)?1:r.status==='running'?2:r.status==='paused'?3:4;
+  rows.sort((a,b)=>rank(a)-rank(b));const keeper=rows[0];
+  for(const duplicate of rows.slice(1)){
+   db.prepare("UPDATE jobs SET status='duplicate',normalized_url=?,updated_at=? WHERE id=?").run('duplicate:'+duplicate.id,now(),duplicate.id);
+   event(duplicate.id,'duplicate','Duplicate record retained; active application: '+keeper.id);
+  }
+  db.prepare('UPDATE jobs SET normalized_url=? WHERE id=?').run(key,keeper.id);
+ }
+ db.exec('COMMIT');
+}catch(e){db.exec('ROLLBACK');throw e}

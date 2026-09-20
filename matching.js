@@ -11,7 +11,7 @@ export function matches(job,intent){
  const title=clean(job.title), location=clean(job.location);
  const roleMatch=intent.roles.some(role=>{
   const r=clean(role);
-  if(r.split(' ').every(w=>phrase(title,w))) return true;
+  if(phrase(title,r)) return true;
   return groups.some(g=>g.some(x=>phrase(r,x))&&g.some(x=>phrase(title,x)));
  });
  if(!roleMatch)return false;

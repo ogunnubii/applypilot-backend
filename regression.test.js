@@ -5,6 +5,7 @@ test('Role variants and Canadian cities match without accepting US-only remote',
  const intent=parseIntent('Find DevOps Engineer and Cloud Engineer; remote; Canada');
  for(const title of ['Senior SRE','Platform Engineer','Site Reliability Engineer II','DevOps Specialist'])assert(matches({title,location:'Toronto',remote:true},intent));
  assert(!matches({title:'DevOps Engineer',location:'United States',remote:true},intent));
+ assert(!matches({title:'Senior Software Engineer Ruby Security Platform Authorization',location:'Canada',remote:true},intent));
  assert(!matches({title:'Sales Engineer',location:'Canada',remote:true},intent));
  assert(!matches({title:'DevOps Engineer',location:'London',remote:false},intent));
  assert(matches({title:'Cloud Engineer',location:'Worldwide',remote:true},intent));
@@ -18,11 +19,13 @@ test('Discovery queues only eligible direct matches and deduplicates repeated ru
  try{const first=await runSearch('s','u');assert.equal(first.queued,1);assert.equal((await runSearch('s','u')).added,0);db.prepare("UPDATE jobs SET status='saved' WHERE applicant_id='a'").run();assert.equal((await runSearch('s','u')).queued,1);assert.equal(JSON.parse(db.prepare("SELECT last_result_json FROM searches WHERE id='s'").get().last_result_json).queued,1);}finally{global.fetch=original}
 });
 test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',async()=>{
+ const duplicateId='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+ db.prepare("INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'saved',?,?)").run(duplicateId,'u','a','SRE','Example','https://jobs.lever.co/example/abc/apply','https://jobs.lever.co/example/abc/apply',now(),now());
  const port=19000+Math.floor(Math.random()*1000),base='http://127.0.0.1:'+port;
  const child=spawn(process.execPath,['server.js'],{cwd:new URL('.',import.meta.url),env:{...process.env,PORT:String(port),PUBLIC_ORIGIN:'https://applypilot-jobs.netlify.app',SERVICE_ORIGIN:base},stdio:'pipe'});
  let logs='';child.stderr.on('data',d=>logs+=d);try{
   let ready=false;for(let i=0;i<80;i++){try{if((await fetch(base+'/api/health')).ok){ready=true;break}}catch{}await new Promise(r=>setTimeout(r,50));}assert(ready,logs);
-  assert.equal((await fetch(base+'/assistant')).status,200);
+  assert.equal((await fetch(base+'/assistant')).status,200);assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(duplicateId).status,'duplicate');assert(db.prepare('SELECT COUNT(*) AS n FROM events WHERE job_id=?').get(duplicateId).n>0);
   assert.equal((await fetch(base+'/api/status')).status,401);
   const headers={Authorization:'Bearer '+issueToken('u'),Origin:base,'Content-Type':'application/json'};
   assert.equal((await (await fetch(base+'/api/status',{headers})).json()).workerOnline,false);
@@ -43,3 +46,13 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
  }finally{if(child.exitCode===null){child.kill();await new Promise(r=>child.once('exit',r));}}
 });
 test.after(()=>{db.close();rmSync(dir,{recursive:true,force:true})});
+
+test('Canonical URLs collapse Lever apply aliases; upload selection rejects ambiguity',async()=>{
+ const {canonicalJobURL,pickResumeField}=await import('./form-policy.js');
+ assert.equal(canonicalJobURL('https://jobs.lever.co/newton/abc/apply?source=feed'),canonicalJobURL('https://jobs.lever.co/newton/abc'));
+ assert.notEqual(canonicalJobURL('https://jobs.lever.co/newton/abc'),canonicalJobURL('https://jobs.lever.co/newton/def'));
+ assert.equal(pickResumeField([{id:'resume'},{id:'cover letter'}]),0);
+ assert.equal(pickResumeField([{label:'Resume'},{label:'Alternative resume'}]),-1);
+ assert.equal(pickResumeField([{label:'Cover letter'}]),-1);
+ assert.equal(pickResumeField([{name:'resume upload'},{name:'portfolio'}]),0);
+});

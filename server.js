@@ -1,4 +1,5 @@
 import {createServer} from 'node:http';import {randomUUID} from 'node:crypto';import {mkdir,writeFile,unlink} from 'node:fs/promises';import {join,resolve,extname} from 'node:path';import {db,event,now,normalizeURL} from './db.js';import {hashPassword,verifyPassword,issueToken,readToken} from './auth.js';
+import {parseBoards,parseIntent,runSearch} from './discovery.js';
 const origin=process.env.PUBLIC_ORIGIN;if(!origin)throw Error('Set PUBLIC_ORIGIN');if(!process.env.REGISTRATION_CODE||process.env.REGISTRATION_CODE.length<24)throw Error('Set REGISTRATION_CODE to a random value of at least 24 characters');const attempts=new Map();const uploadDir=resolve(process.env.UPLOAD_DIR||'./data/resumes');const limit=6*1024*1024;
 const send=(res,status,data)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});res.end(JSON.stringify(data))};
 async function body(req,max=100000){let chunks=[],size=0;for await(let chunk of req){size+=chunk.length;if(size>max)throw Error('Request too large');chunks.push(chunk)}return Buffer.concat(chunks)}
@@ -10,6 +11,20 @@ if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
 if(path==='/api/me')return send(res,200,{email:db.prepare('SELECT email FROM users WHERE id=?').get(uid)?.email});
+if(path==='/api/searches'&&req.method==='GET')return send(res,200,{searches:db.prepare('SELECT * FROM searches WHERE user_id=? ORDER BY created_at DESC').all(uid).map(s=>({...s,boards:JSON.parse(s.boards_json),boards_json:undefined}))});
+if(path==='/api/searches'&&req.method==='POST'){
+  const x=JSON.parse(await body(req)),p=db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(x.applicant_id,uid);
+  if(!p)return send(res,400,{error:'Select your applicant profile'});
+  const instruction=text(x.instruction,300),boards=parseBoards(x.boards);parseIntent(instruction);
+  const id=randomUUID();db.prepare('INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,created_at) VALUES(?,?,?,?,?,?,?)').run(id,uid,p.id,instruction,JSON.stringify(boards),x.auto_queue===true?1:0,now());
+  return send(res,201,{id});
+}
+let searchRoute=path.match(/^\/api\/searches\/([a-f0-9-]+)\/(run|toggle)$/);
+if(searchRoute&&req.method==='POST'){
+  const s=db.prepare('SELECT * FROM searches WHERE id=? AND user_id=?').get(searchRoute[1],uid);if(!s)return send(res,404,{error:'Search not found'});
+  if(searchRoute[2]==='toggle'){db.prepare('UPDATE searches SET enabled=? WHERE id=?').run(s.enabled?0:1,s.id);return send(res,200,{enabled:!s.enabled})}
+  return send(res,200,await runSearch(s.id,uid));
+}
 if(path==='/api/applicants'&&req.method==='GET')return send(res,200,{applicants:db.prepare('SELECT id,name,email,phone,location,focus,answers_json,consent,ai_consent,resume_path IS NOT NULL AS has_resume FROM applicants WHERE user_id=?').all(uid).map(p=>({...p,answers:JSON.parse(p.answers_json),answers_json:undefined,resume_path:undefined}))});
 if(path==='/api/applicants'&&req.method==='POST'){let x=JSON.parse(await body(req)),id=randomUUID();db.prepare('INSERT INTO applicants(id,user_id,name,email,phone,location,focus,answers_json,consent,ai_consent,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,uid,text(x.name,150),text(x.email,254),text(x.phone,50),text(x.location,150),text(x.focus,300),JSON.stringify(x.answers||{}),x.consent===true?1:0,x.ai_consent===true?1:0,now());return send(res,201,{id})}
 let m=path.match(/^\/api\/applicants\/([a-f0-9-]+)$/);if(m&&req.method==='PUT'){let x=JSON.parse(await body(req)),p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(m[1],uid);if(!p)return send(res,404,{error:'Applicant not found'});db.prepare('UPDATE applicants SET name=?,email=?,phone=?,location=?,focus=?,answers_json=?,consent=?,ai_consent=? WHERE id=?').run(text(x.name,150),text(x.email,254),text(x.phone,50),text(x.location,150),text(x.focus,300),JSON.stringify(x.answers||{}),x.consent===true?1:0,x.ai_consent===true?1:0,p.id);return send(res,200,{ok:true})}

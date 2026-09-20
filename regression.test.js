@@ -35,6 +35,12 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   const save=await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers,body:JSON.stringify({question:'Why this role?',answer:'I enjoy infrastructure operations.'})});assert.equal(save.status,200);
   assert.equal((await (await fetch(base+'/api/jobs/'+id+'/answers',{headers})).json()).answers['Why this role?'],'I enjoy infrastructure operations.');
   assert.equal((await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers,body:JSON.stringify({answers:{Question:'Answer'}})})).status,409);
+  db.prepare("UPDATE jobs SET status='needs_review',challenge='Missing answers' WHERE id=?").run(id);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:JSON.stringify({answers:{Question:'Answer'}})})).status,404);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers,body:JSON.stringify({answers:{Question:'Answer'}})})).status,200);
+  const continued=db.prepare('SELECT status,answers_json FROM jobs WHERE id=?').get(id);assert.equal(continued.status,'queued');assert.equal(JSON.parse(continued.answers_json).Question,'Answer');
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers,body:JSON.stringify({answers:{Question:'Changed'}})})).status,409);
   db.prepare("UPDATE jobs SET status='running' WHERE id=?").run(id);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/confirm',{method:'POST',headers,body:JSON.stringify({receipt:'Employer confirmation 1234'})})).status,409);
   db.prepare("UPDATE jobs SET status='needs_review' WHERE id=?").run(id);

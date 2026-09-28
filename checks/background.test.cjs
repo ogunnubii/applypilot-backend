@@ -27,7 +27,7 @@ test('Blocked application retains its tab and queue automatically advances to th
  await h.send('stop');assert(!h.shared.store.enabled);assert(Object.values(h.shared.store.records).every(r=>!r.auto));
 });
 test('Intent survives service-worker recreation and browser restart; stale tab IDs never authorize another job',async()=>{
- const h=harness();await h.send('open',{id:'a',auto:true});await h.send('attempt',{before:'Application form'},h.sender('a'));
+ const h=harness();await h.send('open',{id:'a',auto:true});await h.send('attempt',{before:'Application form',human:true},h.sender('a'));
  assert(h.shared.store.records.a.attempted);assert(h.shared.claims.a.attempted);
  const next=harness(h.shared);assert.equal((await next.send('state',{},next.sender('a'))).data.attempted,true);
  await next.events.startup();assert(!h.shared.store.records.a.auto);assert(h.shared.store.enabled);
@@ -63,3 +63,5 @@ test('Dashboard can focus an existing application without restarting it; foreign
  const record=h.shared.store.records.a;h.shared.tabs.find(t=>t.id===record.tabId).url='https://jobs.lever.co/org/other';
  assert(!(await h.send('focus-existing',{id:'a'},sender)).ok);assert.equal(h.shared.calls.length,before);
 });
+
+test('Automatic submission intent is rejected before any server or record mutation',async()=>{const h=harness();await h.send('open',{id:'a',auto:true});const result=await h.send('attempt',{before:'Application form'},h.sender('a'));assert(!result.ok);assert(!h.shared.store.records.a.attempted);assert(!h.shared.calls.some(c=>c.route.endsWith('/attempt')));});

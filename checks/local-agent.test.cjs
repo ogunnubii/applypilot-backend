@@ -73,3 +73,7 @@ test('Actual Grafana labels resolve explicit location parts and Toronto time zon
  const f=await fixture('<form></form>',{automatic:false});
  try{const p={location:'Toronto, Ontario, Canada'};assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Location (City)',p,{}),'Toronto');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Country',p,{}),'Canada');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('What country and time zone are you based in?',p,{}),'Canada — Eastern Time (America/Toronto)');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Are you currently eligible to work in your country of residence?',p,{}),null);}finally{f.close();}
 });
+
+test('Country dial codes and fully qualified city options match without choosing another location',async()=>{
+ const f=await fixture('<form></form>',{automatic:false});try{const p=f.w.ApplyPilotPolicy,profile={location:'Toronto, Ontario, Canada'};assert(p.optionMatches('Country','Canada +1','Canada',profile));assert(!p.optionMatches('Country','United States +1','Canada',profile));assert(p.optionMatches('Location (City)','Toronto, ON, Canada','Toronto',profile));assert(!p.optionMatches('Location (City)','Toronto, Ohio, United States','Toronto',profile));}finally{f.close();}
+});

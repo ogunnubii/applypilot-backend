@@ -44,5 +44,15 @@
    const direct={name,first:name.split(/\s+/)[0],last:name.split(/\s+/).slice(1).join(' '),email:p.email,phone:p.phone,location:p.location,city:p.city||(parts.length===3?parts[0]:null),country:p.country||(parts.length===3?parts[2]:null),region:p.region||(parts.length===3?parts[1]:null),postal:p.postal,linkedin:p.linkedin,github:p.github};
    return direct[kind]||null;
   }
-  globalThis.ApplyPilotPolicy = Object.freeze({domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer});
+  function optionMatches(question,option,answer,profile){
+   const kind=fieldKind(question),o=normalize(option),a=normalize(answer);
+   if(o===a)return true;
+   if(kind==='country')return o.replace(/\s*\+\d+\s*$/,'').trim()===a;
+   if(kind==='city'){
+    const clean=v=>normalize(v).replace(/\bontario\b/g,'on').replace(/[^a-z0-9]+/g,' ').trim();
+    return !!profile?.location&&clean(option)===clean(profile.location)&&clean(profile.location).startsWith(clean(answer)+' ');
+   }
+   return false;
+  }
+  globalThis.ApplyPilotPolicy = Object.freeze({domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
 })();

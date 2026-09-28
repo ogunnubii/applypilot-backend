@@ -16,18 +16,20 @@ function answer(e){
  return kind?P.knownAnswer(kind,packet.profile,packet.answers):null;
 }
 const completedCustom=new WeakSet();
+let attemptedCustom=new WeakMap();
 let fieldErrors=[];
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function fillCustom(e,a){
  if(e.getAttribute('role')!=='combobox'||e.getAttribute('aria-disabled')==='true')return false;
- if(e.value?.trim()||completedCustom.has(e))return false;
+ if(e.value?.trim()||completedCustom.has(e)||attemptedCustom.get(e)===String(a))return false;
+ attemptedCustom.set(e,String(a));
  e.click();
  if(e.matches('input')&&!e.readOnly)setValue(e,a);
- for(let attempt=0;attempt<4;attempt++){
+ for(let attempt=0;attempt<20;attempt++){
   await pause(100);
   const ids=(e.getAttribute('aria-controls')||e.getAttribute('aria-owns')||'').split(/\s+/).filter(Boolean);
   const menus=ids.length?ids.map(id=>document.getElementById(id)).filter(Boolean):[...document.querySelectorAll('[role=listbox]')].filter(visible);
-  if(menus.length===1){const matches=[...menus[0].querySelectorAll('[role=option]')].filter(o=>visible(o)&&o.getAttribute('aria-disabled')!=='true'&&norm(o.textContent)===norm(a));if(matches.length===1){matches[0].click();completedCustom.add(e);return true;}}
+  if(menus.length===1){const matches=[...menus[0].querySelectorAll('[role=option]')].filter(o=>visible(o)&&o.getAttribute('aria-disabled')!=='true'&&P.optionMatches(label(e),o.textContent,a,packet.profile));if(matches.length===1){matches[0].click();completedCustom.add(e);return true;}}
  }
  if(e.matches('input'))setValue(e,'');
  e.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true}));e.blur();return false;
@@ -36,7 +38,7 @@ async function fillCustom(e,a){
 function mount(){
  bar=document.createElement('aside');bar.id='applypilot-local-controls';bar.style.cssText='position:fixed;bottom:16px;right:16px;max-width:360px;z-index:2147483647;background:#12253b;color:white;padding:16px;border-radius:12px;box-shadow:0 3px 18px #0008;font:14px system-ui';
  const heading=document.createElement('strong');heading.textContent='ApplyPilot · '+packet.job.title;note=document.createElement('p');note.setAttribute('role','status');
- const refill=document.createElement('button');refill.textContent='Fill saved answers';refill.onclick=async()=>{try{packet=null;await fill();await advance();}catch(e){note.textContent=e.message;}};
+ const refill=document.createElement('button');refill.textContent='Fill saved answers';refill.onclick=async()=>{try{packet=null;attemptedCustom=new WeakMap();await fill();await advance();}catch(e){note.textContent=e.message;}};
  const save=document.createElement('button');save.textContent='Remember an answer';save.onclick=async()=>{
   const question=prompt('Exact question to remember for this applicant:');if(!question)return;
   if(P.sensitive(question)){note.textContent='Complete sensitive statements directly with the employer.';return;}

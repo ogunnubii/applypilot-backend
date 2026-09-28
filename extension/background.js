@@ -1,7 +1,7 @@
 importScripts('policy.js');
 const P=globalThis.ApplyPilotPolicy;
 const environments={hosted:{dashboard:'https://applypilot-jobs.netlify.app/',api:'https://marvelous-vitality-production-c2d8.up.railway.app/api'},local:{dashboard:'http://localhost:8080/assistant',api:'http://localhost:8080/api'}};
-const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','error'])});
+const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','error','automaticDefault','userPaused'])});
 async function api(path,method='GET',data){
  const state=await read(),env=environments[state.environment]||environments.hosted;
  const tabs=await chrome.tabs.query({url:new URL(env.dashboard).origin+'/*'});
@@ -14,9 +14,9 @@ async function api(path,method='GET',data){
  }
  throw Error('Open ApplyPilot and sign in to sync this browser.');
 }
-async function initialize(){const s=await read();if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
+async function initialize(){const s=await read();if(!s.automaticDefault)await chrome.storage.local.set({automaticDefault:true,enabled:true,userPaused:false});if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
 async function saveRecord(record){const s=await read();s.records[record.id]=record;await chrome.storage.local.set({records:s.records});}
-async function openJob(id,auto=false){
+async function openJob(id,auto=true){
  const s=await read();let record=s.records[id];
  const claim=await api('/jobs/'+id+'/local/claim','POST',{});
  const packet=await api('/jobs/'+id+'/local/packet');
@@ -32,6 +32,11 @@ async function openJob(id,auto=false){
  else{record.tabId=tab.id;await saveRecord(record);if(!auto)await chrome.tabs.update(tab.id,{active:true});chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>{});}
  return {opened:true,attempted:record.attempted};
 }
+function eligible(j,s){
+ const r=s.records[j.id];
+ return j.execution_mode==='local'&&P.supported(j.url)&&!j.local_attempt_at&&!r?.attempted&&!['Unconfirmed submission','Submission in progress','Sensitive action'].includes(j.challenge)&&
+ (['saved','queued','paused','needs_review'].includes(j.status)&&!r);
+}
 async function tick(){
  const s=await read();if(!s.enabled)return;
  const active=Object.values(s.records).find(r=>r.auto&&['ready','verifying'].includes(r.phase));
@@ -41,22 +46,22 @@ async function tick(){
   active.phase='blocked';active.auto=false;await saveRecord(active);
   await api('/jobs/'+active.id+'/local/progress','POST',{blocked:true,fields:[],message:active.attempted?'Submission uncertain; check employer receipt.':'Browser stopped responding. Reopen from extension.'}).catch(()=>{});
  }
- const fresh=await read(),id=fresh.queue[0];if(!id){await chrome.storage.local.set({enabled:false});return;}
- try{await openJob(id,true);await chrome.storage.local.set({queue:fresh.queue.slice(1),error:''});}
- catch(e){if([400,409].includes(e.status)){await chrome.storage.local.set({queue:fresh.queue.slice(1),error:'Skipped blocked application: '+e.message});}else await chrome.storage.local.set({enabled:false,error:e.message});}
+ const fresh=await read();let jobs;try{({jobs}=await api('/jobs'));}catch(e){await chrome.storage.local.set({error:e.message});return;}const candidates=jobs.filter(j=>eligible(j,fresh));const queue=[...new Set([...fresh.queue,...candidates.map(j=>j.id)])].filter(id=>candidates.some(j=>j.id===id));await chrome.storage.local.set({queue,error:''});const id=queue[0];if(!id)return;
+ try{await openJob(id,true);await chrome.storage.local.set({queue:queue.slice(1),error:''});}
+ catch(e){if([400,409].includes(e.status)){await saveRecord({id,url:candidates.find(j=>j.id===id).url,auto:false,phase:'blocked',touched:Date.now()});await chrome.storage.local.set({queue:queue.slice(1),error:'Skipped blocked application: '+e.message});}else await chrome.storage.local.set({error:e.message});}
 }
 async function handle(m,sender){
  await initialize();
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){
   if(m.action==='list')return {...await api('/jobs'),state:await read()};
-  if(m.action==='open')return openJob(m.id,m.auto===true);
+  if(m.action==='open')return openJob(m.id,m.auto!==false);
   if(m.action==='dashboard'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard});}
   if(m.action==='environment'){if(!environments[m.value])throw Error('Unknown environment');const s=await read();if(Object.keys(s.records).length)throw Error('Use a separate browser profile for another server while applications are tracked');await chrome.storage.local.set({environment:m.value,enabled:false,queue:[]});return {};}
-  if(m.action==='stop'){const s=await read();for(const r of Object.values(s.records))r.auto=false;await chrome.storage.local.set({enabled:false,records:s.records});return {};}
+  if(m.action==='stop'){const s=await read();for(const r of Object.values(s.records))r.auto=false;await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});return {};}
   if(m.action==='start'){
-   const {jobs}=await api('/jobs'),s=await read();const ids=jobs.filter(j=>['saved','queued'].includes(j.status)&&P.supported(j.url)&&!s.records[j.id]?.attempted).map(j=>j.id);
-   await chrome.storage.local.set({queue:[...new Set([...s.queue,...ids])],enabled:true,error:''});await tick();return {count:ids.length};
+   const {jobs}=await api('/jobs'),s=await read();const ids=jobs.filter(j=>eligible(j,s)).map(j=>j.id);
+   await chrome.storage.local.set({queue:[...new Set([...s.queue,...ids])],enabled:true,userPaused:false,error:''});await tick();return {count:ids.length};
   }
  }
  const s=await read();
@@ -91,6 +96,6 @@ let chain=Promise.resolve();
 function serial(fn){const result=chain.then(fn);chain=result.catch(()=>{});return result;}
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{serial(()=>handle(m,sender)).then(data=>reply({ok:true,data})).catch(e=>reply({ok:false,error:e.message}));return true;});
 chrome.alarms.onAlarm.addListener(a=>{if(a.name==='queue')serial(tick).catch(()=>{});});
-chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.auto=false;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:false,error:'Browser restarted. Review open applications, then restart the queue.'});}));
+chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.auto=false;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:!s.userPaused,error:'Browser restarted. Existing unfinished applications remain paused; new eligible jobs continue automatically.'});}));
 chrome.runtime.onInstalled.addListener(()=>serial(initialize));
 chrome.tabs.onRemoved.addListener(id=>serial(async()=>{const s=await read();for(const r of Object.values(s.records))if(r.tabId===id){r.tabId=null;r.auto=false;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records});await tick();}).catch(()=>{}));

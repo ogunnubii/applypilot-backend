@@ -1,4 +1,11 @@
-const $=s=>document.querySelector(s);let token=sessionStorage.getItem('applypilot-token')||'',busy=false,lastSignature='',pendingHandoff=null;
+
+// Persist only an explicitly remembered session, never the password.
+function restoreSession(){const remembered=localStorage.getItem('applypilot-remembered-token');if(remembered)sessionStorage.setItem('applypilot-token',remembered);return remembered||sessionStorage.getItem('applypilot-token')||'';}
+function saveSession(value,remember){sessionStorage.setItem('applypilot-token',value);if(remember)localStorage.setItem('applypilot-remembered-token',value);else localStorage.removeItem('applypilot-remembered-token');}
+function clearSession(){sessionStorage.removeItem('applypilot-token');localStorage.removeItem('applypilot-remembered-token');localStorage.setItem('applypilot-signout',String(Date.now()));}
+window.addEventListener('storage',e=>{if(e.key==='applypilot-signout'){sessionStorage.removeItem('applypilot-token');location.reload();}});
+function rememberOption(form){const label=document.createElement('label'),box=document.createElement('input');box.type='checkbox';box.name='remember';box.style.cssText='width:auto;display:inline;margin-right:8px';label.style.cssText='display:block;margin:12px 0';label.append(box,document.createTextNode('Keep me signed in on this computer for up to 30 days'));form.insertBefore(label,form.querySelector('button'));return box;}
+const $=s=>document.querySelector(s);let token=restoreSession(),busy=false,lastSignature='',pendingHandoff=null;
 const el=(tag,text)=>{const e=document.createElement(tag);if(text)e.textContent=text;return e};
 async function api(path,method='GET',data){const r=await fetch((location.hostname.endsWith('netlify.app')?'https://marvelous-vitality-production-c2d8.up.railway.app':'')+'/api'+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d}
 function field(form,label){const l=el('label',label),i=el('textarea');i.required=true;i.maxLength=4000;l.append(i);form.append(l);return i}
@@ -61,6 +68,8 @@ async function refresh(force=false){
  current.sort((a,b)=>(['local_browser','needs_review','paused','running','queued'].indexOf(a.status)-['local_browser','needs_review','paused','running','queued'].indexOf(b.status)));
  for(const job of current){
   const card=el('article');card.className='job';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');card.dataset.state=job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');names.append(el('h2',job.title),el('small',job.company));const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.local_phase==='blocked'?'Blocked':job.local_attempt_at?'Applying · verifying':'Applying · local',submitted:'Submitted',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
+  const updated=Date.parse(job.updated_at),stamp=el('p');stamp.className='last-updated';stamp.style.cssText='font-size:13px;color:#626c65;margin:8px 0';
+  if(Number.isFinite(updated)){const time=el('time',new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(updated)));time.dateTime=new Date(updated).toISOString();stamp.append(document.createTextNode('Last updated: '),time);}else stamp.textContent='Last updated: unavailable';card.append(stamp);
   if(['submitted','interview','rejected','offer'].includes(job.status)){
    card.append(el('p',job.confirmation||'Employer outcome recorded.'));
    const label=el('label','Employer outcome '),select=el('select');
@@ -187,8 +196,9 @@ async function updateDiscovery(){
  if(searches.some(s=>s.instruction.includes('priority: York Region')))section.append(el('p','Priority: York Region → Toronto → GTA → remote → Canada → worldwide. Matches are based on your role preferences; eligibility may still need your input.'));
  }catch{section.textContent='Search activity could not be loaded. Refresh to try again.';}
 }
-$('#auth').onsubmit=async e=>{e.preventDefault();try{token=(await api('/login','POST',Object.fromEntries(new FormData(e.target)))).token;sessionStorage.setItem('applypilot-token',token);await refresh(true);$('#notice').textContent=''}catch(e){$('#notice').textContent=e.message}};
-$('#logout').onclick=()=>{sessionStorage.removeItem('applypilot-token');location.reload()};
+const rememberLogin=rememberOption($('#auth'));
+$('#auth').onsubmit=async e=>{e.preventDefault();try{token=(await api('/login','POST',{...Object.fromEntries(new FormData(e.target)),remember:rememberLogin.checked})).token;saveSession(token,rememberLogin.checked);await refresh(true);$('#notice').textContent=''}catch(e){$('#notice').textContent=e.message}};
+$('#logout').onclick=()=>{clearSession();location.reload()};
 for(const a of document.querySelectorAll('[data-profile-link]'))a.href=location.hostname.endsWith('netlify.app')?'/setup.html':'/setup';
 let activeHandoff=null,remoteBusy=false,remoteTimer=null,currentFilter='all';
 function applyFilters(){const q=$('#job-search').value.toLowerCase().trim();let shown=0;for(const card of $('#jobs').children){const state=card.dataset.state;const match=currentFilter==='all'||currentFilter===state||currentFilter==='needs'&&['paused','needs_review'].includes(state)||currentFilter==='applying'&&['queued','running','local_browser'].includes(state)||currentFilter==='local'&&card.dataset.local==='true';card.hidden=!(match&&card.dataset.search.includes(q));if(!card.hidden)shown++;}$('#empty-state').hidden=shown>0;}

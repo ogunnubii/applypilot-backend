@@ -65,7 +65,10 @@ async function refresh(force=false){
  const signature=JSON.stringify(current);
  if(!force&&(signature===lastSignature||$('#jobs').contains(document.activeElement)||$('#jobs').querySelector('[data-dirty="true"],details[open]')))return;
  lastSignature=signature;$('#jobs').replaceChildren();
- current.sort((a,b)=>(['local_browser','needs_review','paused','running','queued'].indexOf(a.status)-['local_browser','needs_review','paused','running','queued'].indexOf(b.status)));
+ const blocked=j=>['needs_review','paused'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked';
+ const rank=j=>blocked(j)?0:1+['local_browser','running','queued','saved','submitted','interview','rejected','offer'].indexOf(j.status);
+ const updated=j=>Number.isFinite(Date.parse(j.updated_at))?Date.parse(j.updated_at):0;
+ current.sort((a,b)=>rank(a)-rank(b)||updated(b)-updated(a)||String(a.id).localeCompare(String(b.id)));
  for(const job of current){
   const card=el('article');card.className='job';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');card.dataset.state=job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');names.append(el('h2',job.title),el('small',job.company));const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.local_phase==='blocked'?'Blocked':job.local_attempt_at?'Applying · verifying':'Applying · local',submitted:'Submitted',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
   const updated=Date.parse(job.updated_at),stamp=el('p');stamp.className='last-updated';stamp.style.cssText='font-size:13px;color:#626c65;margin:8px 0';

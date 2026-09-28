@@ -15,6 +15,7 @@ CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(status,created_at);CREATE INDEX IF
 if(!db.prepare('PRAGMA table_info(searches)').all().some(c=>c.name==='auto_generated'))db.exec('ALTER TABLE searches ADD COLUMN auto_generated INTEGER NOT NULL DEFAULT 0');
 export function event(id,type,message){db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(id,new Date().toISOString(),type,String(message).slice(0,800))}
 export const now=()=>new Date().toISOString();
+if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='discovery_priority'))db.exec('ALTER TABLE jobs ADD COLUMN discovery_priority INTEGER NOT NULL DEFAULT 5');
 export {canonicalJobURL as normalizeURL} from './form-policy.js';
 
 db.exec(`CREATE TABLE IF NOT EXISTS worker_status(id INTEGER PRIMARY KEY,heartbeat TEXT NOT NULL);CREATE TABLE IF NOT EXISTS chat_usage(user_id TEXT NOT NULL,day TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(user_id,day));`);

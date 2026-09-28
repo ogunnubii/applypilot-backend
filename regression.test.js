@@ -9,6 +9,8 @@ test('Role variants and Canadian cities match without accepting US-only remote',
  assert(!matches({title:'Sales Engineer',location:'Canada',remote:true},intent));
  assert(!matches({title:'DevOps Engineer',location:'London',remote:false},intent));
  assert(matches({title:'Cloud Engineer',location:'Worldwide',remote:true},intent));
+ assert(matches({title:'Site Reliability Engineer',location:'Home based - Worldwide'},intent));
+ assert(!matches({title:'Site Reliability Engineer',location:'Home based - United States'},intent));
  assert(!matches({title:'Nursing Director',location:'Canada'},parseIntent('Nurse; Canada')));
 });
 test('Discovery queues only eligible direct matches and deduplicates repeated runs',async()=>{
@@ -17,6 +19,15 @@ test('Discovery queues only eligible direct matches and deduplicates repeated ru
  db.prepare('INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,created_at) VALUES(?,?,?,?,?,?,?)').run('s','u','a','DevOps Engineer; Canada','["https://jobs.lever.co/example"]',1,now());
  const original=global.fetch;global.fetch=async url=>({ok:true,headers:new Headers(),text:async()=>JSON.stringify(String(url).includes('api.lever.co')?[{text:'Site Reliability Engineer',categories:{location:'Toronto'},applyUrl:'https://jobs.lever.co/example/abc/apply'}]:String(url).includes('jobicy')?{jobs:[]}:{data:[]})});
  try{const first=await runSearch('s','u');assert.equal(first.queued,1);assert.equal((await runSearch('s','u')).added,0);db.prepare("UPDATE jobs SET status='saved' WHERE applicant_id='a'").run();assert.equal((await runSearch('s','u')).queued,1);assert.equal(JSON.parse(db.prepare("SELECT last_result_json FROM searches WHERE id='s'").get().last_result_json).queued,1);}finally{global.fetch=original}
+});
+test('Expanded roles preserve CI/CD and the requested location priority',async()=>{
+ const {locationPriority}=await import('./matching.js');
+ const roles=['Application Support Engineer','Technical Support Engineer','Cloud Support Engineer','Production Support Engineer','Systems Administrator','Infrastructure Engineer','DevOps Engineer','Platform Engineer','NOC Engineer','CI/CD Engineer','Head of Infrastructure'];
+ const intent=parseIntent(roles.join(', ')+'; priority: York Region > Toronto > GTA > remote > Canada > worldwide');
+ assert.equal(intent.roles.length,11);assert(intent.roles.includes('ci/cd engineer'));
+ for(const title of roles)assert(matches({title,location:'Berlin'},intent));
+ assert.deepEqual([{location:'Markham, Ontario'},{location:'North York, Toronto'},{location:'Mississauga'},{location:'Remote - Canada'},{location:'Vancouver, Canada'},{location:'Berlin'}].map(locationPriority),[0,1,2,3,4,5]);
+ assert(!matches({title:'Accountant',location:'Markham'},intent));
 });
 test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',async()=>{
  const duplicateId='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
@@ -119,4 +130,14 @@ test('Full handoff slots evict an idle browser instead of stopping queued work',
  await h.hold({id:'first'},context,page);await h.hold({id:'second'},context,page);
  assert.equal(closed,1);assert(!h.sessions.has('first'));assert(h.sessions.has('second'));assert.equal(events[0].id,'first');
  h.sessions.get('second').busy=true;assert.equal(await h.hold({id:'third'},context,page),false);assert(h.sessions.has('second'));assert.equal(closed,2);
+});
+
+test('Fast handoff acknowledges input without screenshots and still verifies receipts on view',async()=>{
+ const {Handoffs}=await import('./handoff.js');let screenshots=0,submitted=0,intents=0,body='Application form';const keys=[],scroll=[];
+ const page={isClosed:()=>false,frames:()=>[page],url:()=> 'https://jobs.lever.co/example/one',locator:()=>({innerText:async()=>body}),screenshot:async()=>{screenshots++;return Buffer.from('same-frame')},keyboard:{insertText:async x=>keys.push(x),press:async x=>keys.push(x)},mouse:{move:async(...p)=>scroll.push(p),wheel:async(...p)=>scroll.push(p)},evaluate:async()=>false};
+ const context={pages:()=>[page],close:async()=>{}};const h=new Handoffs({onClose:()=>{},onResume:()=>{},onSubmitted:()=>submitted++,onPossibleSubmit:()=>intents++});await h.hold({id:'j',user_id:'u'},context,page);
+ assert.deepEqual(await h.command('u','j','text',{text:'Hello',render:false}),{accepted:true});assert.equal(screenshots,0);
+ await h.command('u','j','key',{key:'ArrowLeft',render:false});await h.command('u','j','scroll',{y:30,x:2,pointerX:100,pointerY:200,render:false});assert.deepEqual(keys,['Hello','ArrowLeft']);assert.deepEqual(scroll,[[100,200],[2,30]]);
+ const first=await h.command('u','j','view');const second=await h.command('u','j','view',{frameId:first.frameId});assert(first.image);assert.equal(second.image,undefined);
+ await h.command('u','j','key',{key:'Enter',render:false});assert.equal(intents,1);body='Thank you for applying';assert.equal((await h.command('u','j','view')).submitted,true);assert.equal(submitted,1);
 });

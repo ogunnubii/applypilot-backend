@@ -1,4 +1,4 @@
-const $=s=>document.querySelector(s);let token=sessionStorage.getItem('applypilot-token')||'',busy=false,lastSignature='';
+const $=s=>document.querySelector(s);let token=sessionStorage.getItem('applypilot-token')||'',busy=false,lastSignature='',pendingHandoff=null;
 const el=(tag,text)=>{const e=document.createElement(tag);if(text)e.textContent=text;return e};
 async function api(path,method='GET',data){const r=await fetch((location.hostname.endsWith('netlify.app')?'https://marvelous-vitality-production-c2d8.up.railway.app':'')+'/api'+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d}
 function field(form,label){const l=el('label',label),i=el('textarea');i.required=true;i.maxLength=4000;l.append(i);form.append(l);return i}
@@ -18,6 +18,14 @@ async function refresh(force=false){
  notificationSettings();
  updateDiscovery();
  const current=jobs.filter(j=>j.status!=='duplicate');
+ if(pendingHandoff){
+  const target=current.find(j=>j.id===pendingHandoff.id);
+  if(target?.handoff_available){pendingHandoff=null;document.querySelector('#preparing-browser')?.remove();await openHandoff(target);return;}
+  if(!target||['submitted','interview','rejected','offer'].includes(target.status)||['Unconfirmed submission','Submission in progress'].includes(target.challenge)){
+   const message=target?.challenge?.includes('submission')?'A submission may already have occurred. Check the employer receipt before restarting.':'Application preparation ended. Check its current status below.';
+   pendingHandoff=null;document.querySelector('#preparing-browser')?.remove();$('#notice').textContent=message;force=true;
+  }else if(Date.now()-pendingHandoff.started>180000){pendingHandoff=null;const banner=$('#preparing-browser');if(banner)banner.textContent='The live browser is taking longer than expected. Check the application below or try again when the worker is available.';force=true;}
+ }
  renderMissingAnswers(current);
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  $('#needs-count').textContent=current.filter(j=>['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
@@ -54,7 +62,21 @@ async function refresh(force=false){
   let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}
   const upload=job.challenge==='Upload needs review'||/upload|resume.*not found/i.test(job.blocker_message||'');
   const takeover=el('button',job.handoff_available?'Take over filled application':'Prepare live application');
-  takeover.onclick=async()=>{takeover.disabled=true;try{const r=await api('/jobs/'+job.id+'/handoff/open','POST',{});if(r.available)await openHandoff(job);else{$('#notice').textContent='The worker is preparing your live form. It will show Take over when ready. Up to three sessions can stay open.';await refresh(true)}}catch(e){msg.textContent=e.message}finally{takeover.disabled=false}};if(job.status!=='local_browser')actions.append(takeover);
+  takeover.onclick=async()=>{
+   if(pendingHandoff){$('#notice').textContent='Another live browser is being prepared. Wait for it or cancel opening it.';return;}
+   takeover.disabled=true;takeover.textContent='Preparing browser…';
+   try{const r=await api('/jobs/'+job.id+'/handoff/open','POST',{});if(r.available)await openHandoff(job);else{
+    pendingHandoff={id:job.id,started:Date.now()};
+    let banner=$('#preparing-browser');if(!banner){banner=el('section');banner.id='preparing-browser';banner.style.cssText='padding:20px;background:#e2ede7;border:2px solid #74ad91;border-radius:12px;margin-bottom:20px';$('#workspace').insertBefore(banner,$('#jobs').closest('.list-panel')||$('#jobs'));}
+    banner.replaceChildren(el('p','Preparing the live browser for '+job.company+' — '+job.title+'. It will open here automatically when ready.'));
+    banner.setAttribute('role','status');const cancel=el('button','Cancel opening');cancel.onclick=()=>{pendingHandoff=null;banner.remove();$('#notice').textContent='Automatic opening cancelled. The worker may still prepare this application.';};banner.append(cancel);
+    await refresh(true);
+   }}catch(e){msg.textContent=e.message;$('#notice').textContent=e.message;}finally{takeover.disabled=false;takeover.textContent=job.handoff_available?'Take over filled application':'Prepare live application';}
+  };
+  if(job.status!=='local_browser'){
+   if(!job.handoff_available&&['Unconfirmed submission','Submission in progress'].includes(job.challenge))actions.append(el('p','Live restart is unavailable because a submission may already have occurred. Check the employer receipt using the employer link below.'));
+   else actions.append(takeover);
+  }
   if(job.status!=='local_browser'&&!human&&!upload&&!job.handoff_available){
    const form=el('form');form.oninput=()=>{form.dataset.dirty='true'};
    const fields=[];
@@ -149,8 +171,9 @@ let activeHandoff=null,remoteBusy=false,remoteTimer=null,currentFilter='all';
 function applyFilters(){const q=$('#job-search').value.toLowerCase().trim();let shown=0;for(const card of $('#jobs').children){const state=card.dataset.state;const match=currentFilter==='all'||currentFilter===state||currentFilter==='needs'&&['paused','needs_review'].includes(state)||currentFilter==='applying'&&['queued','running','local_browser'].includes(state)||currentFilter==='local'&&card.dataset.local==='true';card.hidden=!(match&&card.dataset.search.includes(q));if(!card.hidden)shown++;}$('#empty-state').hidden=shown>0;}
 $('#job-search').oninput=applyFilters;
 for(const b of document.querySelectorAll('[data-filter]'))b.onclick=()=>{currentFilter=b.dataset.filter;for(const other of document.querySelectorAll('[data-filter]'))other.setAttribute('aria-pressed',String(other===b));applyFilters()};
-$('#refresh-jobs').onclick=async()=>{const b=$('#refresh-jobs');b.disabled=true;try{await refresh()}catch(e){$('#notice').textContent=e.message}finally{b.disabled=false}};
+$('#refresh-jobs').onclick=async()=>{const b=$('#refresh-jobs');b.disabled=true;try{await refresh(true)}catch(e){$('#notice').textContent=e.message}finally{b.disabled=false}};
 if(token)refresh(true).catch(e=>$('#notice').textContent=e.message);
+setInterval(()=>{if(pendingHandoff&&!activeHandoff)refresh().catch(e=>$('#notice').textContent=e.message)},2000);
 setInterval(()=>{if(token)refresh().catch(e=>$('#notice').textContent=e.message)},15000);
 
 async function openHandoff(job){

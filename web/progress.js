@@ -18,6 +18,7 @@ async function refresh(force=false){
  notificationSettings();
  updateDiscovery();
  const current=jobs.filter(j=>j.status!=='duplicate');
+ renderMissingAnswers(current);
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  $('#needs-count').textContent=current.filter(j=>['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
  $('#applying-count').textContent=current.filter(j=>['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase!=='blocked').length;
@@ -74,6 +75,53 @@ async function refresh(force=false){
  applyFilters();
  const linked=document.getElementById(location.hash.slice(1));
  if(linked?.classList.contains('job')){linked.hidden=false;linked.style.outline='3px solid #74ad91';const details=linked.querySelector('details');if(details)details.open=true;if(!linked.dataset.focused){linked.scrollIntoView?.({block:'center'});linked.dataset.focused='true';}}
+}
+function renderMissingAnswers(jobs){
+ let section=$('#missing-answers');
+ if(section?.dataset.dirty==='true')return;
+ const signature=JSON.stringify(jobs.map(j=>[j.id,j.status,j.challenge,j.required_fields_json,j.handoff_available]));
+ if(section?.dataset.signature===signature)return;
+ if(!section){section=el('section');section.id='missing-answers';section.style.cssText='padding:24px;margin:20px 0;border:2px solid #74ad91;border-radius:14px;background:#f4faf6';$('#workspace').insertBefore(section,$('#jobs').closest('.list-panel')||$('#jobs'));}
+ section.dataset.signature=signature;section.replaceChildren(el('h2','Complete missing answers'));
+ section.append(el('p','Answer repeated questions once. These are questions already detected on your applications; employers may ask more later. Only enter facts you know are accurate.'));
+ const form=el('form'),groups=new Map(),eligible=[];
+ const human=new Set(['CAPTCHA','Sign-in','Unconfirmed submission','Submission in progress','Sensitive action','Upload needs review']);
+ let employerOnly=0;
+ for(const job of jobs){
+  if(!['paused','needs_review'].includes(job.status))continue;
+  if(human.has(job.challenge)){employerOnly++;continue;}
+  let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}
+  questions=[...new Set(questions)].filter(q=>typeof q==='string'&&q.trim());
+  const usable=questions.filter(q=>q.length<=240&&!/cards\[|field\d+|\b(certify|attest|signature|agree to|consent to|passport number|ssn|payment)\b/i.test(q));
+  if(!usable.length){employerOnly++;continue;}
+  eligible.push({job,questions,usable});
+  for(const question of usable){const key=JSON.stringify([job.applicant_id,question]);if(!groups.has(key))groups.set(key,{question,jobs:[]});groups.get(key).jobs.push(job);}
+ }
+ for(const group of groups.values()){
+  const label=el('label');label.style.cssText='display:block;margin:18px 0';label.append(el('strong',group.question));
+  const context=el('small',group.jobs.map(j=>j.company+' - '+j.title).join('; '));context.style.display='block';label.append(context);
+  const input=el('textarea');input.maxLength=4000;input.style.cssText='display:block;width:100%;min-height:75px;margin-top:6px;padding:10px;border:1px solid #baccc0;border-radius:8px';input.setAttribute('aria-label',group.question);label.append(input);group.input=input;form.append(label);
+ }
+ const message=el('p');message.setAttribute('role','status');
+ if(groups.size){
+  const autofill=el('button','Fill from saved profile');autofill.type='button';form.prepend(autofill);
+  autofill.onclick=async()=>{autofill.disabled=true;try{const {applicants=[]}=await api('/applicants');let count=0;for(const group of groups.values()){if(group.input.value.trim())continue;const profile=applicants.find(p=>p.id===group.jobs[0].applicant_id);if(!profile)continue;const normalize=q=>q.toLowerCase().replace(/[*:]/g,'').replace(/\s+/g,' ').trim();const key=normalize(group.question);const keys=Object.keys(profile.answers||{}).filter(q=>normalize(q)===key);const basic={'name':'name','full name':'name','email':'email','email address':'email','phone':'phone','phone number':'phone','location':'location'};const answer=keys.length===1?profile.answers[keys[0]]:basic[key]?profile[basic[key]]:null;if(typeof answer==='string'&&answer.trim()){group.input.value=answer;count++;}}if(count)section.dataset.dirty='true';message.textContent=`Filled ${count} answers from your saved facts. Review and save them below. Unknown facts remain blank.`;}catch(error){message.textContent=error.message;}finally{autofill.disabled=false}};
+  const rememberLabel=el('label'),remember=el('input');remember.type='checkbox';remember.checked=true;rememberLabel.append(remember,document.createTextNode(' Remember my answers for matching questions on future applications'));form.append(rememberLabel);
+  const submit=el('button','Save answers and continue ready applications');submit.style.cssText='display:block;margin-top:18px;background:#214d36;color:white';form.append(submit,message);
+  form.oninput=()=>{section.dataset.dirty='true'};
+  form.onsubmit=async e=>{e.preventDefault();const filled=[...groups.values()].filter(g=>g.input.value.trim());if(!filled.length){message.textContent='Enter at least one answer. You can leave questions blank and return later.';return;}submit.disabled=true;busy=true;let saved=0,queued=0;const failures=[];
+   try{for(const {job,questions,usable} of eligible){const answers={};for(const q of usable){const g=groups.get(JSON.stringify([job.applicant_id,q]));if(g.input.value.trim())answers[q]=g.input.value.trim();}if(!Object.keys(answers).length)continue;
+    try{for(const [question,answer] of Object.entries(answers)){await api('/jobs/'+job.id+'/answers','PUT',{question,answer,remember:remember.checked});saved++;}
+     if(!job.handoff_available&&questions.every(q=>Object.hasOwn(answers,q))){await api('/jobs/'+job.id+'/continue','POST',{answers,remember:remember.checked});queued++;}
+    }catch(error){failures.push(job.company+': '+error.message);}
+   }
+   message.textContent=`Saved ${saved} answers. ${queued} applications queued to continue.`+(failures.length?' Some applications need attention: '+failures.join('; '):' Any unanswered questions and employer-site steps still need your input.');
+   // Retain entered text until the user leaves, including on partial failures.
+   section.dataset.dirty='true';$('#notice').textContent=message.textContent;
+   }finally{busy=false;submit.disabled=false;await refresh(true);}
+  };
+ }else form.append(el('p','No readable missing-answer questions are available right now.'));
+ section.append(form,el('p',`${employerOnly} applications need an employer-site step, such as verification, a declaration, an upload, or a question whose label could not be read. Open Resolve next step below for those.`));
 }
 async function updateDiscovery(){
  let section=$('#discovery-status');if(!section){section=el('section');section.id='discovery-status';section.style.cssText='padding:16px;border:1px solid #dce6df;border-radius:12px;margin-bottom:20px';$('#workspace').prepend(section);}

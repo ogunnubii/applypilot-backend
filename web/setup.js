@@ -5,7 +5,7 @@ function saveSession(value,remember){sessionStorage.setItem('applypilot-token',v
 function clearSession(){sessionStorage.removeItem('applypilot-token');localStorage.removeItem('applypilot-remembered-token');localStorage.setItem('applypilot-signout',String(Date.now()));}
 window.addEventListener('storage',e=>{if(e.key==='applypilot-signout'){sessionStorage.removeItem('applypilot-token');location.reload();}});
 function rememberOption(form){const label=document.createElement('label'),box=document.createElement('input');box.type='checkbox';box.name='remember';box.style.cssText='width:auto;display:inline;margin-right:8px';label.style.cssText='display:block;margin:12px 0';label.append(box,document.createTextNode('Keep me signed in on this computer for up to 30 days'));form.insertBefore(label,form.querySelector('button'));return box;}
-const API=location.hostname.endsWith('netlify.app')?'https://marvelous-vitality-production-c2d8.up.railway.app/api':'/api';
+const API=(location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pages.dev'))?'https://marvelous-vitality-production-c2d8.up.railway.app/api':'/api';
 const $=s=>document.querySelector(s);let token=restoreSession(),profiles=[];
 async function api(path,method='GET',data){const r=await fetch(API+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d;}
 const notice=message=>$('#message').textContent=message;
@@ -17,4 +17,4 @@ $('#profile').onsubmit=async e=>{e.preventDefault();const button=e.submitter;but
 for(const name of ['job','search'])$('#'+name).onsubmit=async e=>{e.preventDefault();try{const id=$('#profiles').value;if(!id)throw Error('Save or select an applicant profile first.');const data={...Object.fromEntries(new FormData(e.target)),applicant_id:id};if(name==='search'){data.auto_queue=e.target.elements.auto_queue.checked;const r=await api('/searches','POST',data);await api('/searches/'+r.id+'/run','POST',{});}else await api('/jobs','POST',data);notice(name==='job'?'Job added to Found. Open Applications and choose Apply automatically.':'Search completed. Review found jobs in the dashboard.');}catch(err){notice(err.message);}};
 if(token)load().catch(err=>notice(err.message));
 
-if(location.hostname.endsWith('netlify.app'))document.querySelector('#open-dashboard').href='/automate.html';
+if((location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pages.dev')))document.querySelector('#open-dashboard').href='/automate.html';

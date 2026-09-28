@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ApplyPilot Local",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Run approved applications in your normal Chrome or Edge profile with durable receipt tracking.",
   "minimum_chrome_version": "120",
   "permissions": [
@@ -20,7 +20,8 @@
     "https://*.smartrecruiters.com/*",
     "https://*.workable.com/*",
     "https://*.bamboohr.com/*",
-    "https://*.recruitee.com/*"
+    "https://*.recruitee.com/*",
+    "https://applypilot-jobs.pages.dev/*"
   ],
   "background": {
     "service_worker": "background.js"

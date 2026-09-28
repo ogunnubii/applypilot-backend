@@ -1,10 +1,11 @@
 importScripts('policy.js');
 const P=globalThis.ApplyPilotPolicy;
-const environments={hosted:{dashboard:'https://applypilot-jobs.netlify.app/',api:'https://marvelous-vitality-production-c2d8.up.railway.app/api'},local:{dashboard:'http://localhost:8080/assistant',api:'http://localhost:8080/api'}};
+const environments={hosted:{dashboard:'https://applypilot-jobs.pages.dev/',legacyDashboard:'https://applypilot-jobs.netlify.app/',api:'https://marvelous-vitality-production-c2d8.up.railway.app/api'},local:{dashboard:'http://localhost:8080/assistant',api:'http://localhost:8080/api'}};
 const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','error','automaticDefault','userPaused'])});
 async function api(path,method='GET',data){
  const state=await read(),env=environments[state.environment]||environments.hosted;
- const tabs=await chrome.tabs.query({url:new URL(env.dashboard).origin+'/*'});
+ const origins=[env.dashboard,env.legacyDashboard].filter(Boolean).map(url=>new URL(url).origin+'/*');
+ const tabs=await chrome.tabs.query({url:origins});
  for(const tab of tabs){
   const result=await chrome.scripting.executeScript({target:{tabId:tab.id},func:async(base,path,method,data,device)=>{
    const token=sessionStorage.getItem('applypilot-token');if(!token)return {error:'Sign in to ApplyPilot first.'};

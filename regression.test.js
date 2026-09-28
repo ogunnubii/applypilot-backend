@@ -38,6 +38,9 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   let ready=false;for(let i=0;i<80;i++){try{if((await fetch(base+'/api/health')).ok){ready=true;break}}catch{}await new Promise(r=>setTimeout(r,50));}assert(ready,logs);
   assert.equal((await fetch(base+'/assistant')).status,200);assert.equal((await fetch(base+'/setup')).status,200);assert.equal((await fetch(base+'/setup.js')).status,200);assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(duplicateId).status,'duplicate');assert(db.prepare('SELECT COUNT(*) AS n FROM events WHERE job_id=?').get(duplicateId).n>0);
   assert.equal((await fetch(base+'/api/status')).status,401);
+  for(const origin of ['https://applypilot-jobs.netlify.app','https://applypilot-jobs.pages.dev']){const r=await fetch(base+'/api/health',{headers:{Origin:origin}});assert.equal(r.status,200);assert.equal(r.headers.get('access-control-allow-origin'),origin);}
+  assert.equal((await fetch(base+'/api/health',{method:'OPTIONS',headers:{Origin:'https://other.pages.dev'}})).status,403);
+  assert.equal((await fetch(base+'/api/health',{headers:{Origin:'https://applypilot-jobs.pages.dev.evil.example'}})).status,403);
   const headers={Authorization:'Bearer '+issueToken('u'),Origin:base,'Content-Type':'application/json','X-ApplyPilot-Device':'11111111-1111-1111-1111-111111111111'};
   assert.equal((await (await fetch(base+'/api/status',{headers})).json()).workerOnline,false);
   const id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';

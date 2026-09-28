@@ -4,7 +4,7 @@ function harness(shared={}){
  shared.store||={};shared.tabs||=[{id:1,url:'https://applypilot-jobs.netlify.app/automate.html'}];shared.claims||={};shared.calls||=[];
  const events={},jobs=[{id:'a',status:'saved',execution_mode:'local',url:'https://jobs.lever.co/org/a',title:'Fixture A'},{id:'b',status:'saved',execution_mode:'local',url:'https://jobs.ashbyhq.com/org/b',title:'Fixture B'}];
  const listener=name=>({addListener(fn){events[name]=fn;}});
- const chrome={storage:{local:{get:async()=>structuredClone(shared.store),set:async value=>Object.assign(shared.store,structuredClone(value)),setAccessLevel:async()=>{}}},alarms:{get:async()=>({name:'queue'}),create:async()=>{},onAlarm:listener('alarm')},runtime:{getURL:p=>'chrome-extension://fixture/'+p,onMessage:listener('message'),onStartup:listener('startup'),onInstalled:listener('installed')},tabs:{query:async ({url}={})=>shared.tabs.filter(t=>!url||t.url.startsWith('https://applypilot-jobs.netlify.app/')),get:async id=>{const t=shared.tabs.find(t=>t.id===id);if(!t)throw Error('No tab');return t;},create:async props=>{const t={id:shared.tabs.length+1,...props};shared.tabs.push(t);return t;},update:async(id,props)=>Object.assign(shared.tabs.find(t=>t.id===id),props),sendMessage:async()=>({ok:true}),onRemoved:listener('removed')},scripting:{executeScript:async({args})=>{
+ const chrome={windows:{update:async()=>{}},storage:{local:{get:async()=>structuredClone(shared.store),set:async value=>Object.assign(shared.store,structuredClone(value)),setAccessLevel:async()=>{}}},alarms:{get:async()=>({name:'queue'}),create:async()=>{},onAlarm:listener('alarm')},runtime:{getURL:p=>'chrome-extension://fixture/'+p,onMessage:listener('message'),onStartup:listener('startup'),onInstalled:listener('installed')},tabs:{query:async ({url}={})=>shared.tabs.filter(t=>!url||t.url.startsWith('https://applypilot-jobs.netlify.app/')),get:async id=>{const t=shared.tabs.find(t=>t.id===id);if(!t)throw Error('No tab');return t;},create:async props=>{const t={id:shared.tabs.length+1,...props};shared.tabs.push(t);return t;},update:async(id,props)=>Object.assign(shared.tabs.find(t=>t.id===id),props),sendMessage:async()=>({ok:true}),onRemoved:listener('removed')},scripting:{executeScript:async({args})=>{
   const [,route,method,data,device]=args;shared.calls.push({route,method,data,device});
   if(route==='/jobs')return [{result:{data:{jobs}}}];
   const [,id,action]=route.match(/\/jobs\/([^/]+)\/local\/(.*)/)||[];
@@ -53,4 +53,13 @@ test('Automatic mode starts by default, discovers later jobs, and respects Stop 
 });
 test('Automatic selection excludes cloud profiles and uncertain submissions',async()=>{
  const h=harness();h.jobs[0].execution_mode='cloud';h.jobs[1].local_attempt_at='recorded';await h.send('start');assert.equal(Object.keys(h.shared.store.records||{}).length,0);
+});
+
+test('Dashboard can focus an existing application without restarting it; foreign origins cannot',async()=>{
+ const h=harness();await h.send('open',{id:'a'});const before=h.shared.calls.length;
+ const sender={tab:{id:1},url:'https://applypilot-jobs.pages.dev/automate',frameId:0};
+ assert((await h.send('focus-existing',{id:'a'},sender)).ok);assert.equal(h.shared.calls.length,before);
+ assert(!(await h.send('focus-existing',{id:'a'},{...sender,url:'https://evil.example'})).ok);
+ const record=h.shared.store.records.a;h.shared.tabs.find(t=>t.id===record.tabId).url='https://jobs.lever.co/org/other';
+ assert(!(await h.send('focus-existing',{id:'a'},sender)).ok);assert.equal(h.shared.calls.length,before);
 });

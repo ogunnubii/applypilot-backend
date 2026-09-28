@@ -109,7 +109,15 @@ async function refresh(force=false){
   };
   if(job.status!=='local_browser'){
    if(!job.handoff_available&&['Unconfirmed submission','Submission in progress'].includes(job.challenge))actions.append(el('p','Live restart is unavailable because a submission may already have occurred. Check the employer receipt using the employer link below.'));
-   else actions.append(takeover);
+   else card.insertBefore(takeover,actions);
+  }
+  if(job.status==='local_browser'){
+   const resume=el('button','Continue application in my browser');resume.className='primary';
+   resume.onclick=async()=>{
+    resume.disabled=true;msg.textContent='Opening your existing employer tab…';actions.open=true;
+    try{await focusLocalApplication(job.id);msg.textContent='Your employer form is open in Chrome. Continue where ApplyPilot stopped.';}
+    catch(e){msg.textContent=e.message;}finally{resume.disabled=false;}
+   };card.insertBefore(resume,actions);
   }
   if(job.status!=='local_browser'&&!human&&!upload&&!job.handoff_available){
    const form=el('form');form.oninput=()=>{form.dataset.dirty='true'};
@@ -287,4 +295,14 @@ async function openHandoff(job){
  function visibility(){if(document.visibilityState==='visible')pump(true);else clearTimeout(pollTimer);}document.addEventListener('visibilitychange',visibility);
  panel.onkeydown=e=>{if(e.target===surface)return;if(e.key==='Escape'&&!sending&&!queue.length){e.preventDefault();finish();}};
  document.body.append(panel);resize();focus();await pump(true);
+}
+
+function focusLocalApplication(jobId){
+ return new Promise((resolve,reject)=>{
+  const requestId=crypto.randomUUID();
+  const finish=(error)=>{clearTimeout(timer);window.removeEventListener('message',receive);error?reject(Error(error)):resolve();};
+  const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-focus-result'&&e.data.requestId===requestId)finish(e.data.error);};
+  const timer=setTimeout(()=>finish('Open this dashboard in Chrome with the updated ApplyPilot Local extension enabled. If you just updated the extension, refresh this dashboard.'),4000);
+  window.addEventListener('message',receive);window.postMessage({type:'applypilot-focus-application',requestId,jobId},location.origin);
+ });
 }

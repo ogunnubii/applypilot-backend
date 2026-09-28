@@ -20,5 +20,25 @@
     const keys = Object.keys(answers || {}).filter(k => normalize(k) === normalize(question));
     return keys.length === 1 && ['string','number','boolean'].includes(typeof answers[keys[0]]) ? String(answers[keys[0]]) : null;
   }
-  globalThis.ApplyPilotPolicy = Object.freeze({domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer});
+
+  const aliases={
+   name:['full name','your full name','name','your name'],first:['first name','given name'],last:['last name','family name','surname'],
+   email:['email','email address','your email','your email address'],phone:['phone','phone number','telephone','telephone number','mobile','mobile phone','mobile number','contact number','contact phone number','primary phone number'],
+   location:['location','current location'],city:['city','current city','city of residence','town','town city','city town'],country:['country','country of residence','current country','residence country'],
+   region:['state','province','state province','province state'],postal:['postal code','zip code','zip postal code'],
+   linkedin:['linkedin','linkedin profile','linkedin url','linkedin profile url'],github:['github','github profile','github url','github profile url'],
+   school:['school','university','college university','school name','university name'],degree:['degree','degree type'],discipline:['discipline','field of study','major']
+  };
+  function fieldKind(question){const q=normalize(question).replace(/[():/_-]/g,' ').replace(/\b(optional|required)\b/g,'').replace(/\s+/g,' ').trim();return Object.keys(aliases).find(k=>aliases[k].includes(q));}
+  function knownAnswer(question,profile,answers){
+   if(sensitive(question))return null;
+   const exact=savedAnswer(question,answers);if(exact!==null)return exact;
+   const kind=fieldKind(question);if(!kind)return null;
+   const values=[...new Set(Object.keys(answers||{}).filter(k=>fieldKind(k)===kind&&!sensitive(k)).map(k=>String(answers[k]).trim()).filter(Boolean))];
+   if(values.length>1)return null;if(values.length===1)return values[0];
+   const p=profile||{},name=String(p.name||'').trim();
+   const direct={name,first:name.split(/\s+/)[0],last:name.split(/\s+/).slice(1).join(' '),email:p.email,phone:p.phone,location:p.location,city:p.city,country:p.country,region:p.region,postal:p.postal,linkedin:p.linkedin,github:p.github};
+   return direct[kind]||null;
+  }
+  globalThis.ApplyPilotPolicy = Object.freeze({domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer});
 })();

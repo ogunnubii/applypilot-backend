@@ -53,6 +53,15 @@ async function tick(){
 }
 async function handle(m,sender){
  await initialize();
+ if(m.action==='focus-existing'){
+  const allowed=['https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
+  if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
+  const s=await read(),record=s.records[m.id];
+  if(!record?.tabId)throw Error('The original employer tab is no longer open. Open ApplyPilot Local to review this application before restarting it.');
+  const tab=await chrome.tabs.get(record.tabId).catch(()=>null);
+  if(!tab||!P.sameApplication(tab.url,record.url))throw Error('The original employer form is no longer available. Open ApplyPilot Local to review it; no application was restarted.');
+  await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});return {focused:true};
+ }
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){
   if(m.action==='list')return {...await api('/jobs'),state:await read()};

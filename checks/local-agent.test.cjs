@@ -5,7 +5,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const root=path.join(__dirname,'..');
 const settle=()=>new Promise(r=>setTimeout(r,25));
-async function fixture(html,{automatic=true,answers={},initialAttempt=false}={}){
+async function fixture(html,{automatic=true,answers={},initialAttempt=false,before=()=>{}}={}){
  const dom=new JSDOM(html,{runScripts:'outside-only',url:'https://jobs.ashbyhq.com/example/job-123'}),w=dom.window;
  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});
  w.HTMLElement.prototype.getClientRects=function(){return this.type==='hidden'||this.hidden||this.style.display==='none'?[]:[{}];};
@@ -13,6 +13,7 @@ async function fixture(html,{automatic=true,answers={},initialAttempt=false}={})
  const packet={job:{title:'Fixture role',attempted:initialAttempt},profile:{name:'Fixture Applicant',email:'fixture@example.test',phone:'123',location:'Fixture city'},answers,resume:{name:'resume.pdf',base64:''},automatic};
  w.setInterval=fn=>{timers.push(fn);return timers.length;};w.clearInterval=()=>{};
  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:packet};if(m.action==='state')return {ok:true,data:{attempted,automatic:auto&&!attempted}};if(m.action==='attempt'){assert(!attempted,'attempt must not repeat');attempted=true;}if(m.action==='progress'&&m.blocked)auto=false;return {ok:true,data:{}};}}};
+ before(w);
  w.eval(fs.readFileSync(path.join(root,'extension/policy.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'extension/content.js'),'utf8'));await settle();
  return {w,messages,timers,close:()=>w.close(),tick:async()=>{for(const fn of [...timers])await fn();await settle();}};
 }
@@ -49,4 +50,17 @@ test('Existing receipts do not submit; restart after intent never clicks Submit 
 test('Radio answers are scoped by form and never use unmatched verifiable facts',async()=>{
  const f=await fixture('<form><fieldset><legend>Work authorized?</legend><label>Yes<input type="radio" name="auth" value="yes"></label><label>No<input type="radio" id="no" name="auth" value="no" required></label></fieldset><label>Employer name<input id="employer" required></label><button>Submit application</button></form>',{answers:{'Work authorized?':'No'}});
  try{assert.equal(f.w.document.querySelector('#no').checked,true);assert.equal(f.w.document.querySelector('#employer').value,'');assert(!f.messages.some(m=>m.action==='attempt'));}finally{f.close();}
+});
+
+test('Common field variants reuse verified answers without conflating residence and authorization',async()=>{
+ const f=await fixture('<form><label>Your email address<input id="email"></label><label>Contact phone number<input id="phone"></label><label>City of residence<input id="city"></label><label>Country<select id="country"><option disabled selected>Select country</option><option>Canada</option></select></label><label>University name<input id="school"></label><label>Are you legally authorized to work in the USA?<input id="auth" required></label><label>Would you like to join our community?<input id="community" type="checkbox"></label></form>',{answers:{City:'Toronto','Country of residence':'Canada',School:'Verified University','Are you legally authorized to work in Canada?':'Yes','Would you like to join our community?':'Yes'}});
+ try{for(const [id,value]of Object.entries({email:'fixture@example.test',phone:'123',city:'Toronto',country:'Canada',school:'Verified University',auth:''}))assert.equal(f.w.document.getElementById(id).value,value,id);assert(f.w.document.getElementById('community').checked);assert(!f.messages.some(m=>m.action==='attempt'));}finally{f.close();}
+});
+test('Known custom dropdown is selected while unrelated unknown fields remain blocked',async()=>{
+ const f=await fixture('<form><label>Country<input role="combobox" aria-controls="countries" aria-required="true" id="country"></label><div role="listbox" id="countries"><div role="option">Canada</div><div role="option">United States</div></div><label>Phone number<input id="phone"></label><label>Passport country<input required id="passport"></label></form>',{answers:{'Country of residence':'Canada'},before:w=>{w.document.querySelector('[role=option]').onclick=()=>{w.document.getElementById('country').value='Canada';w.document.getElementById('countries').hidden=true;};}});
+ try{await new Promise(r=>setTimeout(r,500));assert.equal(f.w.document.getElementById('country').value,'Canada');assert.equal(f.w.document.getElementById('phone').value,'123');assert.equal(f.w.document.getElementById('passport').value,'');assert(f.messages.some(m=>m.action==='progress'&&m.fields.includes('Passport country')));}finally{f.close();}
+});
+test('Conflicting aliases do not guess and authorization does not transfer between countries',async()=>{
+ const f=await fixture('<form><label>City of residence<input id="city" required></label><label>Do you require sponsorship?<input id="visa" required></label></form>',{answers:{City:'Toronto','Current city':'Ottawa','Are you authorized to work?':'Yes'}});
+ try{assert.equal(f.w.document.getElementById('city').value,'');assert.equal(f.w.document.getElementById('visa').value,'');assert(!f.messages.some(m=>m.action==='attempt'));}finally{f.close();}
 });

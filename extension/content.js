@@ -21,10 +21,25 @@ let attemptedCustom=new WeakMap();
 let fieldErrors=[];
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function fillCustom(e,a){
- // Dropdown choices are manual at the applicant's request. City search text
- // may be prepared, but only the applicant selects a location suggestion.
- if(P.fieldKind(label(e))!=='city'||!e.matches('input')||e.readOnly||e.value?.trim()||attemptedCustom.get(e)===String(a))return false;
- attemptedCustom.set(e,String(a));setValue(e,a);return false;
+ if(completedCustom.has(e))return false;
+ if(e.matches('input')&&e.value?.trim())return false;
+ if(attemptedCustom.get(e)===String(a))return false;
+ const ids=(e.getAttribute('aria-controls')||e.getAttribute('aria-owns')||'').split(/\s+/).filter(Boolean);
+ if(!ids.length)return false;
+ attemptedCustom.set(e,String(a));e.click();
+ if(e.matches('input')&&!e.readOnly)setValue(e,a);
+ for(let retry=0;retry<4;retry++){
+  const options=ids.flatMap(id=>[...(document.getElementById(id)?.querySelectorAll('[role=option]')||[])]).filter(o=>visible(o)&&o.getAttribute('aria-disabled')!=='true');
+  const matches=options.filter(o=>P.optionMatches(label(e),o.textContent,a,packet.profile));
+  if(matches.length===1){
+   const chosen=matches[0];chosen.click();
+   if(chosen.getAttribute('aria-selected')==='true'||e.matches('input')&&P.optionMatches(label(e),e.value,a,packet.profile)&&!visible(chosen)){completedCustom.add(e);return true;}
+   return false;
+  }
+  if(matches.length>1)return false;
+  if(retry<3)await pause(50);
+ }
+ return false;
 }
 
 function mount(){
@@ -45,7 +60,7 @@ function controls(){return [...document.querySelectorAll('input,select,textarea,
 function formAnswers(){
  const rows=[];for(const e of controls()){
   const q=label(e);if(P.sensitive(q)||/password|one.?time|verification code|captcha|birth|ethnic|race|gender|disability|veteran|sexual orientation|religion|medical/i.test(q)||['password','file','hidden','submit','button'].includes(e.type))continue;
-  if(e.getAttribute('role')==='combobox')continue;
+  if(e.getAttribute('role')==='combobox'&&!completedCustom.has(e))continue;
   let value=e.value;if(e.type==='radio'){if(!e.checked)continue;value=labelText(e.labels?.[0])||e.value;}else if(e.type==='checkbox'){if(!e.checked)continue;value='Yes';}else if(e.tagName==='SELECT'){if(!e.value||e.selectedOptions[0]?.disabled)continue;value=e.selectedOptions[0]?.textContent;}
   if(typeof value==='string'&&value.trim())rows.push({question:q,answer:value.trim().slice(0,4000)});
  }return rows.slice(0,120);
@@ -73,10 +88,10 @@ async function fill(){
  for(const e of fields){
   try{
   if(e.getAttribute('role')==='combobox'){const a=answer(e);if(a!==null&&await fillCustom(e,a))count++;continue;}
-  if(e.tagName==='SELECT')continue;
+  if(e.tagName==='SELECT'&&e.multiple)continue;
   if(!e.matches('input,select,textarea')||['hidden','password','file','checkbox','submit','button','radio'].includes(e.type)||(e.value?.trim()&&!(e.tagName==='SELECT'&&(e.selectedOptions[0]?.disabled||/^(select|choose)(\b|\.\.\.)/i.test(e.selectedOptions[0]?.textContent.trim()||'')))))continue;
   const a=answer(e);if(a===null||a===undefined||a==='')continue;
-  if(e.tagName==='SELECT'){const opts=[...e.options].filter(o=>!o.disabled&&(norm(o.textContent)===norm(a)||o.value===a));if(opts.length!==1)continue;setValue(e,opts[0].value);}else setValue(e,a);count++;
+  if(e.tagName==='SELECT'){const opts=[...e.options].filter(o=>!o.disabled&&P.optionMatches(label(e),o.textContent,a,packet.profile));if(opts.length!==1)continue;setValue(e,opts[0].value);}else setValue(e,a);count++;
   }catch(error){fieldErrors.push(label(e)+' (field could not accept the saved value)');}
  }
  for(const e of fields.filter(e=>e.type==='checkbox'&&!e.checked)){
@@ -107,8 +122,8 @@ async function advance(){
  const bs=buttons(),submit=bs.filter(e=>/^(submit(?: application)?|send application|send my application)$/i.test(buttonName(e))),next=bs.filter(e=>/^(next|continue|save and continue|review application)$/i.test(buttonName(e)));
  if(submit.length===1&&next.length===0){
   if(!controls().length&&!document.querySelector('form'))return report('Cannot identify the final application form.');
-  // Fetch fresh consent/profile and save intent on both server and PC before clicking.
-  await send('packet');await send('capture',{fields:formAnswers()});const before=bodyText();await send('attempt',{before});attempted=true;submitAt=Date.now();const finalCheck=review();if(finalCheck.reason)return report('Form changed before submission. '+finalCheck.reason,finalCheck.fields);submit[0].click();return;
+  await send('capture',{fields:formAnswers()});
+  return report('Ready for your review — check your answers, then click Submit on the employer page.',[],true);
  }
  if(next.length===1&&submit.length===0){
   if(!controls().length)return report('Cannot identify fields for this step.');

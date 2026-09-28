@@ -3,7 +3,11 @@ import {randomUUID} from 'node:crypto';
 import {db,event,now,normalizeURL} from './db.js';
 
 const boardHosts=new Set(['boards.greenhouse.io','job-boards.greenhouse.io','jobs.lever.co','jobs.eu.lever.co']);
-const jobHosts=/(^|\.)(greenhouse\.io|lever\.co)$/;
+export function directDiscoveryLink(value){
+ try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443')return false;
+ return ['boards.greenhouse.io','job-boards.greenhouse.io'].includes(u.hostname)&&/^\/[^/]+\/jobs\/\d+\/?$/.test(u.pathname)||['jobs.lever.co','jobs.eu.lever.co'].includes(u.hostname)&&/^\/[^/]+\/[a-z0-9-]+(?:\/apply)?\/?$/i.test(u.pathname);
+ }catch{return false;}
+}
 const placeWords=['remote','canada','toronto','ontario','united states','usa','uk','united kingdom'];
 const filler=/\b(find|search|show|me|for|a|an|the|jobs?|roles?|positions?|openings?|apply|to|automatically|please|that|are|in|at|from|with|my|all|new|and)\b/gi;
 
@@ -109,9 +113,10 @@ async function executeSearch(id,userId){
       for(const job of jobs){
         if(added>=250)break;
         if(!matches(job,intent))continue;
-        matched++;
         let url;try{url=normalizeURL(job.url)}catch{continue}
-        const direct=jobHosts.test(new URL(url).hostname);
+        const direct=directDiscoveryLink(url);
+        if(!direct)continue;
+        matched++;
         const canQueue=!!(direct&&search.auto_queue&&applicant.consent&&applicant.email&&applicant.resume_path);
         const id=randomUUID(),date=now();
         const result=db.prepare('INSERT OR IGNORE INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')

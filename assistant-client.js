@@ -2,6 +2,29 @@ const $=s=>document.querySelector(s);let token=sessionStorage.getItem('applypilo
 const el=(tag,text)=>{const e=document.createElement(tag);if(text)e.textContent=text;return e};
 async function api(path,method='GET',data){const r=await fetch((location.hostname.endsWith('netlify.app')?'https://marvelous-vitality-production-c2d8.up.railway.app':'')+'/api'+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d}
 function field(form,label){const l=el('label',label),i=el('textarea');i.required=true;i.maxLength=4000;l.append(i);form.append(l);return i}
+function chatQuestionTools(parent,question){
+ const tools=el('div');tools.className='chat-question-tools';tools.style.cssText='margin:8px 0 16px';
+ const copy=el('button','Copy question for ChatGPT');copy.type='button';
+ const open=el('a','Open ChatGPT');open.href='https://chatgpt.com/';open.target='_blank';open.rel='noopener noreferrer';open.style.marginLeft='12px';
+ const status=el('p');status.setAttribute('role','status');
+ const help=el('small','Copy the question, ask in your own ChatGPT chat, then paste and check the answer here before saving. ChatGPT plan limits apply; ApplyPilot makes no AI calls. Do not guess personal facts.');help.style.display='block';
+ let manual;
+ copy.onclick=async()=>{
+  const text=String(typeof question==='function'?question():question).trim();
+  if(!text){status.textContent='Enter the employer question first.';return;}
+  copy.disabled=true;
+  try{
+   if(!navigator.clipboard?.writeText)throw Error('Clipboard unavailable');
+   await navigator.clipboard.writeText(text);manual?.remove();manual=null;
+   status.textContent='Question copied. Open ChatGPT, paste it there, then bring the answer back. Nothing has been sent or saved.';
+  }catch{
+   if(!manual){manual=el('textarea');manual.readOnly=true;manual.setAttribute('aria-label','Question to copy manually');tools.append(manual);}
+   manual.value=text;manual.focus();manual.select();
+   status.textContent='Automatic copying is unavailable. Copy the selected question with Ctrl+C, or use your device’s Copy command.';
+  }finally{copy.disabled=false;}
+ };
+ tools.append(copy,open,help,status);parent.append(tools);
+}
 async function notificationSettings(){
  if($('#blocker-notifications'))return;
  const section=el('section');section.id='blocker-notifications';section.style.marginBottom='20px';
@@ -80,8 +103,8 @@ async function refresh(force=false){
   if(job.status!=='local_browser'&&!human&&!upload&&!job.handoff_available){
    const form=el('form');form.oninput=()=>{form.dataset.dirty='true'};
    const fields=[];
-   if(questions.length){for(const question of [...new Set(questions)])fields.push({question,input:field(form,question)})}
-   else{const q=field(form,'Question shown on the employer form');q.maxLength=240;fields.push({questionInput:q,input:field(form,'Your answer')})}
+   if(questions.length){for(const question of [...new Set(questions)]){fields.push({question,input:field(form,question)});chatQuestionTools(form,question);}}
+   else{const q=field(form,'Question shown on the employer form');q.maxLength=240;fields.push({questionInput:q,input:field(form,'Your answer')});chatQuestionTools(form,()=>q.value)}
    const rememberLabel=el('label'),remember=el('input');remember.type='checkbox';rememberLabel.append(remember,document.createTextNode('Remember these answers for this applicant'));form.append(rememberLabel);
    const submit=el('button','Save answers and continue');form.append(submit);
    form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;busy=true;try{const answers=Object.fromEntries(fields.map(f=>[f.question||f.questionInput.value.trim(),f.input.value.trim()]));await api('/jobs/'+job.id+'/continue','POST',{answers,remember:remember.checked});busy=false;await refresh(true);$('#notice').textContent='Answers saved. The worker will retry this application and submit if all requirements are satisfied.'}catch(e){msg.textContent=e.message}finally{busy=false;submit.disabled=false}};actions.append(form);
@@ -127,7 +150,7 @@ function renderMissingAnswers(jobs){
  for(const group of groups.values()){
   const label=el('label');label.style.cssText='display:block;margin:18px 0';label.append(el('strong',group.question));
   const context=el('small',group.jobs.map(j=>j.company+' - '+j.title).join('; '));context.style.display='block';label.append(context);
-  const input=el('textarea');input.maxLength=4000;input.style.cssText='display:block;width:100%;min-height:75px;margin-top:6px;padding:10px;border:1px solid #baccc0;border-radius:8px';input.dataset.answerKey=JSON.stringify([group.jobs[0].applicant_id,group.question]);input.setAttribute('aria-label',group.question);label.append(input);group.input=input;form.append(label);
+  const input=el('textarea');input.maxLength=4000;input.style.cssText='display:block;width:100%;min-height:75px;margin-top:6px;padding:10px;border:1px solid #baccc0;border-radius:8px';input.dataset.answerKey=JSON.stringify([group.jobs[0].applicant_id,group.question]);input.setAttribute('aria-label',group.question);label.append(input);group.input=input;form.append(label);chatQuestionTools(form,group.question);
  }
  const message=el('p');message.setAttribute('role','status');
  if(groups.size||ready.length){

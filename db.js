@@ -43,6 +43,12 @@ if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='required_field
 
 if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='handoff_available'))db.exec('ALTER TABLE jobs ADD COLUMN handoff_available INTEGER NOT NULL DEFAULT 0');
 
+// Preserve a SQLite-consistent snapshot before upgrading an existing installation.
+if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='local_owner')&&db.prepare('SELECT COUNT(*) AS n FROM jobs').get().n>0){
+ const backup=location+'.before-local-agent-'+Date.now()+'.sqlite';
+ db.prepare('VACUUM INTO ?').run(backup);
+ console.log('Saved pre-upgrade database backup');
+}
 for(const [name,type] of [['local_owner','TEXT'],['local_attempt_at','TEXT'],['local_phase',"TEXT NOT NULL DEFAULT 'ready'"]]) {
  if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name===name))db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${type}`);
 }

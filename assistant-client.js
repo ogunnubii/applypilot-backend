@@ -27,8 +27,12 @@ async function refresh(force=false){
    label.append(select);card.append(label);$('#jobs').append(card);continue;
   }
   if(job.status==='saved'){
-   const p=el('p','Ready for the local browser queue. Open the extension to start routine applications.');
-   const a=el('a','Browser setup');a.href='https://applypilot-jobs.netlify.app/local-browser.html';card.append(p,a);$('#jobs').append(card);continue;
+   const local=job.execution_mode==='local';
+   const p=el('p',local?'This profile uses your Windows browser. Open the extension to start this application.':'ApplyPilot can fill and submit routine steps using your saved profile. It will stop for verification, unknown facts and sensitive statements.');
+   card.append(p);
+   if(local){const a=el('a','Browser setup');a.href='https://applypilot-jobs.netlify.app/local-browser.html';card.append(a);}
+   else{const start=el('button','Apply automatically'),message=el('p');message.setAttribute('role','status');start.onclick=async()=>{start.disabled=true;try{await api('/jobs/'+job.id+'/queue','POST',{});await refresh(true);$('#notice').textContent='Application queued. You can close this page; the hosted worker will continue.';}catch(e){message.textContent=e.message;start.disabled=false;}};card.append(start,message);}
+   $('#jobs').append(card);continue;
   }
   if(['running','queued'].includes(job.status)){card.append(el('p',job.status==='running'?'Applying with your saved answers…':'Waiting for the worker. No action needed.'));$('#jobs').append(card);continue}
   const blocker=el('p',job.status==='local_browser'?(job.last_message||'Continue in your employer browser tab.'):job.blocker_message||job.challenge||'This application needs your input.');blocker.className='blocker';card.append(blocker);const actions=el('details');actions.className='job-actions';actions.append(el('summary',job.status==='local_browser'?'Continue application':'Resolve next step'));card.append(actions);
@@ -59,6 +63,7 @@ async function refresh(force=false){
 }
 $('#auth').onsubmit=async e=>{e.preventDefault();try{token=(await api('/login','POST',Object.fromEntries(new FormData(e.target)))).token;sessionStorage.setItem('applypilot-token',token);await refresh(true);$('#notice').textContent=''}catch(e){$('#notice').textContent=e.message}};
 $('#logout').onclick=()=>{sessionStorage.removeItem('applypilot-token');location.reload()};
+for(const a of document.querySelectorAll('[data-profile-link]'))a.href=location.hostname.endsWith('netlify.app')?'/setup.html':'/setup';
 let activeHandoff=null,remoteBusy=false,remoteTimer=null,currentFilter='all';
 function applyFilters(){const q=$('#job-search').value.toLowerCase().trim();let shown=0;for(const card of $('#jobs').children){const state=card.dataset.state;const match=currentFilter==='all'||currentFilter===state||currentFilter==='needs'&&['paused','needs_review'].includes(state)||currentFilter==='applying'&&['queued','running','local_browser'].includes(state)||currentFilter==='local'&&card.dataset.local==='true';card.hidden=!(match&&card.dataset.search.includes(q));if(!card.hidden)shown++;}$('#empty-state').hidden=shown>0;}
 $('#job-search').oninput=applyFilters;

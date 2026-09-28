@@ -78,7 +78,8 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   assert.equal((await fetch(endpoint+'submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Thank you for applying',url:'https://jobs.lever.co/example/def',afterSubmit:true})})).status,400);
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({url:'https://jobs.lever.co/example/other',before:'Application'})})).status,409);
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({url:'https://jobs.lever.co/example/def',before:'I certify these statements'})})).status,409);
-  const intent={url:'https://jobs.lever.co/example/def/apply',before:'Application form'};
+  const intent={url:'https://jobs.lever.co/example/def/apply',before:'Application form',human:true};
+  assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({...intent,human:false})})).status,409);
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify(intent)})).status,200);
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify(intent)})).status,409);
   assert.equal((await (await fetch(endpoint+'claim',{method:'POST',headers,body:'{}'})).json()).attempted,true);

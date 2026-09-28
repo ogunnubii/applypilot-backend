@@ -1,4 +1,4 @@
-import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse} from './answer-library.js';
+import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse,reusableAnswers} from './answer-library.js';
 import {supported,sameApplication,receipt as employerReceipt,sensitive} from './local-policy.js';
 import {rememberAnswers} from './local-state.js';
 import {installNotifications,emailConfigured,sendBlockerEmails} from './notifications.js';
@@ -109,10 +109,11 @@ if(localRoute){
   const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
   if(!p?.consent)return send(res,403,{error:'Applicant consent required'});
   const bytes=await readFile(p.resume_path);if(bytes.length>limit)throw Error('Resume too large');
-  return send(res,200,{job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...JSON.parse(p.answers_json||'{}'),...JSON.parse(j.answers_json||'{}')},resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
+  return send(res,200,{job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...reusableAnswers(db,p),...JSON.parse(j.answers_json||'{}')},resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
  }
  if(action==='attempt'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
+  if(x.human!==true)return send(res,409,{error:'Review the employer form and click Submit yourself'});
   const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
   if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
   if(typeof x.before!=='string'||!sameApplication(x.url,j.url)||employerReceipt(x.before)||(x.human!==true&&sensitive(x.before)))return send(res,409,{error:'Application requires human review before submission'});

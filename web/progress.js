@@ -56,7 +56,7 @@ async function refresh(force=false){
    pendingHandoff=null;document.querySelector('#preparing-browser')?.remove();$('#notice').textContent=message;force=true;
   }else if(Date.now()-pendingHandoff.started>180000){pendingHandoff=null;const banner=$('#preparing-browser');if(banner)banner.textContent='The live browser is taking longer than expected. Check the application below or try again when the worker is available.';force=true;}
  }
- renderMissingAnswers(current);renderLibraryLauncher();
+ renderMissingAnswers(current);renderLibraryLauncher();renderFocusControl();
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  $('#needs-count').textContent=current.filter(j=>['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
  $('#applying-count').textContent=current.filter(j=>['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase!=='blocked').length;
@@ -319,4 +319,9 @@ function renderLibraryLauncher(){
  form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{await api('/answer-library/'+entry.id,'PUT',{answer:input.value,reuse:reuse.checked});status.textContent='Saved. Reusable answers are available when an application next fills saved answers.';}catch(e){status.textContent=e.message;}finally{save.disabled=false;}};
  remove.onclick=async()=>{if(!confirm('Delete this saved answer and stop reusing it?'))return;remove.disabled=true;try{await api('/answer-library/'+entry.id,'DELETE');form.remove();}catch(e){status.textContent=e.message;remove.disabled=false;}};list.append(form);
  }}catch(e){list.textContent=e.message;}finally{load.disabled=false;}};
+}
+
+function renderFocusControl(){if($('#work-focus'))return;const section=el('section');section.id='work-focus';section.style.cssText='padding:20px;background:#edf6ef;border-radius:12px;margin:16px 0';const message=el('p','Work through one application at a time. Other jobs stay saved in your backlog.'),start=el('button','Work on one application at a time'),next=el('button','Next application'),all=el('button','Show all saved applications');section.append(message,start,next,all);$('#workspace').prepend(section);
+ const show=f=>{message.textContent=f.enabled?'One application at a time. '+f.parked+' jobs are saved in your backlog. Submitted applications stay in Submitted.':'All saved applications are visible.';start.hidden=next.hidden=all.hidden=false;start.hidden=f.enabled;next.hidden=all.hidden=!f.enabled;};
+ const change=async data=>{try{show(await api('/work-focus','PUT',data));await refresh(true);}catch(e){message.textContent=e.message;}};start.onclick=()=>change({enabled:true});next.onclick=()=>change({enabled:true,next:true});all.onclick=()=>change({enabled:false});api('/work-focus').then(show).catch(e=>message.textContent=e.message);
 }

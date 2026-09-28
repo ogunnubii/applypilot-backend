@@ -28,7 +28,7 @@ const identityRows=db.prepare("SELECT * FROM jobs WHERE status!='duplicate' ORDE
 const identityGroups=new Map();for(const row of identityRows){let key;try{key=canonicalJobURL(row.url)}catch{continue}const group=row.applicant_id+'|'+key;if(!identityGroups.has(group))identityGroups.set(group,{key,rows:[]});identityGroups.get(group).rows.push(row);}
 db.exec('BEGIN IMMEDIATE');try{
  for(const {key,rows} of identityGroups.values()){
-  const rank=r=>r.status==='submitted'?0:['Unconfirmed submission','Submission in progress'].includes(r.challenge)?1:r.status==='running'?2:r.status==='paused'?3:4;
+  const rank=r=>['submitted','interview','rejected','offer'].includes(r.status)?0:['Unconfirmed submission','Submission in progress'].includes(r.challenge)?1:['running','local_browser'].includes(r.status)?2:r.status==='paused'?3:4;
   rows.sort((a,b)=>rank(a)-rank(b));const keeper=rows[0];
   for(const duplicate of rows.slice(1)){
    db.prepare("UPDATE jobs SET status='duplicate',normalized_url=?,updated_at=? WHERE id=?").run('duplicate:'+duplicate.id,now(),duplicate.id);
@@ -42,3 +42,14 @@ db.exec('BEGIN IMMEDIATE');try{
 if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='required_fields_json'))db.exec("ALTER TABLE jobs ADD COLUMN required_fields_json TEXT NOT NULL DEFAULT '[]'");
 
 if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='handoff_available'))db.exec('ALTER TABLE jobs ADD COLUMN handoff_available INTEGER NOT NULL DEFAULT 0');
+
+// Preserve a SQLite-consistent snapshot before upgrading an existing installation.
+if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='local_owner')&&db.prepare('SELECT COUNT(*) AS n FROM jobs').get().n>0){
+ const backup=location+'.before-local-agent-'+Date.now()+'.sqlite';
+ db.prepare('VACUUM INTO ?').run(backup);
+ console.log('Saved pre-upgrade database backup');
+}
+for(const [name,type] of [['local_owner','TEXT'],['local_attempt_at','TEXT'],['local_phase',"TEXT NOT NULL DEFAULT 'ready'"]]) {
+ if(!db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name===name))db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${type}`);
+}
+if(!db.prepare('PRAGMA table_info(applicants)').all().some(c=>c.name==='execution_mode'))db.exec("ALTER TABLE applicants ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'cloud'");

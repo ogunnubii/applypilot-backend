@@ -25,16 +25,16 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
  const child=spawn(process.execPath,['server.js'],{cwd:new URL('.',import.meta.url),env:{...process.env,PORT:String(port),PUBLIC_ORIGIN:'https://applypilot-jobs.netlify.app',SERVICE_ORIGIN:base},stdio:'pipe'});
  let logs='';child.stderr.on('data',d=>logs+=d);try{
   let ready=false;for(let i=0;i<80;i++){try{if((await fetch(base+'/api/health')).ok){ready=true;break}}catch{}await new Promise(r=>setTimeout(r,50));}assert(ready,logs);
-  assert.equal((await fetch(base+'/assistant')).status,200);assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(duplicateId).status,'duplicate');assert(db.prepare('SELECT COUNT(*) AS n FROM events WHERE job_id=?').get(duplicateId).n>0);
+  assert.equal((await fetch(base+'/assistant')).status,200);assert.equal((await fetch(base+'/setup')).status,200);assert.equal((await fetch(base+'/setup.js')).status,200);assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(duplicateId).status,'duplicate');assert(db.prepare('SELECT COUNT(*) AS n FROM events WHERE job_id=?').get(duplicateId).n>0);
   assert.equal((await fetch(base+'/api/status')).status,401);
-  const headers={Authorization:'Bearer '+issueToken('u'),Origin:base,'Content-Type':'application/json'};
+  const headers={Authorization:'Bearer '+issueToken('u'),Origin:base,'Content-Type':'application/json','X-ApplyPilot-Device':'11111111-1111-1111-1111-111111111111'};
   assert.equal((await (await fetch(base+'/api/status',{headers})).json()).workerOnline,false);
   const id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   db.prepare("INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,challenge,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'needs_review','Unconfirmed submission',?,?)").run(id,'u','a','SRE','Example','https://jobs.lever.co/example/def','https://jobs.lever.co/example/def',now(),now());
   assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers,body:'{}'})).status,409);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/handoff/open',{method:'POST',headers,body:'{}'})).status,409);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/handoff/view',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
-  const save=await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers,body:JSON.stringify({question:'Why this role?',answer:'I enjoy infrastructure operations.'})});assert.equal(save.status,200);
+  const save=await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers,body:JSON.stringify({question:'Why this role?',answer:'I enjoy infrastructure operations.',remember:true})});assert.equal(save.status,200);assert.equal(JSON.parse(db.prepare('SELECT answers_json FROM applicants WHERE id=?').get('a').answers_json)['Why this role?'],'I enjoy infrastructure operations.');
   assert.equal((await (await fetch(base+'/api/jobs/'+id+'/answers',{headers})).json()).answers['Why this role?'],'I enjoy infrastructure operations.');
   assert.equal((await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers,body:JSON.stringify({answers:{Question:'Answer'}})})).status,409);
@@ -59,7 +59,20 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   assert.equal((await fetch(base+'/api/jobs/'+id+'/local/progress',{method:'POST',headers,body:JSON.stringify({fields:['Work authorization'],message:'Needs work authorization'})})).status,200);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/local/submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Thank you for applying',afterSubmit:false})})).status,400);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/local/submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Please complete the form',afterSubmit:true})})).status,400);
-  assert.equal((await fetch(base+'/api/jobs/'+id+'/local/submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Thank you for applying',afterSubmit:true})})).status,200);
+  const endpoint=base+'/api/jobs/'+id+'/local/';
+  assert.equal((await fetch(endpoint+'claim',{method:'POST',headers:{...headers,'X-ApplyPilot-Device':'22222222-2222-2222-2222-222222222222'},body:'{}'})).status,409);
+  assert.equal((await fetch(endpoint+'submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Thank you for applying',url:'https://jobs.lever.co/example/def',afterSubmit:true})})).status,400);
+  assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({url:'https://jobs.lever.co/example/other',before:'Application'})})).status,409);
+  assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({url:'https://jobs.lever.co/example/def',before:'I certify these statements'})})).status,409);
+  const intent={url:'https://jobs.lever.co/example/def/apply',before:'Application form'};
+  assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify(intent)})).status,200);
+  assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify(intent)})).status,409);
+  assert.equal((await (await fetch(endpoint+'claim',{method:'POST',headers,body:'{}'})).json()).attempted,true);
+  assert.equal((await fetch(endpoint+'submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Thank you for applying',url:'https://jobs.lever.co/example/other',afterSubmit:true})})).status,400);
+  assert.equal((await fetch(endpoint+'submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Thank you for applying',url:'https://jobs.lever.co/example/def',afterSubmit:true})})).status,200);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/outcome',{method:'PUT',headers,body:JSON.stringify({status:'offer'})})).status,200);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers,body:'{}'})).status,409);
+  db.prepare("UPDATE jobs SET status='submitted' WHERE id=?").run(id);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(id).status,'submitted');
   assert.equal((await fetch(base+'/api/chat',{method:'POST',headers,body:JSON.stringify({applicant_id:'a',message:'Help'})})).status,400);
  }finally{if(child.exitCode===null){child.kill();await new Promise(r=>child.once('exit',r));}}
@@ -94,6 +107,16 @@ test('Live handoff isolates owners, preserves context on resume and expires idle
  await assert.rejects(h.command('other','job','view'),/No live browser/);
  assert((await h.command('owner','job','view')).image);
  await h.command('owner','job','resume');assert.equal(resumed,1);assert.equal(closed,0);assert.equal(h.sessions.size,0);
- await h.hold({id:'job',user_id:'owner'},context,page);body='Thank you for applying';assert.equal((await h.command('owner','job','view')).submitted,true);assert.equal(submitted,1);assert.equal(closed,1);
+ await h.hold({id:'job',user_id:'owner'},context,page);body='Thank you for applying';assert.equal((await h.command('owner','job','view')).submitted,undefined);assert.equal((await h.command('owner','job','key',{key:'Enter'})).submitted,true);assert.equal(submitted,1);assert.equal(closed,1);
  body='Application form';await h.hold({id:'job',user_id:'owner'},context,page);time=16*60*1000;await h.expire();assert.equal(h.sessions.size,0);assert.equal(closed,2);
+});
+
+test('Full handoff slots evict an idle browser instead of stopping queued work',async()=>{
+ const {Handoffs}=await import('./handoff.js');let closed=0;const events=[];
+ const page={frames:()=>[page],url:()=> 'https://jobs.lever.co/example/one',locator:()=>({innerText:async()=> 'Form'})};
+ const context={pages:()=>[page],close:async()=>{closed++;}};
+ const h=new Handoffs({max:1,onClose:(job,message)=>events.push({id:job.id,message}),onResume:()=>{},onSubmitted:()=>{},onPossibleSubmit:()=>{}});
+ await h.hold({id:'first'},context,page);await h.hold({id:'second'},context,page);
+ assert.equal(closed,1);assert(!h.sessions.has('first'));assert(h.sessions.has('second'));assert.equal(events[0].id,'first');
+ h.sessions.get('second').busy=true;assert.equal(await h.hold({id:'third'},context,page),false);assert(h.sessions.has('second'));assert.equal(closed,2);
 });

@@ -64,3 +64,12 @@ test('Conflicting aliases do not guess and authorization does not transfer betwe
  const f=await fixture('<form><label>City of residence<input id="city" required></label><label>Do you require sponsorship?<input id="visa" required></label></form>',{answers:{City:'Toronto','Current city':'Ottawa','Are you authorized to work?':'Yes'}});
  try{assert.equal(f.w.document.getElementById('city').value,'');assert.equal(f.w.document.getElementById('visa').value,'');assert(!f.messages.some(m=>m.action==='attempt'));}finally{f.close();}
 });
+
+test('Blocked forms stop polling; manual refill obtains newly saved profile data',async()=>{
+ const f=await fixture('<form><label>Phone<input id="phone"></label><label>Unknown fact<input required></label></form>');
+ try{const before=f.messages.length;await f.tick();await f.tick();assert.equal(f.messages.length,before,'blocked tabs must not flood the extension');const button=[...f.w.document.querySelectorAll('button')].find(b=>b.textContent==='Fill saved answers');await button.onclick();assert.equal(f.messages.filter(m=>m.action==='packet').length,2,'manual fill refreshes stale packet');}finally{f.close();}
+});
+test('Actual Grafana labels resolve explicit location parts and Toronto time zone',async()=>{
+ const f=await fixture('<form></form>',{automatic:false});
+ try{const p={location:'Toronto, Ontario, Canada'};assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Location (City)',p,{}),'Toronto');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Country',p,{}),'Canada');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('What country and time zone are you based in?',p,{}),'Canada — Eastern Time (America/Toronto)');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Are you currently eligible to work in your country of residence?',p,{}),null);}finally{f.close();}
+});

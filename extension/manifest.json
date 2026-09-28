@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ApplyPilot Local",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Run approved applications in your normal Chrome or Edge profile with durable receipt tracking.",
   "minimum_chrome_version": "120",
   "permissions": [

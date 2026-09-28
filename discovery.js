@@ -25,8 +25,8 @@ export function parseIntent(input){
   const lower=instruction.toLowerCase();
   const remote=/\bremote\b/.test(lower);
   const places=placeWords.filter(p=>new RegExp(`\\b${p}\\b`,'i').test(lower)&&p!=='remote');
-  let roleText=instruction.split(';')[0].replace(/\b(in|near|around)\s+(canada|toronto|ontario|united states|usa|uk|united kingdom)\b/gi,'').replace(/\b(remote|canada|toronto|ontario|united states|usa|uk|united kingdom)\b/gi,'').replace(/\band\b/gi,',').replace(filler,' ').replace(/\s+/g,' ').trim();
-  let roles=roleText.split(/\s*(?:,|\bor\b|&)\s*/i).map(s=>s.toLowerCase().trim()).filter(Boolean);
+  let roleText=instruction.split(';')[0].replace(/\bbuild and release\b/gi,'Build-Release').replace(/\b(in|near|around)\s+(canada|toronto|ontario|united states|usa|uk|united kingdom)\b/gi,'').replace(/\b(remote|canada|toronto|ontario|united states|usa|uk|united kingdom)\b/gi,'').replace(/\band\b/gi,',').replace(filler,' ').replace(/\s+/g,' ').trim();
+  let roles=roleText.split(/\s*(?:,|\bor\b|&)\s*/i).map(s=>s.toLowerCase().trim().replace(/\bbuild-release\b/g,'build and release')).filter(Boolean);
   if(!roles.length)throw Error('Include a role, for example: DevOps engineer; remote; Canada');
   const locationOrder=lower.includes('priority: york region > toronto > gta > remote > canada > worldwide')?'york-toronto-gta-remote-canada-worldwide':null;
   return {roles:roles.slice(0,80),remote:locationOrder?false:remote,places:locationOrder?[]:places,locationOrder};

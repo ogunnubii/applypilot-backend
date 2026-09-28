@@ -22,9 +22,9 @@ test('Discovery queues only eligible direct matches and deduplicates repeated ru
 });
 test('Expanded roles preserve CI/CD and the requested location priority',async()=>{
  const {locationPriority}=await import('./matching.js');
- const roles=['Application Support Engineer','Technical Support Engineer','Cloud Support Engineer','Production Support Engineer','Systems Administrator','Infrastructure Engineer','DevOps Engineer','Platform Engineer','NOC Engineer','CI/CD Engineer','Head of Infrastructure'];
+ const roles=['Application Support Engineer','Technical Support Engineer','Cloud Support Engineer','Production Support Engineer','Systems Administrator','Infrastructure Engineer','DevOps Engineer','Platform Engineer','NOC Engineer','CI/CD Engineer','Head of Infrastructure','Build and Release Engineer'];
  const intent=parseIntent(roles.join(', ')+'; priority: York Region > Toronto > GTA > remote > Canada > worldwide');
- assert.equal(intent.roles.length,11);assert(intent.roles.includes('ci/cd engineer'));
+ assert.equal(intent.roles.length,12);assert(intent.roles.includes('ci/cd engineer'));
  for(const title of roles)assert(matches({title,location:'Berlin'},intent));
  assert.deepEqual([{location:'Markham, Ontario'},{location:'North York, Toronto'},{location:'Mississauga'},{location:'Remote - Canada'},{location:'Vancouver, Canada'},{location:'Berlin'}].map(locationPriority),[0,1,2,3,4,5]);
  assert(!matches({title:'Accountant',location:'Markham'},intent));

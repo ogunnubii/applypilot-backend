@@ -1,5 +1,6 @@
 import {supported} from './local-policy.js';
 import {createServer} from 'node:http';
+import {createHash} from 'node:crypto';
 import {readToken} from './auth.js';
 const receipt=/thank you for (applying|your application)|application (has been )?(submitted|received)|successfully applied/i;
 export class Handoffs {
@@ -49,16 +50,21 @@ export class Handoffs {
     if(typeof data.text!=='string'||!data.text.length||data.text.length>4000)throw Error('Enter up to 4,000 characters');
     await p.keyboard.insertText(data.text);s.touched=this.clock();
    }else if(action==='key'){
-    if(!['Tab','Shift+Tab','Enter','Backspace','Delete','ArrowDown','ArrowUp','Escape','ControlOrMeta+A','Space'].includes(data.key))throw Error('Unsupported key');
+    if(!['Tab','Shift+Tab','Enter','Backspace','Delete','ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Home','End','PageDown','PageUp','Escape','ControlOrMeta+A','Space'].includes(data.key))throw Error('Unsupported key');
     if(data.key==='Enter'){s.attempted=true;this.onPossibleSubmit(s.job);}
     await p.keyboard.press(data.key);s.touched=this.clock();
    }else if(action==='scroll'){
-    if(!Number.isFinite(data.y)||Math.abs(data.y)>1000)throw Error('Invalid scroll');await p.mouse.wheel(0,data.y);s.touched=this.clock();
+    if(!Number.isFinite(data.y)||Math.abs(data.y)>1000||!Number.isFinite(data.x??0)||Math.abs(data.x??0)>1000)throw Error('Invalid scroll');
+    if(data.pointerX!==undefined||data.pointerY!==undefined){if(!Number.isFinite(data.pointerX)||!Number.isFinite(data.pointerY)||data.pointerX<0||data.pointerX>1100||data.pointerY<0||data.pointerY>800)throw Error('Invalid pointer');await p.mouse.move(data.pointerX,data.pointerY);}
+    await p.mouse.wheel(data.x||0,data.y);s.touched=this.clock();
    }else if(action!=='view')throw Error('Unsupported browser action');
-   let content='';for(const frame of p.frames())if(supported(frame.url()))content+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
+   // Input acknowledgements do not wait for image capture. The next view checks receipts.
+   if(data.render===false&&['click','drag','text','key','scroll'].includes(action))return {accepted:true};
+   let content='';if(s.attempted&&!s.initialReceipt)for(const frame of p.frames())if(supported(frame.url()))content+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
    if(s.attempted&&!s.initialReceipt&&receipt.test(content)){this.onSubmitted(s.job);this.sessions.delete(id);await s.context.close();return {submitted:true}}
-   const image=await p.screenshot({type:'jpeg',quality:65,timeout:10000});
-   const url=new URL(p.url());return {image:image.toString('base64'),width:1100,height:800,host:url.hostname,uploadRequested:!!s.chooser,expiresAt:Math.min(s.touched+15*60*1000,s.created+45*60*1000)};
+   const image=await p.screenshot({type:'jpeg',quality:60,timeout:10000});
+   const frameId=createHash('sha256').update(image).digest('hex');
+   const url=new URL(p.url());return {image:data.frameId===frameId?undefined:image.toString('base64'),frameId,width:1100,height:800,host:url.hostname,uploadRequested:!!s.chooser,expiresAt:Math.min(s.touched+15*60*1000,s.created+45*60*1000)};
   }finally{s.busy=false}
  }
 }

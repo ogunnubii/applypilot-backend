@@ -1,4 +1,4 @@
-import {matches} from './matching.js';
+import {matches,locationPriority} from './matching.js';
 import {randomUUID} from 'node:crypto';
 import {db,event,now,normalizeURL} from './db.js';
 
@@ -20,15 +20,16 @@ export function parseBoards(input){
 }
 
 export function parseIntent(input){
-  const instruction=String(input||'').trim().slice(0,300);
+  const instruction=String(input||'').trim().slice(0,5000);
   if(!instruction)throw Error('Describe the roles you want');
   const lower=instruction.toLowerCase();
   const remote=/\bremote\b/.test(lower);
   const places=placeWords.filter(p=>new RegExp(`\\b${p}\\b`,'i').test(lower)&&p!=='remote');
   let roleText=instruction.split(';')[0].replace(/\b(in|near|around)\s+(canada|toronto|ontario|united states|usa|uk|united kingdom)\b/gi,'').replace(/\b(remote|canada|toronto|ontario|united states|usa|uk|united kingdom)\b/gi,'').replace(/\band\b/gi,',').replace(filler,' ').replace(/\s+/g,' ').trim();
-  let roles=roleText.split(/\s*(?:,|\bor\b|\/|&)\s*/i).map(s=>s.toLowerCase().trim()).filter(Boolean);
+  let roles=roleText.split(/\s*(?:,|\bor\b|&)\s*/i).map(s=>s.toLowerCase().trim()).filter(Boolean);
   if(!roles.length)throw Error('Include a role, for example: DevOps engineer; remote; Canada');
-  return {roles:roles.slice(0,8),remote,places};
+  const locationOrder=lower.includes('priority: york region > toronto > gta > remote > canada > worldwide')?'york-toronto-gta-remote-canada-worldwide':null;
+  return {roles:roles.slice(0,80),remote:locationOrder?false:remote,places:locationOrder?[]:places,locationOrder};
 }
 
 async function readJSON(url){
@@ -101,6 +102,7 @@ async function executeSearch(id,userId){
     });
   }
   const broad=await broadListings(intent);sources.push(...broad.batches);errors.push(...broad.errors);
+  if(intent.locationOrder){const ordered=sources.flatMap(s=>s.jobs.map(job=>({...job,source:s.source}))).sort((a,b)=>locationPriority(a)-locationPriority(b));sources.splice(0,sources.length,{source:'Prioritized employer and public feeds',jobs:ordered});}
   for(const {source,jobs} of sources){
     try{
       scanned+=jobs.length;
@@ -114,7 +116,7 @@ async function executeSearch(id,userId){
         const id=randomUUID(),date=now();
         const result=db.prepare('INSERT OR IGNORE INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
           .run(id,userId,applicant.id,String(job.title).slice(0,200),String(job.company).slice(0,200),url,url,canQueue?'queued':'saved',`Source: ${source}${job.location?' · '+String(job.location).slice(0,100):''}${direct?'':' · Add employer application link to queue'}`,date,date);
-        if(result.changes){added++;if(canQueue)queued++;event(id,canQueue?'queued':'saved',`Found by search: ${search.instruction}`)}
+        if(result.changes){db.prepare('UPDATE jobs SET discovery_priority=? WHERE id=?').run(intent.locationOrder?locationPriority(job):5,id);added++;if(canQueue)queued++;event(id,canQueue?'queued':'saved',`Found by search: ${search.instruction}`)}
         else if(canQueue){
           const existing=db.prepare("SELECT id FROM jobs WHERE applicant_id=? AND normalized_url=? AND status='saved' AND challenge IS NULL").get(applicant.id,url);
           if(existing&&db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND status='saved' AND challenge IS NULL").run(now(),existing.id).changes){queued++;event(existing.id,'queued','Existing match queued by enabled automatic search');}
@@ -129,7 +131,7 @@ async function executeSearch(id,userId){
 }
 
 export async function runDueSearches(){
-  const hours=Math.max(1,Math.min(24,Number(process.env.SEARCH_INTERVAL_HOURS)||6));
+  const hours=Math.max(1,Math.min(24,Number(process.env.SEARCH_INTERVAL_HOURS)||1));
   const cutoff=new Date(Date.now()-hours*60*60*1000).toISOString();
   const due=db.prepare('SELECT id,user_id FROM searches WHERE enabled=1 AND (last_run IS NULL OR last_run<?) LIMIT 5').all(cutoff);
   for(const search of due){try{await runSearch(search.id,search.user_id)}catch(e){console.error('Discovery:',e.message)}}

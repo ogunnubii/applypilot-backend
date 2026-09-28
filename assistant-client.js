@@ -16,6 +16,7 @@ async function refresh(force=false){
  const [{jobs},health]=await Promise.all([api('/jobs'),api('/status')]);
  $('#login').hidden=true;$('#workspace').hidden=false;$('#logout').hidden=false;
  notificationSettings();
+ updateDiscovery();
  const current=jobs.filter(j=>j.status!=='duplicate');
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  $('#needs-count').textContent=current.filter(j=>['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
@@ -74,6 +75,17 @@ async function refresh(force=false){
  const linked=document.getElementById(location.hash.slice(1));
  if(linked?.classList.contains('job')){linked.hidden=false;linked.style.outline='3px solid #74ad91';const details=linked.querySelector('details');if(details)details.open=true;if(!linked.dataset.focused){linked.scrollIntoView?.({block:'center'});linked.dataset.focused='true';}}
 }
+async function updateDiscovery(){
+ let section=$('#discovery-status');if(!section){section=el('section');section.id='discovery-status';section.style.cssText='padding:16px;border:1px solid #dce6df;border-radius:12px;margin-bottom:20px';$('#workspace').prepend(section);}
+ try{const data=await api('/searches'),searches=(data.searches||[]).filter(s=>s.enabled);section.replaceChildren(el('strong','Automatic job discovery'));
+ if(!searches.length){section.append(el('p','No searches enabled. Add a saved search in profile setup.'));return;}
+ const latest=searches.filter(s=>s.last_run).sort((a,b)=>b.last_run.localeCompare(a.last_run))[0],result=latest?.last_result;
+ section.append(el('p',`${searches.length} enabled search${searches.length===1?'':'es'} · Checks every ${data.intervalHours||1} hour(s). New matches appear automatically; duplicates are skipped.`));
+ section.append(el('p',latest?`Last check: ${new Date(latest.last_run).toLocaleString()}${result?` · ${result.scanned} postings checked · ${result.added} new matches · ${result.queued} queued`: ' · Results pending'}`:'First check is pending.'));
+ if(latest?.last_error)section.append(el('p','Some sources could not be checked. Available sources continue to run.'));
+ if(searches.some(s=>s.instruction.includes('priority: York Region')))section.append(el('p','Priority: York Region → Toronto → GTA → remote → Canada → worldwide. Matches are based on your role preferences; eligibility may still need your input.'));
+ }catch{section.textContent='Search activity could not be loaded. Refresh to try again.';}
+}
 $('#auth').onsubmit=async e=>{e.preventDefault();try{token=(await api('/login','POST',Object.fromEntries(new FormData(e.target)))).token;sessionStorage.setItem('applypilot-token',token);await refresh(true);$('#notice').textContent=''}catch(e){$('#notice').textContent=e.message}};
 $('#logout').onclick=()=>{sessionStorage.removeItem('applypilot-token');location.reload()};
 for(const a of document.querySelectorAll('[data-profile-link]'))a.href=location.hostname.endsWith('netlify.app')?'/setup.html':'/setup';
@@ -86,34 +98,79 @@ if(token)refresh(true).catch(e=>$('#notice').textContent=e.message);
 setInterval(()=>{if(token)refresh().catch(e=>$('#notice').textContent=e.message)},15000);
 
 async function openHandoff(job){
+ if(activeHandoff)return;
  activeHandoff=job.id;
- const panel=el('section');panel.id='live-browser';panel.style.cssText='position:fixed;inset:0;z-index:1000;overflow:auto;margin:0;border-radius:0;padding:12px';
- const info=el('p','Connecting to your application…'),message=el('p');message.setAttribute('role','status');
- panel.append(el('h2',job.title),info,message);
- const image=el('img');image.alt='Live employer application. Tap a field or button to interact.';image.style.cssText='width:100%;max-width:1100px;display:block;border:1px solid #71819a;cursor:crosshair';panel.append(image);
- const controls=el('div');panel.append(controls);
- const textLabel=el('label','Tap a field above, then enter text here');const input=el('input');input.type='password';input.autocomplete='off';input.placeholder='Text is sent directly to the selected field';textLabel.append(input);controls.append(textLabel);
- const send=el('button','Type into selected field');controls.append(send);
- const localButton=(label,handler)=>{const b=el('button',label);b.style.marginRight='8px';b.onclick=handler;controls.append(b);return b};
- function finish(){clearInterval(remoteTimer);remoteTimer=null;activeHandoff=null;panel.remove();refresh(true).catch(e=>$('#notice').textContent=e.message)}
- async function act(action,data={}){
-  if(remoteBusy&&action==='view')return;while(remoteBusy)await new Promise(r=>setTimeout(r,100));if(activeHandoff!==job.id)return;remoteBusy=true;
-  try{const r=await api('/jobs/'+job.id+'/handoff/'+action,'POST',data);
-   if(r.submitted){finish();$('#notice').textContent='Employer confirmed receipt. Application marked submitted.';return}
-   if(r.resumed){finish();$('#notice').textContent='The worker is continuing in the same browser with your changes.';return}
-   if(r.closed){finish();return}
-   if(r.image){image.src='data:image/jpeg;base64,'+r.image;info.textContent=r.host+' · Live session expires '+new Date(r.expiresAt).toLocaleTimeString();message.textContent=''}
-  }catch(e){message.textContent=e.message}finally{remoteBusy=false}
+ let closed=false,sending=false,pollTimer=null,frameId='',lastInput=Date.now(),failures=0,points=[],zoom=1;
+ const queue=[];
+ const panel=el('section');panel.id='live-browser';panel.setAttribute('role','dialog');panel.setAttribute('aria-modal','true');panel.setAttribute('aria-label','Live employer application');
+ panel.style.cssText='position:fixed;inset:0;z-index:1000;background:#eef3f0;display:flex;flex-direction:column;overflow:hidden;color:#173426';
+ const style=el('style');style.textContent='#live-browser button{border-radius:8px;padding:8px 12px;white-space:nowrap}#live-browser button:focus-visible,#live-surface:focus-visible{outline:3px solid #54b687}#live-browser .live-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:white;border-bottom:1px solid #d9e2dc;flex-shrink:0}#live-browser .live-title{flex:1;min-width:160px}#live-browser .live-title strong{display:block}#live-browser .live-primary{background:#214d36;color:white}#live-browser .live-status{font-size:13px;margin:0;padding:6px 16px;background:#e2ede7;min-height:32px}#live-browser details{background:white;padding:8px 16px}#live-browser textarea{width:100%;box-sizing:border-box;min-height:65px}#live-browser .live-stage{flex:1;overflow:auto;min-height:0;padding:12px;overscroll-behavior:contain}#live-browser .live-surface{position:relative;margin:auto;line-height:0;background:white;box-shadow:0 4px 22px #17342622;min-height:100px}#live-browser .live-surface img{display:block;width:100%;user-select:none}#live-browser .live-footer{font-size:12px;padding:6px 16px;margin:0;background:white}';panel.append(style);
+ const toolbar=el('div');toolbar.className='live-toolbar';const title=el('div');title.className='live-title';title.append(el('strong',job.title));const info=el('span','Connecting…');info.style.fontSize='12px';title.append(info);toolbar.append(title);panel.append(toolbar);
+ const message=el('p','Connecting to the employer browser…');message.className='live-status';message.setAttribute('role','status');panel.append(message);
+ const stage=el('div');stage.className='live-stage';const surface=el('div');surface.id='live-surface';surface.className='live-surface';surface.tabIndex=0;surface.setAttribute('role','application');surface.setAttribute('aria-label','Employer browser. Click a field, then type. Tab moves to the next employer field.');
+ const image=el('img');image.alt='Live employer application';image.draggable=false;surface.append(image);stage.append(surface);panel.append(stage);
+ const compose=el('details'),summary=el('summary','Text entry and upload');compose.append(summary);const input=el('textarea');input.setAttribute('aria-label','Text to enter in selected employer field');input.placeholder='For mobile or longer answers: tap the employer field, then write here.';input.autocomplete='off';input.spellcheck=false;compose.append(input);
+ const extra=el('div');extra.className='live-toolbar';compose.append(extra);panel.append(compose);
+ const footer=el('p','Click a field and type directly. Scroll with your mouse or trackpad. Finish verification, then choose Continue automatically.');footer.className='live-footer';panel.append(footer);
+ const button=(parent,label,handler,primary=false)=>{const b=el('button',label);if(primary)b.className='live-primary';b.onclick=handler;parent.append(b);return b};
+ const focus=()=>surface.focus({preventScroll:true});
+ function finish(note=''){if(closed)return;closed=true;clearTimeout(pollTimer);queue.length=0;resizeObserver?.disconnect();document.removeEventListener('visibilitychange',visibility);activeHandoff=null;panel.remove();refresh(true).catch(e=>$('#notice').textContent=e.message);if(note)$('#notice').textContent=note;}
+ const continueButton=button(toolbar,'Continue automatically',()=>enqueue('resume'),true);
+ button(toolbar,'Close view',()=>{if(sending||queue.length){message.textContent='Wait for pending input to finish before closing.';return;}finish('Live view closed. The employer session stays open until it expires.');});
+ const zoomLabel=el('label','View '),zoomSelect=el('select');zoomSelect.setAttribute('aria-label','Browser zoom');for(const [value,label] of [['1','Fit width'],['1.25','125%'],['1.5','150%'],['2','200%']]){const o=el('option',label);o.value=value;zoomSelect.append(o);}zoomLabel.append(zoomSelect);toolbar.append(zoomLabel);
+ function resize(){surface.style.width=Math.max(250,Math.min(1100,stage.clientWidth-24)*zoom)+'px';}zoomSelect.onchange=()=>{zoom=Number(zoomSelect.value);resize();};const resizeObserver=typeof ResizeObserver==='undefined'?null:new ResizeObserver(resize);resizeObserver?.observe(stage);
+ button(extra,'Insert text',()=>{if(input.value){enqueue('text',{text:input.value.slice(0,4000)});input.value='';focus();}});
+ for(const [label,key] of [['Previous field','Shift+Tab'],['Next field','Tab'],['Select all','ControlOrMeta+A'],['Backspace','Backspace'],['Enter','Enter']])button(extra,label,()=>{enqueue('key',{key});focus();});
+ button(extra,'Scroll up',()=>enqueue('scroll',{y:-500}));button(extra,'Scroll down',()=>enqueue('scroll',{y:500}));
+ const file=el('input');file.type='file';file.accept='.pdf,.docx';file.setAttribute('aria-label','Upload resume after selecting employer upload control');extra.append(file);
+ file.onchange=()=>{const selected=file.files[0];if(!selected)return;if(selected.size>6*1024*1024){message.textContent='Choose a PDF or DOCX smaller than 6 MB.';return;}const reader=new FileReader();reader.onload=()=>{enqueue('upload',{name:selected.name,base64:reader.result.split(',')[1]});file.value='';};reader.readAsDataURL(selected);};
+ button(extra,'End browser session',()=>{if(confirm('End this employer browser session? Unsaved form changes may be lost.'))enqueue('close');});
+ function schedule(delay=900){clearTimeout(pollTimer);if(!closed)pollTimer=setTimeout(()=>pump(true),delay);}
+ function enqueue(action,data={}){
+  if(closed)return;if(queue.length>=150){message.textContent='The connection is catching up. Please pause typing.';return;}
+  clearTimeout(pollTimer);lastInput=Date.now();const tail=queue.at(-1);
+  if(action==='text'&&tail?.action==='text'&&tail.data.text.length+data.text.length<=4000)tail.data.text+=data.text;
+  else if(action==='scroll'&&tail?.action==='scroll'){tail.data={...data,y:Math.max(-1000,Math.min(1000,tail.data.y+data.y))};}
+  else queue.push({action,data});
+  message.textContent='Sending your input…';continueButton.disabled=true;pump();
  }
- let points=[];const point=e=>{const r=image.getBoundingClientRect();return {x:Math.max(0,Math.min(1100,Math.round((e.clientX-r.left)*1100/r.width))),y:Math.max(0,Math.min(800,Math.round((e.clientY-r.top)*800/r.height)))}};
- image.style.touchAction='none';image.onpointerdown=e=>{points=[point(e)];image.setPointerCapture(e.pointerId)};image.onpointermove=e=>{if(points.length&&points.length<39)points.push(point(e))};image.onpointerup=e=>{if(!points.length)return;const end=point(e),start=points[0];if(Math.hypot(end.x-start.x,end.y-start.y)>8)act('drag',{points:[...points,end]});else act('click',end);points=[]};image.onpointercancel=()=>points=[];
- const fileLabel=el('label','Upload a PDF or DOCX after tapping the employer upload control'),file=el('input');file.type='file';file.accept='.pdf,.docx';fileLabel.append(file);controls.append(fileLabel);
- file.onchange=async()=>{const selected=file.files[0];if(!selected)return;if(selected.size>6*1024*1024){message.textContent='File must be smaller than 6 MB';return}const reader=new FileReader();reader.onload=async()=>{await act('upload',{name:selected.name,base64:reader.result.split(',')[1]});file.value=''};reader.readAsDataURL(selected)};
-
- send.onclick=async()=>{if(!input.value)return;const value=input.value;input.value='';await act('text',{text:value})};
- for(const [label,key] of [['Next field','Tab'],['Select all','ControlOrMeta+A'],['Backspace','Backspace'],['Enter','Enter'],['Down','ArrowDown'],['Up','ArrowUp'],['Escape','Escape']])localButton(label,()=>act('key',{key}));
- localButton('Scroll down',()=>act('scroll',{y:550}));localButton('Scroll up',()=>act('scroll',{y:-550}));
- localButton('Resume worker',()=>act('resume'));localButton('Close view',finish);localButton('End browser session',()=>act('close'));
- controls.append(el('p','Tap the live image to complete verification or fill fields. Resume worker returns this same form to automation. Close view keeps it open until expiry. Ending the session closes the employer form.'));
- document.body.append(panel);await act('view');if(activeHandoff)remoteTimer=setInterval(()=>{if(document.visibilityState==='visible'&&activeHandoff)act('view')},2500);
+ async function pump(view=false){
+  if(closed||sending)return;if(!queue.length&&(!view||document.visibilityState==='hidden')){schedule(1500);return;}
+  const item=queue.shift()||{action:'view',data:{frameId}};sending=true;continueButton.disabled=true;const started=Date.now();
+  try{
+   const data=item.action==='view'?{frameId}:['text','key','scroll','click','drag'].includes(item.action)?{...item.data,render:false}:item.data;
+   const r=await api('/jobs/'+job.id+'/handoff/'+item.action,'POST',data);if(closed)return;failures=0;
+   if(r.submitted){finish('Employer confirmed receipt. Application marked submitted.');return;}
+   if(r.resumed){finish('The worker is continuing in the same browser with your changes.');return;}
+   if(r.closed){finish('Employer browser session ended.');return;}
+   if(r.image)image.src='data:image/jpeg;base64,'+r.image;
+   if(r.frameId)frameId=r.frameId;
+   if(r.host)info.textContent=r.host+' · Session until '+new Date(r.expiresAt).toLocaleTimeString();
+   if(r.uploadRequested){compose.open=true;message.textContent='The employer requested a file. Choose your PDF or DOCX below.';}
+   else message.textContent=queue.length?'Sending your input…':Date.now()-started>1500?'Connected · Slow network response. Your input was received.':'Connected · Click, type, or scroll directly in the form.';
+  }catch(e){
+   failures++;message.textContent=e.message;
+   if(item.action!=='view'){queue.length=0;message.textContent='Could not confirm your last action. Check the form before repeating it. '+e.message;}
+  }finally{
+   sending=false;continueButton.disabled=false;if(closed)return;
+   if(queue.length)pump();else schedule(item.action==='view'?Math.min(5000,failures?1000*failures:Date.now()-lastInput<15000?800:1800):80);
+  }
+ }
+ const point=e=>{const r=image.getBoundingClientRect();return {x:Math.max(0,Math.min(1100,Math.round((e.clientX-r.left)*1100/r.width))),y:Math.max(0,Math.min(800,Math.round((e.clientY-r.top)*800/r.height)))}};
+ image.style.touchAction='none';image.onpointerdown=e=>{if(!image.src)return;focus();points=[point(e)];image.setPointerCapture(e.pointerId);};image.onpointermove=e=>{if(points.length&&points.length<39)points.push(point(e));};image.onpointerup=e=>{if(!points.length)return;const end=point(e),start=points[0];if(Math.hypot(end.x-start.x,end.y-start.y)>8){if(e.pointerType==='touch')enqueue('scroll',{y:Math.max(-1000,Math.min(1000,(start.y-end.y)*2)),pointerX:start.x,pointerY:start.y});else enqueue('drag',{points:[...points,end]});}else enqueue('click',end);points=[];};image.onpointercancel=()=>points=[];
+ surface.addEventListener('wheel',e=>{if(e.ctrlKey||e.metaKey)return;e.preventDefault();const p=point(e),scale=e.deltaMode===1?20:e.deltaMode===2?600:1;enqueue('scroll',{y:Math.max(-1000,Math.min(1000,e.deltaY*scale)),x:Math.max(-1000,Math.min(1000,e.deltaX*scale)),pointerX:p.x,pointerY:p.y});},{passive:false});
+ surface.onkeydown=e=>{
+  if(e.isComposing)return;
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='v')return;
+  let key=e.key==='Tab'&&e.shiftKey?'Shift+Tab':e.key;
+  if((e.ctrlKey||e.metaKey)&&key.toLowerCase()==='a'){e.preventDefault();enqueue('key',{key:'ControlOrMeta+A'});return;}
+  if(e.ctrlKey||e.metaKey||e.altKey)return;
+  if(['Tab','Shift+Tab','Enter','Backspace','Delete','ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Home','End','PageDown','PageUp','Escape'].includes(key)){e.preventDefault();enqueue('key',{key});}
+  else if(key.length===1){e.preventDefault();enqueue('text',{text:key});}
+ };
+ surface.onpaste=e=>{const text=e.clipboardData?.getData('text/plain');if(text){e.preventDefault();if(text.length>4000){message.textContent='Paste up to 4,000 characters at a time.';return;}enqueue('text',{text});}};
+ surface.oncompositionend=e=>{if(e.data)enqueue('text',{text:e.data});};
+ function visibility(){if(document.visibilityState==='visible')pump(true);else clearTimeout(pollTimer);}document.addEventListener('visibilitychange',visibility);
+ panel.onkeydown=e=>{if(e.target===surface)return;if(e.key==='Escape'&&!sending&&!queue.length){e.preventDefault();finish();}};
+ document.body.append(panel);resize();focus();await pump(true);
 }

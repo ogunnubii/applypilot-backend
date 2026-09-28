@@ -1,3 +1,4 @@
+import {supported} from './local-policy.js';
 import {createServer} from 'node:http';
 import {readToken} from './auth.js';
 const receipt=/thank you for (applying|your application)|application (has been )?(submitted|received)|successfully applied/i;
@@ -6,9 +7,13 @@ export class Handoffs {
  full(){return this.sessions.size>=this.max}
  async hold(job,context,page){
   if(this.sessions.has(job.id))return;
-  if(this.full())throw Error('All live-browser slots are occupied');
-  let initial='';for(const frame of page.frames())initial+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
-  const session={job,context,page,created:this.clock(),touched:this.clock(),busy:false,initialReceipt:receipt.test(initial),chooser:null};
+  if(this.full()){
+   const oldest=[...this.sessions.values()].filter(s=>!s.busy).sort((a,b)=>a.touched-b.touched)[0];
+   if(!oldest){await context.close();this.onClose(job,'Live slots busy; saved application remains blocked.');return false;}
+   this.sessions.delete(oldest.job.id);await oldest.context.close().catch(()=>{});this.onClose(oldest.job,'Older blocked browser closed to keep the queue moving. Saved answers remain.');
+  }
+  let initial='';for(const frame of page.frames())if(supported(frame.url()))initial+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
+  const session={job,context,page,created:this.clock(),touched:this.clock(),busy:false,attempted:['Submission in progress','Unconfirmed submission'].includes(job.challenge),initialReceipt:receipt.test(initial),chooser:null};
   const attach=p=>p.on?.('filechooser',chooser=>{session.chooser=chooser});context.pages().forEach(attach);context.on?.('page',attach);
   this.sessions.set(job.id,session);
  }
@@ -28,7 +33,7 @@ export class Handoffs {
    if(action==='click'){
     if(!Number.isFinite(data.x)||!Number.isFinite(data.y)||data.x<0||data.y<0||data.x>1100||data.y>800)throw Error('Invalid click');
     const possible=await p.evaluate(({x,y})=>{const e=document.elementFromPoint(x,y)?.closest('button,input[type=submit],[role=button]');return !!e&&(/submit|send application/i.test(e.innerText||e.value||e.getAttribute('aria-label')||'')||(e.type==='submit'&&!/next|continue|sign.?in|log.?in/i.test(e.innerText||e.value||'')))},{x:data.x,y:data.y});
-    if(possible)this.onPossibleSubmit(s.job);
+    if(possible){s.attempted=true;this.onPossibleSubmit(s.job);}
     await p.mouse.click(data.x,data.y);s.touched=this.clock();
    }else if(action==='drag'){
     if(!Array.isArray(data.points)||data.points.length<2||data.points.length>40||data.points.some(v=>!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x<0||v.x>1100||v.y<0||v.y>800))throw Error('Invalid drag');
@@ -45,13 +50,13 @@ export class Handoffs {
     await p.keyboard.insertText(data.text);s.touched=this.clock();
    }else if(action==='key'){
     if(!['Tab','Shift+Tab','Enter','Backspace','Delete','ArrowDown','ArrowUp','Escape','ControlOrMeta+A','Space'].includes(data.key))throw Error('Unsupported key');
-    if(data.key==='Enter')this.onPossibleSubmit(s.job);
+    if(data.key==='Enter'){s.attempted=true;this.onPossibleSubmit(s.job);}
     await p.keyboard.press(data.key);s.touched=this.clock();
    }else if(action==='scroll'){
     if(!Number.isFinite(data.y)||Math.abs(data.y)>1000)throw Error('Invalid scroll');await p.mouse.wheel(0,data.y);s.touched=this.clock();
    }else if(action!=='view')throw Error('Unsupported browser action');
-   let content='';for(const frame of p.frames())content+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
-   if(!s.initialReceipt&&receipt.test(content)){this.onSubmitted(s.job);this.sessions.delete(id);await s.context.close();return {submitted:true}}
+   let content='';for(const frame of p.frames())if(supported(frame.url()))content+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
+   if(s.attempted&&!s.initialReceipt&&receipt.test(content)){this.onSubmitted(s.job);this.sessions.delete(id);await s.context.close();return {submitted:true}}
    const image=await p.screenshot({type:'jpeg',quality:65,timeout:10000});
    const url=new URL(p.url());return {image:image.toString('base64'),width:1100,height:800,host:url.hostname,uploadRequested:!!s.chooser,expiresAt:Math.min(s.touched+15*60*1000,s.created+45*60*1000)};
   }finally{s.busy=false}

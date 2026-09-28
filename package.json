@@ -6,10 +6,13 @@
   "scripts": {
     "start": "node start.js",
     "worker": "node worker.js",
-    "test": "node --test"
+    "test": "node --test && node checks/dashboard-dom.cjs"
   },
   "dependencies": {
     "playwright": "1.63.0"
+  },
+  "devDependencies": {
+    "jsdom": "30.1.1"
   },
   "engines": {
     "node": ">=24"

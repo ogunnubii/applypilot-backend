@@ -1,52 +1,65 @@
-# ApplyPilot backend update
+# ApplyPilot
 
-Updated source, not a live deployment. The existing Netlify frontend is not included. Node 24 required. The existing open-source Playwright dependency is retained; no external auto-apply repository was copied.
+ApplyPilot keeps the existing Node 24 API, SQLite database, discovery service, Playwright worker, dashboard and Manifest V3 extension. Applications use saved applicant facts and exact approved answers. The form worker no longer generates application answers with an AI model; the existing advisory chat remains separate.
 
-## Changes
-- Related DevOps/SRE/cloud/platform titles and Canadian cities now match. US-only remote roles are excluded from Canada searches. This is heuristic matching, not AI ranking; review results before enabling auto-queue.
-- DISCOVERY_BOARDS adds up to 12 shared employer Greenhouse/Lever boards to per-search boards and existing Jobicy/Arbeitnow feeds. This is not exhaustive web discovery.
-- Resume reuploads preserve boards and auto-queue settings. Concurrent same-process searches share work; database uniqueness prevents duplicate jobs across processes.
-- Authenticated /api/status reports the worker heartbeat and queue counts.
-- Durable pre-submit marker prevents retrying an application after uncertain submission or worker interruption. Only employer confirmation records successful delivery.
-- AI answer cache separates applicants and employer/role context. API calls have timeouts and request store:false.
-- Exact approved answers fill native dropdowns. Labelled resume inputs are supported when several upload fields exist.
-- /assistant provides login, profile editing, search creation, status, AI advice, and voice input. Phone keyboard dictation is the fallback for unsupported browser speech recognition. Review dictated fields before saving; browser speech services may process audio externally.
-- Chat is advisory. Use the search form to create searches and enable queueing. Applicant profiles, resumes and consents are set up through the original dashboard.
+## Windows quick start
 
-## Deploy to the EXISTING Railway service
-1. Back up the persistent database/resume volume. Stop the service before copying SQLite files, or use SQLite backup facilities.
-2. Replace repository source with these files; retain deployment secrets and persistent data. Do not commit .env, resumes or databases.
-3. Keep the Docker deployment and `node start.js`. API and worker must use the SAME persistent disk. Run ONE service replica; distributed workers are not supported.
-4. Set PUBLIC_ORIGIN=https://applypilot-jobs.netlify.app and SERVICE_ORIGIN to the actual Railway HTTPS origin without a trailing slash. Retain SESSION_SECRET and REGISTRATION_CODE.
-5. Ensure DATABASE_PATH and UPLOAD_DIR point to a mounted persistent volume, e.g. /app/data/applypilot.sqlite and /app/data/resumes.
-6. Configure DISCOVERY_BOARDS for relevant employer boards. The Newton example in .env.example does not assert current vacancies. SEARCH_INTERVAL_HOURS defaults to 6.
-7. Optional AI: configure OPENAI_API_KEY and OPENAI_MODEL for an accessible model. No model or secret is supplied. CHAT_DAILY_LIMIT defaults to 30 chat requests/account/UTC day; this is NOT a dollar budget and excludes worker answer requests. Use provider spending controls.
-8. Redeploy, open the Railway origin followed by /assistant, and sign in with your existing account. The existing Netlify frontend needs no change to use the separate companion page.
-9. Verify worker status, run a save-only search, inspect matches, then enable auto-queue for applicant-approved searches. Verify one real employer receipt before expanding use.
+1. Install Node.js 24 or newer (including npm).
+2. Extract or clone this repository, open PowerShell in its directory, and run `./start-local.ps1 -Install`. The script creates a private `.env.local` with random session and registration secrets, starts the API and discovery on localhost:8080, and binds only to 127.0.0.1. It does not launch a separate automation browser.
+3. Open **http://localhost:8080/setup** in your normal Chrome or Edge profile. Use the registration code printed on the first run (also stored in `.env.local`) to create an account, or sign in. Save your truthful profile and PDF/DOCX resume. Choose **My Windows browser**.
+4. Add real direct application links, or create a discovery search. PDF role extraction needs the existing Poppler `pdftotext` utility; if unavailable, the resume is still stored and attachable, and you can create a search manually.
+5. Load `extension/` as an unpacked extension in `chrome://extensions` or `edge://extensions` with Developer mode enabled. Choose **This PC (localhost:8080)** in its popup. Keep the dashboard signed in and open.
+6. Review jobs in the dashboard. **Start routine applications** snapshots currently Found and Queued jobs on supported hosts. It can fill, advance and submit routine applications. **Open / fill manually** never enables automatic submission; **Run routine steps** enables one selected job. **Stop automation** stops subsequent automatic actions; a Submit already clicked cannot be recalled.
 
-The service operates without an open ChatGPT Work session. Hosting and optional AI costs remain separate. This is not unlimited AI or a full replica of a Work agent.
+Your ordinary browser profile supplies its existing site logins. Cookies and passwords are not copied to the backend. Install in each browser profile you intend to use; Chrome and Edge maintain separate extension state.
 
-CAPTCHA, sign-in and unfamiliar forms still pause. The browser context closes on pause: complete the application on the employer site and record the receipt in the existing dashboard. Remote human browser takeover is not implemented.
+After Windows/browser restart, rerun the script, reopen the dashboard and sign in if necessary. Reopen blocked applications from the extension; restored tabs are rebound only when their job URL is unambiguous. Automation is stopped on browser startup so uncertain applications can be reviewed. Saved queue items and submission intent remain durable. OS-level automatic startup is not installed.
 
-## Tests and limits
-`npm test`: isolated temporary SQLite database, mocked job feeds and local HTTP server. Tests cover role/location matching, direct-match queueing, deduplication, authentication/ownership, companion HTML delivery, missing heartbeat, AI consent, and uncertain-submission guards. All JavaScript files syntax-checked.
+## What changed
 
-No live applications or paid AI calls were made. Mobile microphone, live AI responses, dropdown filling and real employer forms require deployment testing. Existing dependency/container versions retained; a fresh Docker build was not tested. Existing Netlify UI has not been changed or deployed.
+- Persistent local extension records replace session-only bindings. Records contain job IDs, URLs, tab bindings, queue state and submission intent, not cached resumes, applicant answers or bearer tokens.
+- Browser ownership on the server prevents a second browser installation from claiming the same local application. Claims use conditional updates; local jobs never automatically fall back to cloud execution.
+- Local queues continue after a blocked form. The blocked tab stays available for human action. A 90-second nonresponsive-tab watchdog advances the queue; network/authentication failures stop it with an error. A run is a finite snapshot; newly discovered jobs require another Start.
+- A shared allowlist adds Ashby, SmartRecruiters, Workable, BambooHR and Recruitee to Greenhouse, Lever and Workday. This is conservative generic form coverage, not a promise of full vendor-specific support. Unfamiliar custom controls, embedded local forms, SSO/redirects that lose job identity, and ambiguous pages stop for review.
+- Native inputs, selects, radios and identified resume uploads use profile facts or exact saved answers. Next/Continue and final submit are separate actions. Both agents have a 15-step bound. Unknown mandatory facts are not inferred.
+- CAPTCHA, MFA/passwords, payment fields, sensitive statements and legal attestations require direct user interaction. Legal text can conservatively block a whole page, even after checking a checkbox; the user then submits manually.
+- Routine local submission writes intent on the PC and server before clicking. A recognized new employer receipt associated with the same job is required for automatic Submitted status. A click without a recognized receipt remains uncertain, and automatic resubmission is prohibited.
+- Missing answers can be saved just for a job or explicitly remembered for the applicant. Exact question matching avoids transferring facts between applicants or guessing related answers.
+- The dashboard shows Found, Applying, Submitted, Blocked, Interview, Rejected and Offer with distinct colors and filters. Interview/Rejected/Offer are user-recorded employer outcomes, not inferred from email.
+- Cloud startup requeues only interrupted pre-submit work. Interrupted submission stays blocked. The three cloud handoff slots no longer stall the entire queue: the oldest inactive handoff is closed when necessary; saved job state remains.
+- Existing normalized-URL uniqueness and event logging remain. Completed employer outcomes and local ownership are protected during duplicate migration.
 
-## Expanded discovery and progress
-Seven default employer boards, up to 50 custom boards, five Arbeitnow pages, and up to 250 new matches per run. Cached feeds are refreshed hourly. Existing saved matches can enter the queue when an automatic search is enabled; paused/uncertain applications never auto-requeue. Last scan counts and recent application events are shown in /assistant and the Netlify progress page. Account sign-in and saved applicant consent/email/resume are required before queuing.
+## Hosted discovery + local Windows execution
 
-## Live browser handoff
-Blocked contexts stay in worker memory (maximum three). The authenticated app proxies controls to a loopback-only service on 127.0.0.1:8081; that service independently validates the signed account token and session owner. Browser images and typed input use no-store responses and are not written to the database. File uploads stay in memory and are limited to PDF/DOCX, 6 MB. Idle sessions expire after 15 minutes, with a 45-minute absolute limit. Restart/redeployment loses browser sessions but retains saved answers. Pending jobs wait when all three browser slots are occupied.
+Back up your persistent database/resume volume and deploy the updated backend and dashboard together. Run `./package-extension.ps1` on Windows before publishing `web/` so its extension download contains the updated build. Retain your existing SESSION_SECRET, REGISTRATION_CODE, PUBLIC_ORIGIN, SERVICE_ORIGIN, DATABASE_PATH and UPLOAD_DIR. Run one API/worker service replica on the shared persistent disk; distributed workers are not supported.
 
-A user opens Take over, operates the same browser, and clicks Resume worker. Human and worker control are exclusive. A possible manual submission blocks automatic resubmission until receipt is checked. Newly appearing employer confirmation text can mark submitted; unrecognized receipts require the existing manual receipt flow. This is an image-based control panel, not a full remote desktop or guaranteed support for all login/CAPTCHA providers. Native passkeys and non-web OS dialogs are not supported.
+Use the backend's `/setup` page to choose **My Windows browser** for the applicant. Existing applicants default to Cloud to preserve their current behavior. The cloud worker skips queued jobs for Local applicants; hosted discovery continues to save or queue them. Select **Hosted ApplyPilot** in the extension and leave the signed-in Netlify dashboard open. The extension is configured for this repository's existing Netlify and Railway URLs.
 
-## Local Chrome pilot
-The `extension/` folder is a Manifest V3 extension for desktop Chrome. Installation and limitations are in `extension/README.md`. It supports top-level Lever and Greenhouse forms, moves jobs into `local_browser` ownership, refills saved facts in the applicant's normal tab, reports missing requirements, and observes supported post-submit receipts. The applicant handles verification, review and the final submit. No cloud cookies or unsaved cloud form state are transferred. The dashboard must remain signed in and open for tracker sync. Local mode never automatically returns a job to the cloud queue, including after Chrome exits.
+The extension and updated backend must be rolled out together: local endpoints now require a per-installation device ID. Legacy local sessions without an intent marker are treated as uncertain on upgrade. Lost/uninstalled browser profiles are not automatically granted a replacement claim; review the employer receipt and use manual confirmation. No cookies, unsaved cloud form edits or CAPTCHA state transfer from cloud to PC.
 
-Local form fixture validation: `NODE_PATH=/tmp/applypilot-dom-test/node_modules node checks/local-browser-dom.cjs` after installing jsdom in that temporary prefix. Covers saved data, preserved edits, unknown/password fields, select labels, progress, and receipt gating. This is a simulated DOM check; the installed extension still needs end-to-end validation on an employer form.
+For a different hosting domain or localhost port, edit the extension environment constants and manifest permissions before loading. Avoid changing servers within a browser profile that already has tracked records; use another profile.
 
-## ApplyPilot visual redesign
-The public homepage and application workspace use an independently implemented layout inspired by the public Tsenta website: white surfaces, restrained typography, pastel workflow cards and compact application controls. All branding and explanatory copy are ApplyPilot-specific. No Tsenta source, private APIs, testimonials, pricing or performance claims are copied. Current application filtering, answers, browser handoff and manual confirmation remain connected to the existing API. `web/` contains the static frontend source; package the extension folder into web/applypilot-local.zip when deploying.
+To run the cloud worker locally, use the existing `npm start` with a configured environment and installed Playwright Chromium. Local-only startup does not need a Playwright browser download. The existing Docker/Railway deployment path is retained.
 
-Dashboard fixture: `NODE_PATH=/tmp/applypilot-dom-test/node_modules node checks/dashboard-dom.cjs` checks action rendering, current-only filtering, counters, search, filters and empty states.
+## Verification
+
+`npm ci` then `npm test` runs API/ownership/duplicate tests, restart recovery, exact-answer policy tests, extension background lifecycle/queue tests, DOM form fixtures and the dashboard fixture.
+
+Optional real browser smoke test:
+```powershell
+$env:TEST_BROWSER_PATH = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
+node checks/browser-smoke.cjs
+```
+Without TEST_BROWSER_PATH it uses Playwright's installed Chromium. All employer navigation in this test is intercepted with a synthetic page; no real applications are sent. The smoke test exercises real form events, two steps, PDF attachment, a single submit after durable intent, and receipt detection.
+
+The implemented checks do not establish reliability on every live ATS variant. Installed-extension integration, real login/SSO flows and employer-specific receipts still need supervised validation. No production deployment, real job application, paid API call, or migration of the user's live database is part of these tests.
+
+## Data and limitations
+
+Keep `.env*`, resumes and SQLite data private. Back up `data/` using SQLite-safe backup procedures. A standard browser does not run while Windows is off, and the extension needs the authenticated dashboard to sync. Session tokens are not persisted by the extension; session expiry requires sign-in.
+
+Discovery still uses the existing Greenhouse/Lever boards and job feeds. Additional ATS allowlisting is for application handling, not new vendor discovery integrations. Closed or unfamiliar forms and unrecognized receipts require manual review. Only known direct job URL aliases are collapsed; cross-postings with different employer IDs may still require duplicate review.
+
+The extension operates on permitted top-level employer pages only. Custom widgets, nested frames, native passkeys and OS dialogs may require manual completion. The backend does not cryptographically verify employer receipts; it records authenticated extension observations or explicit applicant verification, together with event history.
+
+Chrome restricts remote debugging of its default profile. The extension is the supported normal-profile path rather than attempting to attach Playwright to the user's default data directory: https://developer.chrome.com/blog/remote-debugging-port

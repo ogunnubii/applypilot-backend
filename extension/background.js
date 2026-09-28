@@ -30,7 +30,7 @@ async function openJob(id,auto=true){
  if(record.attempted){record.phase='verifying';record.auto=false;}
  await saveRecord(record);
  if(!tab){tab=await chrome.tabs.create({url:'about:blank',active:!auto});record.tabId=tab.id;await saveRecord(record);let url=packet.job.url;if(/^jobs(\.eu)?\.lever\.co$/.test(new URL(url).hostname)&&!url.endsWith('/apply'))url=url.replace(/\/$/,'')+'/apply';await chrome.tabs.update(tab.id,{url});}
- else{record.tabId=tab.id;await saveRecord(record);if(!auto)await chrome.tabs.update(tab.id,{active:true});chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>{});}
+ else{record.tabId=tab.id;await saveRecord(record);if(!auto)await chrome.tabs.update(tab.id,{active:true});chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']})).catch(()=>{});}
  return {opened:true,attempted:record.attempted};
 }
 function eligible(j,s){
@@ -60,7 +60,7 @@ async function handle(m,sender){
   if(!record?.tabId)throw Error('The original employer tab is no longer open. Open ApplyPilot Local to review this application before restarting it.');
   const tab=await chrome.tabs.get(record.tabId).catch(()=>null);
   if(!tab||!P.sameApplication(tab.url,record.url))throw Error('The original employer form is no longer available. Open ApplyPilot Local to review it; no application was restarted.');
-  await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});return {focused:true};
+  await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});await chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']}));return {focused:true};
  }
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){
@@ -93,6 +93,7 @@ async function handle(m,sender){
   b.touched=Date.now();if(m.blocked){b.phase='blocked';b.auto=false;}await saveRecord(b);
   const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked});if(m.blocked)await tick();return result;
  }
+ if(m.action==='capture')return api('/jobs/'+b.id+'/local/capture','POST',{fields:m.fields});
  if(m.action==='remember')return api('/jobs/'+b.id+'/answers','PUT',{question:m.question,answer:m.answer,remember:true});
  if(m.action==='receipt'){
   if(!b.attempted)throw Error('No submission action observed in this tab.');

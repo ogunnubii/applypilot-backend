@@ -1,5 +1,6 @@
 (()=>{
 const P=globalThis.ApplyPilotPolicy;
+if(globalThis.__applypilotAgentLoaded)return;globalThis.__applypilotAgentLoaded=true;
 let packet,bar,note,started=false,initialReceipt=false,attempted=false,timer,busy=false,stopped=false,lastStep='',stepAt=0,submitAt=0;
 const norm=P.normalize;
 const visible=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).display!=='none';
@@ -20,22 +21,14 @@ let attemptedCustom=new WeakMap();
 let fieldErrors=[];
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function fillCustom(e,a){
- if(e.getAttribute('role')!=='combobox'||e.getAttribute('aria-disabled')==='true')return false;
- if(e.value?.trim()||completedCustom.has(e)||attemptedCustom.get(e)===String(a))return false;
- attemptedCustom.set(e,String(a));
- e.click();
- if(e.matches('input')&&!e.readOnly)setValue(e,a);
- for(let attempt=0;attempt<20;attempt++){
-  await pause(100);
-  const ids=(e.getAttribute('aria-controls')||e.getAttribute('aria-owns')||'').split(/\s+/).filter(Boolean);
-  const menus=ids.length?ids.map(id=>document.getElementById(id)).filter(Boolean):[...document.querySelectorAll('[role=listbox]')].filter(visible);
-  if(menus.length===1){const matches=[...menus[0].querySelectorAll('[role=option]')].filter(o=>visible(o)&&o.getAttribute('aria-disabled')!=='true'&&P.optionMatches(label(e),o.textContent,a,packet.profile));if(matches.length===1){matches[0].click();completedCustom.add(e);return true;}}
- }
- if(e.matches('input'))setValue(e,'');
- e.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true}));e.blur();return false;
+ // Dropdown choices are manual at the applicant's request. City search text
+ // may be prepared, but only the applicant selects a location suggestion.
+ if(P.fieldKind(label(e))!=='city'||!e.matches('input')||e.readOnly||e.value?.trim()||attemptedCustom.get(e)===String(a))return false;
+ attemptedCustom.set(e,String(a));setValue(e,a);return false;
 }
 
 function mount(){
+ document.getElementById('applypilot-local-controls')?.remove();
  bar=document.createElement('aside');bar.id='applypilot-local-controls';bar.style.cssText='position:fixed;bottom:16px;right:16px;max-width:360px;z-index:2147483647;background:#12253b;color:white;padding:16px;border-radius:12px;box-shadow:0 3px 18px #0008;font:14px system-ui';
  const heading=document.createElement('strong');heading.textContent='ApplyPilot · '+packet.job.title;note=document.createElement('p');note.setAttribute('role','status');
  const refill=document.createElement('button');refill.textContent='Fill saved answers';refill.onclick=async()=>{try{packet=null;attemptedCustom=new WeakMap();await fill();await advance();}catch(e){note.textContent=e.message;}};
@@ -45,9 +38,18 @@ function mount(){
   const value=prompt('Your truthful answer (reused only for this exact question):');if(value===null||!value.trim())return;
   try{await send('remember',{question,answer:value});packet=null;await fill();note.textContent='Answer saved for this applicant.';}catch(e){note.textContent=e.message;}
  };
- bar.append(heading,note,refill,save);document.body.append(bar);
+ const capture=document.createElement('button');capture.textContent='Save form answers to library';capture.onclick=async()=>{capture.disabled=true;try{const r=await send('capture',{fields:formAnswers()});note.textContent=r.saved+' answers saved. Review them in the dashboard Answer library. Nothing was submitted.';}catch(e){note.textContent='Could not save answers: '+e.message;}finally{capture.disabled=false;}};
+ bar.append(heading,note,refill,save,capture);document.body.append(bar);
 }
 function controls(){return [...document.querySelectorAll('input,select,textarea,[role=combobox],[role=checkbox],[role=radio]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&!e.readOnly);}
+function formAnswers(){
+ const rows=[];for(const e of controls()){
+  const q=label(e);if(P.sensitive(q)||/password|one.?time|verification code|captcha|birth|ethnic|race|gender|disability|veteran|sexual orientation|religion|medical/i.test(q)||['password','file','hidden','submit','button'].includes(e.type))continue;
+  if(e.getAttribute('role')==='combobox')continue;
+  let value=e.value;if(e.type==='radio'){if(!e.checked)continue;value=labelText(e.labels?.[0])||e.value;}else if(e.type==='checkbox'){if(!e.checked)continue;value='Yes';}else if(e.tagName==='SELECT'){if(!e.value||e.selectedOptions[0]?.disabled)continue;value=e.selectedOptions[0]?.textContent;}
+  if(typeof value==='string'&&value.trim())rows.push({question:q,answer:value.trim().slice(0,4000)});
+ }return rows.slice(0,120);
+}
 function review(){
  const fields=controls(),missing=fields.filter(e=>{
   if(!(e.required||e.getAttribute('aria-required')==='true'))return false;
@@ -71,6 +73,7 @@ async function fill(){
  for(const e of fields){
   try{
   if(e.getAttribute('role')==='combobox'){const a=answer(e);if(a!==null&&await fillCustom(e,a))count++;continue;}
+  if(e.tagName==='SELECT')continue;
   if(!e.matches('input,select,textarea')||['hidden','password','file','checkbox','submit','button','radio'].includes(e.type)||(e.value?.trim()&&!(e.tagName==='SELECT'&&(e.selectedOptions[0]?.disabled||/^(select|choose)(\b|\.\.\.)/i.test(e.selectedOptions[0]?.textContent.trim()||'')))))continue;
   const a=answer(e);if(a===null||a===undefined||a==='')continue;
   if(e.tagName==='SELECT'){const opts=[...e.options].filter(o=>!o.disabled&&(norm(o.textContent)===norm(a)||o.value===a));if(opts.length!==1)continue;setValue(e,opts[0].value);}else setValue(e,a);count++;
@@ -105,11 +108,11 @@ async function advance(){
  if(submit.length===1&&next.length===0){
   if(!controls().length&&!document.querySelector('form'))return report('Cannot identify the final application form.');
   // Fetch fresh consent/profile and save intent on both server and PC before clicking.
-  await send('packet');const before=bodyText();await send('attempt',{before});attempted=true;submitAt=Date.now();const finalCheck=review();if(finalCheck.reason)return report('Form changed before submission. '+finalCheck.reason,finalCheck.fields);submit[0].click();return;
+  await send('packet');await send('capture',{fields:formAnswers()});const before=bodyText();await send('attempt',{before});attempted=true;submitAt=Date.now();const finalCheck=review();if(finalCheck.reason)return report('Form changed before submission. '+finalCheck.reason,finalCheck.fields);submit[0].click();return;
  }
  if(next.length===1&&submit.length===0){
   if(!controls().length)return report('Cannot identify fields for this step.');
-  await send('step');lastStep=signatureNow;stepAt=Date.now();next[0].click();return;
+  await send('capture',{fields:formAnswers()});await send('step');lastStep=signatureNow;stepAt=Date.now();next[0].click();return;
  }
  const apply=bs.filter(e=>/^(apply|apply now|apply for this job)$/i.test(buttonName(e)));
  if(!controls().length&&apply.length===1&&lastStep===''){await send('step');lastStep=signatureNow;stepAt=Date.now();apply[0].click();return;}
@@ -119,9 +122,9 @@ async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!att
 async function begin(){try{packet=await send('packet');attempted=!!packet.job.attempted||(await send('state')).attempted;initialReceipt=!!receipt()&&!attempted;started=true;await fill();await advance();timer=setInterval(monitor,2500);}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched. */}}
 document.addEventListener('click',e=>{
  const b=e.target.closest('button,input[type=submit],[role=button]');if(!started||!e.isTrusted||!b||bar?.contains(b))return;
- if(/^(submit(?: application)?|send application|send my application)$/i.test(buttonName(b))&&!attempted){attempted=true;submitAt=Date.now();stopped=false;clearInterval(timer);timer=setInterval(monitor,2500);send('attempt',{before:bodyText(),human:true}).catch(err=>{note.textContent='Sync unavailable: '+err.message+'. Record the employer receipt in the dashboard.';});}
+ if(/^(submit(?: application)?|send application|send my application)$/i.test(buttonName(b))&&!attempted){attempted=true;submitAt=Date.now();stopped=false;clearInterval(timer);timer=setInterval(monitor,2500);send('capture',{fields:formAnswers()}).catch(()=>{}).then(()=>send('attempt',{before:bodyText(),human:true})).catch(err=>{note.textContent='Sync unavailable: '+err.message+'. Record the employer receipt in the dashboard.';});}
 },true);
 document.addEventListener('submit',e=>{if(started&&e.isTrusted&&!attempted&&buttons().some(b=>/^(submit(?: application)?|send application)$/i.test(buttonName(b)))){attempted=true;submitAt=Date.now();send('attempt',{before:bodyText(),human:true}).catch(()=>{});}},true);
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.action==='fill'){fill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}});
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.action==='fill'){packet=null;attemptedCustom=new WeakMap();fill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}});
 begin();
 })();

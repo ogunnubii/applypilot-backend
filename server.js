@@ -1,3 +1,4 @@
+import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse} from './answer-library.js';
 import {supported,sameApplication,receipt as employerReceipt,sensitive} from './local-policy.js';
 import {rememberAnswers} from './local-state.js';
 import {installNotifications,emailConfigured,sendBlockerEmails} from './notifications.js';
@@ -6,7 +7,7 @@ import {readFile} from 'node:fs/promises';
 import {createServer} from 'node:http';import {randomUUID} from 'node:crypto';import {mkdir,writeFile,unlink} from 'node:fs/promises';import {join,resolve,extname} from 'node:path';import {db,event,now,normalizeURL} from './db.js';import {hashPassword,verifyPassword,issueToken,readToken} from './auth.js';
 import {parseBoards,parseIntent,runSearch} from './discovery.js';
 import {resumeRoles} from './resume.js';
-installNotifications(db);
+installNotifications(db);installLibrary(db);
 let emailBusy=false;
 const emailTimer=setInterval(async()=>{if(emailBusy)return;emailBusy=true;try{await sendBlockerEmails(db)}catch{console.error('Blocker notification delivery failed')}finally{emailBusy=false}},60000);emailTimer.unref();
 const origin=process.env.PUBLIC_ORIGIN;if(!origin)throw Error('Set PUBLIC_ORIGIN');if(!process.env.REGISTRATION_CODE||process.env.REGISTRATION_CODE.length<24)throw Error('Set REGISTRATION_CODE to a random value of at least 24 characters');const attempts=new Map();const uploadDir=resolve(process.env.UPLOAD_DIR||'./data/resumes');const limit=6*1024*1024;
@@ -39,6 +40,9 @@ if(path==='/api/notifications'&&['GET','PUT'].includes(req.method)){
  const enabled=!!db.prepare('SELECT enabled FROM notification_preferences WHERE user_id=?').get(uid)?.enabled;
  return send(res,200,{enabled,configured:emailConfigured(),failed:db.prepare("SELECT COUNT(*) AS n FROM blocker_emails b JOIN jobs j ON j.id=b.job_id WHERE j.user_id=? AND b.last_error IS NOT NULL").get(uid).n});
 }
+if(path==='/api/answer-library'&&req.method==='GET')return send(res,200,{answers:db.prepare('SELECT a.*,j.company,j.title FROM answer_history a JOIN jobs j ON j.id=a.job_id WHERE a.user_id=? ORDER BY a.updated_at DESC LIMIT 500').all(uid).map(a=>({...a,canReuse:canReuse(a.question)}))});
+const libraryRoute=path.match(/^\/api\/answer-library\/([a-f0-9-]+)$/);
+if(libraryRoute&&['PUT','DELETE'].includes(req.method)){try{if(req.method==='DELETE')deleteLibrary(db,uid,libraryRoute[1]);else{const x=JSON.parse(await body(req));updateLibrary(db,uid,libraryRoute[1],x.answer,x.reuse===true);}return send(res,200,{ok:true});}catch(e){return send(res,400,{error:e.message});}}
 if(path==='/api/chat'&&req.method==='POST')return send(res,200,await chat(uid,JSON.parse(await body(req))));
 if(path==='/api/status'&&req.method==='GET'){const heartbeat=db.prepare('SELECT heartbeat FROM worker_status WHERE id=1').get()?.heartbeat;return send(res,200,{workerOnline:!!heartbeat&&Date.now()-Date.parse(heartbeat)<45000,heartbeat:heartbeat||null,queue:db.prepare("SELECT status,COUNT(*) AS count FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived') GROUP BY status").all(uid)});}
 if(path==='/api/activity'&&req.method==='GET')return send(res,200,{events:db.prepare('SELECT e.at,e.type,e.message,j.title,j.company,j.applicant_id FROM events e JOIN jobs j ON j.id=e.job_id WHERE j.user_id=? ORDER BY e.id DESC LIMIT 100').all(uid)});
@@ -64,7 +68,7 @@ m=path.match(/^\/api\/applicants\/([a-f0-9-]+)\/resume$/);if(m&&req.method==='PO
 if(path==='/api/jobs'&&req.method==='GET')return send(res,200,{jobs:db.prepare(`SELECT id,applicant_id,title,company,url,status,notes,confirmation,challenge,created_at,updated_at,required_fields_json,answers_json,handoff_available,local_phase,local_attempt_at,(SELECT execution_mode FROM applicants WHERE id=jobs.applicant_id) AS execution_mode,(SELECT message FROM events WHERE job_id=jobs.id AND type IN ('paused','needs_review') ORDER BY id DESC LIMIT 1) AS blocker_message,(SELECT message FROM events WHERE job_id=jobs.id ORDER BY id DESC LIMIT 1) AS last_message FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived') ORDER BY discovery_priority,created_at DESC`).all(uid)});
 if(path==='/api/jobs'&&req.method==='POST'){let x=JSON.parse(await body(req)),p=db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(x.applicant_id,uid);if(!p)return send(res,400,{error:'Select your applicant profile'});let url=normalizeURL(x.url),id=randomUUID(),date=now();if(!supported(url))return send(res,400,{error:'Use a supported direct employer application link. Aggregator listings are not accepted.'});try{db.prepare('INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,uid,p.id,text(x.title,200),text(x.company,200),url,url,text(x.notes,2000),date,date)}catch{return send(res,409,{error:'Job already tracked for this applicant'})}event(id,'saved','Job added');return send(res,201,{id})}
 // Local browser mode owns the application until a receipt is recorded.
-let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|attempt|submitted)$/);
+let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|attempt|submitted|capture)$/);
 if(localRoute){
  const j=ownJob(uid,localRoute[1]);if(!j)return send(res,404,{error:'Job not found'});
  const action=localRoute[2],owner=req.headers['x-applypilot-device'];
@@ -91,6 +95,7 @@ if(localRoute){
  if(j.local_owner!==owner)return send(res,409,{error:'Application belongs to another browser'});
  if(j.status==='submitted'&&action==='submitted')return send(res,200,{ok:true});
  if(j.status!=='local_browser')return send(res,409,{error:'This application is not active in your browser'});
+ if(action==='capture'&&req.method==='POST'){const x=JSON.parse(await body(req));return send(res,200,{saved:captureAnswers(db,j,x.fields)});}
  if(action==='packet'&&req.method==='GET'){
   const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
   if(!p?.consent)return send(res,403,{error:'Applicant consent required'});
@@ -118,6 +123,7 @@ if(localRoute){
   const x=JSON.parse(await body(req)),receipt=text(x.receipt,300);
   if(!j.local_attempt_at||!sameApplication(x.url,j.url)||x.afterSubmit!==true||!employerReceipt(receipt))return send(res,400,{error:'An employer receipt after submission is required'});
   db.prepare("UPDATE jobs SET status='submitted',confirmation=?,challenge=NULL,updated_at=? WHERE id=? AND status='local_browser'").run('Browser extension observed: '+receipt,now(),j.id);
+  confirmLibrary(db,j);
   event(j.id,'submitted','Browser extension observed employer confirmation: '+receipt);return send(res,200,{ok:true});
  }
  return send(res,405,{error:'Method not allowed'});

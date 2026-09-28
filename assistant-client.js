@@ -91,7 +91,6 @@ async function refresh(force=false){
   }
   if(['running','queued'].includes(job.status)){card.append(el('p',job.status==='running'?'Applying with your saved answers…':'Waiting for the worker. No action needed.'));$('#jobs').append(card);continue}
   const blocker=el('p',job.status==='local_browser'?(job.last_message||'Continue in your employer browser tab.'):job.blocker_message||job.challenge||'This application needs your input.');blocker.className='blocker';card.append(blocker);const actions=el('details');actions.className='job-actions';actions.append(el('summary',job.status==='local_browser'?'Continue application':'Resolve next step'));card.append(actions);
-  const localHelp=el('p');const setup=el('a','Use my normal browser');setup.href=(location.hostname.endsWith('.pages.dev')?location.origin:'https://applypilot-jobs.netlify.app')+'/local-browser.html';setup.target='_blank';setup.rel='noopener';localHelp.append(setup);actions.append(localHelp);
   const msg=el('p');msg.className='message';msg.setAttribute('role','status');actions.append(msg);
   const human=['CAPTCHA','Sign-in','Unconfirmed submission','Submission in progress','Sensitive action'].includes(job.challenge);
   let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}

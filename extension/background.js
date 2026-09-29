@@ -84,6 +84,7 @@ async function handle(m,sender){
  if(m.action==='packet'){const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);return {...packet,automatic:b.auto&&!b.attempted};}
  if(m.action==='state')return {attempted:b.attempted,automatic:b.auto&&!b.attempted,phase:b.phase};
  if(m.action==='attempt'){
+  if(m.human!==true)throw Error('Review the employer form and click Submit yourself.');
   if(m.human!==true&&!b.auto)throw Error('Automation was stopped. Review the employer form manually.');
   b.attempted=true;b.phase='verifying';b.touched=Date.now();await saveRecord(b);
   await api('/jobs/'+b.id+'/local/attempt','POST',{url:sender.url,before:m.before,human:m.human===true});return {};

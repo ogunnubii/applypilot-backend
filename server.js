@@ -1,4 +1,5 @@
-import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse} from './answer-library.js';
+import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse,reusableAnswers} from './answer-library.js';
+import {deleteApplication} from './delete-application.js';
 import {supported,sameApplication,receipt as employerReceipt,sensitive} from './local-policy.js';
 import {rememberAnswers} from './local-state.js';
 import {installNotifications,emailConfigured,sendBlockerEmails} from './notifications.js';
@@ -35,6 +36,8 @@ if(path==='/api/health')return send(res,200,{ok:true,release:'2026-09-28-hosted-
 if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(req));if(input.registration_code!==process.env.REGISTRATION_CODE)return send(res,403,{error:'Registration code required'});let email=text(input.email,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return send(res,400,{error:'Valid email required'});let id=randomUUID(),hash=hashPassword(input.password);try{db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(id,email,hash,now())}catch{return send(res,409,{error:'Account already exists'})}return send(res,201,{token:issueToken(id,input.remember===true)})}
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id,input.remember===true)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
+const deleteRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)$/);
+if(deleteRoute&&req.method==='DELETE'){const x=JSON.parse(await body(req));if(x.confirm!==deleteRoute[1])return send(res,400,{error:'Confirm permanent deletion of this application'});try{return send(res,200,deleteApplication(db,uid,deleteRoute[1]));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/notifications'&&['GET','PUT'].includes(req.method)){
  if(req.method==='PUT'){const x=JSON.parse(await body(req));if(typeof x.enabled!=='boolean')return send(res,400,{error:'Choose whether to enable blocker emails'});db.prepare('INSERT INTO notification_preferences(user_id,enabled) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled').run(uid,x.enabled?1:0);}
  const enabled=!!db.prepare('SELECT enabled FROM notification_preferences WHERE user_id=?').get(uid)?.enabled;
@@ -109,10 +112,11 @@ if(localRoute){
   const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
   if(!p?.consent)return send(res,403,{error:'Applicant consent required'});
   const bytes=await readFile(p.resume_path);if(bytes.length>limit)throw Error('Resume too large');
-  return send(res,200,{job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...JSON.parse(p.answers_json||'{}'),...JSON.parse(j.answers_json||'{}')},resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
+  return send(res,200,{job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...reusableAnswers(db,p),...JSON.parse(j.answers_json||'{}')},resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
  }
  if(action==='attempt'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
+  if(x.human!==true)return send(res,409,{error:'Review the employer form and click Submit yourself'});
   const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
   if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
   if(typeof x.before!=='string'||!sameApplication(x.url,j.url)||employerReceipt(x.before)||(x.human!==true&&sensitive(x.before)))return send(res,409,{error:'Application requires human review before submission'});

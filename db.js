@@ -58,3 +58,7 @@ if(!db.prepare('PRAGMA table_info(applicants)').all().some(c=>c.name==='executio
 if(!db.prepare('PRAGMA table_info(applicants)').all().some(c=>c.name==='google_research_consent'))db.exec('ALTER TABLE applicants ADD COLUMN google_research_consent INTEGER NOT NULL DEFAULT 0');
 
 installHistory(db);
+
+for(const [table,name,type] of [['jobs','job_metadata_json',"TEXT NOT NULL DEFAULT '{}'"],['jobs','match_score','INTEGER NOT NULL DEFAULT 0'],['jobs','metadata_attempt_at','TEXT'],['searches','source_cursor','INTEGER NOT NULL DEFAULT 0']]){
+ if(!db.prepare('PRAGMA table_info('+table+')').all().some(c=>c.name===name))db.exec('ALTER TABLE '+table+' ADD COLUMN '+name+' '+type);
+}

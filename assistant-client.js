@@ -1,4 +1,37 @@
 
+function paySummary(job){
+ const wrap=el('div');wrap.className='job-pay';const rows=job.metadata?.pay||[];
+ if(!rows.length){wrap.append(el('strong',job.metadata?.checkedAt?'Annual pay not disclosed':'Annual pay · checking employer posting'));return wrap;}
+ for(const pay of rows){
+  const number=n=>Number(n).toLocaleString('en-US',{maximumFractionDigits:0}),range=(lo,hi)=>number(lo)+(lo===hi?'':'–'+number(hi));
+  wrap.append(el('strong',pay.currency+' '+range(pay.annualMin,pay.annualMax)+' / year'+(pay.estimated?' · estimate':'')));
+  if(pay.estimated)wrap.append(el('small','Posted '+pay.currency+' '+range(pay.min,pay.max)+' / '+pay.period+'; assumes '+pay.assumption+' per year. Actual paid time may differ.'));
+  if(pay.label)wrap.append(el('small',pay.label));
+ }
+ wrap.append(el('small','Employer-posted ranges; location and level may affect your offer.'));return wrap;
+}
+function nextMatchCandidate(job){
+ const m=job.metadata||{};return ['saved','queued'].includes(job.status)&&!job.local_attempt_at&&!Number(job.attempts||0)&&!job.challenge&&!job.handoff_available&&m.available===true&&m.strong===true&&m.eligibility?.eligible===true&&Date.now()-Date.parse(m.checkedAt||'')<86400000;
+}
+function renderNextMatch(jobs){
+ let box=$('#next-match');if(!box){box=el('section');box.id='next-match';box.className='next-match';$('#workspace').prepend(box);}
+ $('#workspace').prepend(box);
+ if(box.contains(document.activeElement))return;
+ const job=[...jobs].filter(nextMatchCandidate).sort((a,b)=>(Number(b.match_score)||0)-(Number(a.match_score)||0)||String(b.created_at||'').localeCompare(String(a.created_at||''))||String(a.id).localeCompare(String(b.id)))[0];
+ const signature=JSON.stringify(job||null);if(box.dataset.signature===signature)return;box.dataset.signature=signature;
+ box.replaceChildren(el('span','YOUR NEXT APPLICATION'));
+ if(!job){box.append(el('h2','Checking for your next strong match'),el('p','New recommendations appear after profile fit, employer availability and work eligibility are checked. Applications already attempted stay out of this list.'));return;}
+ const heading=el('div');heading.className='next-match-heading';heading.append(el('h2',job.title),paySummary(job));box.append(heading,el('p',job.company+' · '+(job.metadata.location||'Location not listed')));
+ box.append(el('p','Ranked #1 · '+job.match_score+'/100 role and eligibility score'),el('p',(job.metadata.reasons||[]).join(' · ')),el('small','This score compares saved role preferences and posting evidence; it is not a hiring probability.'));
+ const actions=el('div');actions.className='actions';
+ if(job.status==='saved'){
+  const apply=el('button','Apply to this match next');apply.onclick=async()=>{apply.disabled=true;try{await api('/jobs/'+job.id+'/queue','POST',{});$('#notice').textContent='Top match queued. Your application worker will continue when ready.';await refresh(true);}catch(error){$('#notice').textContent=error.message;apply.disabled=false;}};actions.append(apply);
+ }else actions.append(el('strong','Queued for your application worker'));
+ const source=el('a','Read employer posting ↗');source.href=job.url;source.target='_blank';source.rel='noopener noreferrer';actions.append(source);box.append(actions);
+ const pending=jobs.some(j=>j.evidence?.active);if(pending)box.append(el('small','A form already in progress finishes or pauses before the next queued application.'));
+}
+
+
 // Persist only an explicitly remembered session, never the password.
 function restoreSession(){const remembered=localStorage.getItem('applypilot-remembered-token');if(remembered)sessionStorage.setItem('applypilot-token',remembered);return remembered||sessionStorage.getItem('applypilot-token')||'';}
 function saveSession(value,remember){sessionStorage.setItem('applypilot-token',value);if(remember)localStorage.setItem('applypilot-remembered-token',value);else localStorage.removeItem('applypilot-remembered-token');}
@@ -69,7 +102,7 @@ async function refresh(force=false){
    pendingHandoff=null;document.querySelector('#preparing-browser')?.remove();$('#notice').textContent=message;force=true;
   }else if(Date.now()-pendingHandoff.started>180000){pendingHandoff=null;const banner=$('#preparing-browser');if(banner)banner.textContent='The live browser is taking longer than expected. Check the application below or try again when the worker is available.';force=true;}
  }
- renderBrowserReadiness(current);renderMissingAnswers(current);renderContinuationQueue(continuations);drainContinuations(continuations);renderLibraryLauncher();renderFocusControl();renderArchiveControl(current);if($('#career-overview'))$('#workspace').prepend($('#career-overview'));renderOperations(operations,activity);
+ renderBrowserReadiness(current);renderMissingAnswers(current);renderContinuationQueue(continuations);drainContinuations(continuations);renderLibraryLauncher();renderFocusControl();renderArchiveControl(current);if($('#career-overview'))$('#workspace').prepend($('#career-overview'));renderOperations(operations,activity);renderNextMatch(current);
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  $('#needs-count').textContent=current.filter(j=>j.evidence?j.evidence.blocked||j.evidence.stalled:['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
  $('#applying-count').textContent=current.filter(j=>j.evidence?j.evidence.active:!j.local_attempt_at&&(['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='ready')).length;
@@ -86,11 +119,11 @@ async function refresh(force=false){
  const blocked=j=>['needs_review','paused'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked';
  const rank=j=>blocked(j)?0:1+['local_browser','running','queued','saved','submitted','interview','rejected','offer'].indexOf(j.status);
  const updated=j=>Number.isFinite(Date.parse(j.updated_at))?Date.parse(j.updated_at):0;
- current.sort((a,b)=>rank(a)-rank(b)||updated(b)-updated(a)||String(a.id).localeCompare(String(b.id)));
+ current.sort((a,b)=>rank(a)-rank(b)||(['saved','queued'].includes(a.status)&&a.status===b.status?(Number(b.match_score)||0)-(Number(a.match_score)||0):0)||updated(b)-updated(a)||String(a.id).localeCompare(String(b.id)));
  for(const r of externalInterviews){const card=interviewCard(r);card.id='external-'+r.id;$('#jobs').append(card);}
  for(const job of current){
   if(job.status==='interview'){const r=interviews.find(r=>interviewIdentity(r)===interviewIdentity(job));const card=interviewCard(r);card.id='job-'+job.id;$('#jobs').append(card);continue;}
-  const card=el('article');card.id='job-'+job.id;card.className='job';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');for(const key of ['active','blocked','stalled','worked','confirmed'])card.dataset[key]=String(!!job.evidence?.[key]);card.dataset.state=job.evidence?.awaiting||job.local_attempt_at&&!job.evidence?.confirmed&&job.status==='local_browser'?'awaiting':job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');names.append(el('h2',job.title),el('small',job.company));const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.evidence?.stalled?'Browser check needed':job.local_phase==='blocked'?(/^Ready for your review/.test(job.last_message||'')?'Ready for your review':'Needs your input'):job.local_attempt_at?'Awaiting receipt':'Applying · local',submitted:job.evidence?.confirmed?'Receipt recorded':'Submission needs evidence',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
+  const card=el('article');card.id='job-'+job.id;card.className='job';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');for(const key of ['active','blocked','stalled','worked','confirmed'])card.dataset[key]=String(!!job.evidence?.[key]);card.dataset.state=job.evidence?.awaiting||job.local_attempt_at&&!job.evidence?.confirmed&&job.status==='local_browser'?'awaiting':job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');names.append(el('h2',job.title),paySummary(job),el('small',job.company));if(job.metadata?.checkedAt){names.append(el('small',(job.match_score||0)+'/100 role and eligibility score · '+(job.metadata.location||'Location not listed')));}const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.evidence?.stalled?'Browser check needed':job.local_phase==='blocked'?(/^Ready for your review/.test(job.last_message||'')?'Ready for your review':'Needs your input'):job.local_attempt_at?'Awaiting receipt':'Applying · local',submitted:job.evidence?.confirmed?'Receipt recorded':'Submission needs evidence',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
   if(job.evidence?.stalled)card.append(el('p','No recent browser activity has been received. Check the helper and employer tab; this form is not counted as actively filling.'));
   const updated=Date.parse(job.updated_at),stamp=el('p');stamp.className='last-updated';stamp.style.cssText='font-size:13px;color:#626c65;margin:8px 0';
   if(Number.isFinite(updated)){const time=el('time',new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(updated)));time.dateTime=new Date(updated).toISOString();stamp.append(document.createTextNode('Last updated: '),time);}else stamp.textContent='Last updated: unavailable';card.append(stamp);
@@ -233,9 +266,10 @@ async function updateDiscovery(){
  for(const saved of data.searches||[]){const row=el('div'),toggle=el('button',saved.enabled?'Pause search':'Enable search');row.append(el('p',saved.instruction),toggle);toggle.onclick=async()=>{toggle.disabled=true;try{await api('/searches/'+saved.id+'/toggle','POST');await updateDiscovery();}catch(e){$('#notice').textContent=e.message;toggle.disabled=false;}};const run=el('button','Run search now');run.onclick=async()=>{run.disabled=true;run.textContent='Checking employer postings…';try{await api('/searches/'+saved.id+'/run','POST',{});await updateDiscovery();await refresh(true);}catch(e){$('#notice').textContent=e.message;run.disabled=false;run.textContent='Run search now';}};row.append(run);controls.append(row);}section.append(controls);
  if(!searches.length){section.append(el('p','No searches enabled. Add a saved search in profile setup.'));return;}
  const latest=searches.filter(s=>s.last_run).sort((a,b)=>b.last_run.localeCompare(a.last_run))[0],result=latest?.last_result;
- section.append(el('p',`${searches.length} enabled search${searches.length===1?'':'es'} · Checks every ${data.intervalHours||1} hour(s). New matches appear automatically; duplicates are skipped.`));
+ section.append(el('p',`${searches.length} enabled search${searches.length===1?'':'es'} · Checks every ${Math.round((data.intervalSeconds||60)/60)} minute(s), rotating employer boards. Newly found matches appear automatically; duplicates are skipped.`));
  section.append(el('p',latest?`Last check: ${new Date(latest.last_run).toLocaleString()}${result?` · ${result.scanned} postings checked · ${result.added} new matches · ${result.queued} queued`: ' · Results pending'}`:'First check is pending.'));
- if(latest?.last_error)section.append(el('p','Some sources could not be checked: '+latest.last_error));
+ section.append(el('p','A check can find zero suitable new jobs. Posted pay and match details also refresh in the background. '+(searches.some(s=>s.auto_queue)?'Automatic applications: the highest-ranked eligible new match is queued each cycle.':'Automatic applications are off for these searches.')));
+  if(latest?.last_error)section.append(el('p','Some sources could not be checked: '+latest.last_error));
  if(searches.some(s=>s.instruction.includes('priority: York Region')))section.append(el('p','Priority: York Region → Toronto → GTA → remote → Canada → worldwide. Matches are based on your role preferences; eligibility may still need your input.'));
  }catch{section.textContent='Search activity could not be loaded. Refresh to try again.';}
 }

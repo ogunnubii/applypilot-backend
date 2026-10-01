@@ -16,7 +16,7 @@ installDrafts(db);
 installResearch(db);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function set(job,status,message,challenge=null,confirmation=null){db.prepare('UPDATE jobs SET status=?,challenge=?,confirmation=?,updated_at=? WHERE id=?').run(status,challenge,confirmation,now(),job.id);event(job.id,status,message)}
-function claim(){db.exec('BEGIN IMMEDIATE');try{let j=db.prepare("SELECT * FROM jobs WHERE status='queued' AND applicant_id IN (SELECT id FROM applicants WHERE execution_mode='cloud') ORDER BY discovery_priority,created_at LIMIT 1").get();if(j){db.prepare("UPDATE jobs SET status='running',attempts=attempts+1,lease_at=?,updated_at=? WHERE id=?").run(now(),now(),j.id);event(j.id,'running','Opening employer application')}db.exec('COMMIT');return j}catch(e){db.exec('ROLLBACK');throw e}}
+function claim(){db.exec('BEGIN IMMEDIATE');try{let j=db.prepare("SELECT * FROM jobs WHERE status='queued' AND COALESCE(json_extract(job_metadata_json,'$.available'),1)!=0 AND applicant_id IN (SELECT id FROM applicants WHERE execution_mode='cloud') ORDER BY discovery_priority,created_at LIMIT 1").get();if(j){db.prepare("UPDATE jobs SET status='running',attempts=attempts+1,lease_at=?,updated_at=? WHERE id=?").run(now(),now(),j.id);event(j.id,'running','Opening employer application')}db.exec('COMMIT');return j}catch(e){db.exec('ROLLBACK');throw e}}
 async function pageIssue(page,status=0){
  const text=await page.locator('body').innerText().catch(()=>'');
  const hasForm=await page.locator('form,input:visible,textarea:visible,select:visible').count()>0;

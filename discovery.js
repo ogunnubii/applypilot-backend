@@ -1,3 +1,4 @@
+import {jobIntelligence,nextApplicationEligible} from './job-intelligence.js';
 import {workEligibility} from './work-eligibility.js';
 import {companyKey,historyKey} from './application-history.js';
 import {matchAssessment,locationPriority} from './matching.js';
@@ -95,18 +96,27 @@ export function searchIntentForApplicant(search,applicant){
  return {instruction,intent:mergeProfileRoles(parseIntent(instruction),applicant?.focus)};
 }
 
+export const SEARCH_INTERVAL_SECONDS=60;
+const feedCache=new Map(),pendingFeeds=new Map(),boardBackoff=new Map();
 async function readJSON(url){
-  const response=await fetch(url,{signal:AbortSignal.timeout(12000),headers:{accept:'application/json'}});
-  if(!response.ok)throw Error(`Job board returned ${response.status}`);
-  if(Number(response.headers.get('content-length')||0)>8000000)throw Error('Job board response too large');
-  const body=await response.text();if(body.length>8000000)throw Error('Job board response too large');
-  return JSON.parse(body);
+ const host=new URL(url).origin;if((boardBackoff.get(host)||0)>Date.now())throw Error('Source temporarily cooling down after an error');
+ const response=await fetch(url,{signal:AbortSignal.timeout(10000),headers:{accept:'application/json'}});
+ if(!response.ok){
+  if(response.status===429||response.status>=500){const retry=response.headers.get('retry-after'),seconds=Number(retry),until=retry?(Number.isFinite(seconds)?Date.now()+seconds*1000:Date.parse(retry)):0;boardBackoff.set(host,Math.min(Date.now()+3600000,Math.max(Date.now()+60000,until||Date.now()+300000)));}
+  const error=Error('Job board returned '+response.status);error.status=response.status;throw error;
+ }
+ if(Number(response.headers.get('content-length')||0)>8000000)throw Error('Job board response too large');
+ const body=await response.text();if(body.length>8000000)throw Error('Job board response too large');return JSON.parse(body);
 }
-
-const feedCache=new Map();
-async function cachedJSON(url){
-  const hit=feedCache.get(url);if(hit&&Date.now()-hit.at<60*60*1000)return hit.data;
-  const data=await readJSON(url);feedCache.set(url,{at:Date.now(),data});return data;
+async function cachedJSON(url,ttl=60000){
+ const hit=feedCache.get(url);if(hit&&Date.now()-hit.at<ttl)return hit.data;
+ if(pendingFeeds.has(url))return pendingFeeds.get(url);
+ const task=readJSON(url).then(data=>{if(feedCache.size>=3000)feedCache.delete(feedCache.keys().next().value);feedCache.set(url,{at:Date.now(),data});return data;}).finally(()=>pendingFeeds.delete(url));
+ pendingFeeds.set(url,task);return task;
+}
+export function sourceBatch(boards,cursor=0,size=4){
+ if(!boards.length)return {boards:[],next:0};const start=(Math.max(0,Number(cursor)||0))%boards.length,n=Math.min(size,boards.length);
+ return {boards:Array.from({length:n},(_,i)=>boards[(start+i)%boards.length]),next:(start+n)%boards.length};
 }
 
 async function broadListings(intent){
@@ -116,12 +126,12 @@ async function broadListings(intent){
     const geoPlaces=[...(intent.places||[]),...(intent.remotePlaces||[])];
     if(geoPlaces.includes('canada'))query.set('geo','canada');
     else if(geoPlaces.includes('usa')||geoPlaces.includes('united states'))query.set('geo','usa');
-    const data=await cachedJSON(`https://jobicy.com/api/v2/remote-jobs?${query}`);
+    const data=await cachedJSON(`https://jobicy.com/api/v2/remote-jobs?${query}`,3600000);
     batches.push({source:'Jobicy',jobs:(data.jobs||[]).map(j=>({title:j.jobTitle,company:j.companyName,location:j.jobGeo,remote:true,url:j.url}))});
   }catch(e){errors.push(`Jobicy: ${String(e.message).slice(0,150)}`)}
   try{
     for(let page=1;page<=5;page++){
-      const data=await cachedJSON('https://www.arbeitnow.com/api/job-board-api'+(page===1?'':'?page='+page));
+      const data=await cachedJSON('https://www.arbeitnow.com/api/job-board-api'+(page===1?'':'?page='+page),3600000);
       batches.push({source:'Arbeitnow page '+page,jobs:(data.data||[]).map(j=>({title:j.title,company:j.company_name,location:j.location,remote:j.remote,url:j.url}))});
       if(!data.links?.next||!data.data?.length)break;
     }
@@ -133,22 +143,22 @@ async function listBoard(board){
   const u=new URL(board),token=decodeURIComponent(u.pathname.slice(1));
   if(u.hostname.includes('greenhouse.io')){
     const data=await cachedJSON(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs`);
-    return (data.jobs||[]).map(j=>({title:j.title,company:token,location:j.location?.name,description:j.content,descriptionURL:Number.isInteger(j.id)?`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs/${j.id}`:null,url:j.absolute_url}));
+    return (data.jobs||[]).map(j=>({title:j.title,company:token,location:j.location?.name,publishedAt:j.first_published,description:j.content,descriptionURL:Number.isInteger(j.id)?`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs/${j.id}?pay_transparency=true`:null,url:j.absolute_url}));
   }
   if(u.hostname==='jobs.ashbyhq.com'){
-    const data=await cachedJSON(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(token)}`);
-    return (data.jobs||[]).map(j=>({title:j.title,company:token,location:j.location,description:j.descriptionPlain||j.descriptionHtml,employmentType:j.employmentType,remote:j.isRemote===true||j.workplaceType==='Remote',url:j.applyUrl||j.jobUrl}));
+    const data=await cachedJSON(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(token)}?includeCompensation=true`);
+    return (data.jobs||[]).filter(j=>j.isListed!==false).map(j=>({title:j.title,company:token,location:j.location,publishedAt:j.publishedAt,compensation:j.compensation,description:j.descriptionPlain||j.descriptionHtml,employmentType:j.employmentType,remote:j.isRemote===true||j.workplaceType==='Remote',url:j.applyUrl||j.jobUrl}));
   }
   const api=u.hostname==='jobs.eu.lever.co'?'https://api.eu.lever.co':'https://api.lever.co';
-  const data=await readJSON(`${api}/v0/postings/${encodeURIComponent(token)}?mode=json&limit=500`);
+  const data=await cachedJSON(`${api}/v0/postings/${encodeURIComponent(token)}?mode=json&limit=500`);
   if(!Array.isArray(data))throw Error('Job board response is invalid');
-  return data.map(j=>({title:j.text,company:token,location:j.categories?.location||j.categories?.allLocations?.join(', '),description:[j.descriptionPlain,...(j.lists||[]).map(x=>x.text+' '+x.content),j.additionalPlain].join(' '),employmentType:j.categories?.commitment,remote:j.workplaceType==='remote',url:j.applyUrl||j.hostedUrl}));
+  return data.map(j=>({title:j.text,company:token,salaryRange:j.salaryRange,salaryDescriptionPlain:j.salaryDescriptionPlain,publishedAt:j.createdAt?new Date(j.createdAt).toISOString():null,location:j.categories?.location||j.categories?.allLocations?.join(', '),description:[j.descriptionPlain,...(j.lists||[]).map(x=>x.text+' '+x.content),j.additionalPlain].join(' '),employmentType:j.categories?.commitment,remote:j.workplaceType==='remote',url:j.applyUrl||j.hostedUrl}));
 }
 
 const defaultBoards=['braze','cloudflare','canonical','gitlab','datadog','grafanalabs'].map(x=>'https://boards.greenhouse.io/'+x).concat('https://jobs.lever.co/newton');
 // Current public boards with a high concentration of infrastructure,
 // reliability, cloud and support work. They are added only for searches in
-// that role family and share the normal one-hour feed cache.
+// that role family and share a one-minute feed cache.
 const infrastructureBoards=['marble.ai','acquird','homebase','ashby','remarcable-inc','top-hat','lightspeedhq','hopper','baseten','hiive'].map(x=>'https://jobs.ashbyhq.com/'+encodeURIComponent(x));
 function curatedBoards(intent,focus=''){
  const text=[...intent.roles,focus].join(' ').toLowerCase();
@@ -161,63 +171,92 @@ export function runSearch(id,userId){
  const task=executeSearch(id,userId).finally(()=>activeSearches.delete(key));
  activeSearches.set(key,task);return task;
 }
-async function executeSearch(id,userId){
-  const search=db.prepare('SELECT * FROM searches WHERE id=? AND user_id=?').get(id,userId);
-  if(!search)throw Error('Search not found');
-  const applicant=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(search.applicant_id,userId);
-  if(!applicant)throw Error('Applicant not found');
-  const resolved=searchIntentForApplicant(search,applicant),intent=resolved.intent,requestedBoards=[...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')],boards=[...new Set([...defaultBoards,...curatedBoards(intent,applicant.focus),...requestedBoards])],requestedBoardSet=new Set(requestedBoards);
-  if(search.auto_generated&&resolved.instruction!==search.instruction){search.instruction=resolved.instruction;db.prepare('UPDATE searches SET instruction=? WHERE id=?').run(search.instruction,id);}
-  db.prepare('UPDATE searches SET last_run=?,last_error=NULL WHERE id=?').run(now(),id);
-  let scanned=0,matched=0,strongMatches=0,added=0,queued=0,duplicatesSkipped=0,errors=[];
-  const sources=[];
-  for(let i=0;i<boards.length;i+=4){
-    const group=boards.slice(i,i+4),results=await Promise.allSettled(group.map(listBoard));
-    results.forEach((result,index)=>{
-      if(result.status==='fulfilled')sources.push({source:group[index],jobs:result.value});
-      else if(requestedBoardSet.has(group[index]))errors.push(`${group[index]}: ${String(result.reason?.message).slice(0,150)}`);
-    });
-  }
-  const broad=await broadListings(intent);sources.push(...broad.batches);errors.push(...broad.errors);
-  if(intent.locationOrder){const ordered=sources.flatMap(s=>s.jobs.map(job=>({...job,source:s.source}))).sort((a,b)=>locationPriority(a)-locationPriority(b));sources.splice(0,sources.length,{source:'Prioritized employer and public feeds',jobs:ordered});}
-  for(const {source,jobs} of sources){
-    try{
-      scanned+=jobs.length;
-      for(const job of jobs){
-        if(added>=250)break;
-        const assessment=matchAssessment(job,intent,applicant.focus);if(!assessment.matched)continue;
-        if(intent.worldwideEligibility&&job.descriptionURL&&!job.description){try{const detail=await cachedJSON(job.descriptionURL);job.description=detail.content||'';}catch(e){errors.push('Could not verify '+job.company+' / '+job.title+': '+String(e.message).slice(0,100));continue;}}
-        const eligibility=intent.worldwideEligibility?workEligibility(job):null;if(eligibility&&!eligibility.eligible)continue;
-        let url;try{url=normalizeURL(job.url)}catch{continue}
-        const direct=directDiscoveryLink(url);
-        if(!direct)continue;
-        const ck=companyKey(job.company),tk=historyKey(job.title);
-        const imported=db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,ck,tk);
-        const prior=db.prepare("SELECT 1 FROM jobs WHERE user_id=? AND history_company(company)=? AND history_title(title)=? AND (status IN ('submitted','interview','offer','rejected','duplicate','archived','running','local_browser','queued') OR local_attempt_at IS NOT NULL)").get(userId,ck,tk);
-        if(imported||prior){duplicatesSkipped++;continue;}
-        matched++;
-        if(assessment.strong)strongMatches++;
-        const canQueue=!!(direct&&assessment.strong&&search.auto_queue&&applicant.consent&&applicant.email&&applicant.resume_path);
-        const id=randomUUID(),date=now();
-        const result=db.prepare('INSERT OR IGNORE INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-          .run(id,userId,applicant.id,String(job.title).slice(0,200),String(job.company).slice(0,200),url,url,canQueue?'queued':'saved',`Source: ${source}${job.location?' · '+String(job.location).slice(0,100):''} · ${assessment.strong?'Strong':'Comparable'} profile match${eligibility?' · '+eligibility.reason:''}`,date,date);
-        if(result.changes){db.prepare('UPDATE jobs SET discovery_priority=? WHERE id=?').run(intent.locationOrder?locationPriority(job):5,id);added++;if(canQueue)queued++;event(id,canQueue?'queued':'saved',`Found by search: ${search.instruction}`)}
-        else if(canQueue){
-          const existing=db.prepare("SELECT id FROM jobs WHERE applicant_id=? AND normalized_url=? AND status='saved' AND challenge IS NULL").get(applicant.id,url);
-          if(existing&&db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND status='saved' AND challenge IS NULL").run(now(),existing.id).changes){queued++;event(existing.id,'queued','Existing match queued by enabled automatic search');}
-        }
-      }
-    }catch(e){errors.push(`${source}: ${String(e.message).slice(0,150)}`)}
-  }
-  db.prepare('UPDATE searches SET last_error=? WHERE id=?').run(errors.join('; ').slice(0,600)||null,id);
-  const result={scanned,matched,strongMatches,added,queued,duplicatesSkipped,errors,sources:sources.map(s=>({source:s.source,count:s.jobs.length}))};
-  db.prepare('UPDATE searches SET last_result_json=? WHERE id=?').run(JSON.stringify(result),id);
-  return result;
+async function detailForJob(row){
+ const u=new URL(row.url),parts=u.pathname.split('/').filter(Boolean),board=u.origin+'/'+parts[0];
+ if(u.hostname.includes('greenhouse.io')){
+  const j=await cachedJSON('https://boards-api.greenhouse.io/v1/boards/'+encodeURIComponent(parts[0])+'/jobs/'+parts[2]+'?pay_transparency=true',3600000);
+  return {title:j.title,company:row.company,url:row.url,location:j.location?.name,description:j.content,pay_input_ranges:j.pay_input_ranges,publishedAt:j.first_published};
+ }
+ if(u.hostname==='jobs.ashbyhq.com'){
+  const jobs=await listBoard(board);return jobs.find(j=>normalizeURL(j.url)===normalizeURL(row.url))||null;
+ }
+ if(u.hostname==='jobs.lever.co'||u.hostname==='jobs.eu.lever.co'){
+  const host=u.hostname==='jobs.eu.lever.co'?'https://api.eu.lever.co':'https://api.lever.co';
+  const j=await cachedJSON(host+'/v0/postings/'+encodeURIComponent(parts[0])+'/'+parts[1],3600000);
+  return {title:j.text,company:row.company,url:row.url,location:j.categories?.location,employmentType:j.categories?.commitment,remote:j.workplaceType==='remote',description:[j.descriptionPlain,...(j.lists||[]).map(x=>x.content),j.additionalPlain].join(' '),salaryRange:j.salaryRange,salaryDescriptionPlain:j.salaryDescriptionPlain};
+ }
+ return undefined;
 }
-
+function saveMetadata(id,metadata){
+ db.prepare('UPDATE jobs SET job_metadata_json=?,match_score=?,discovery_priority=?,metadata_attempt_at=? WHERE id=?').run(JSON.stringify(metadata),metadata.score||0,metadata.available!==false&&metadata.eligibility?.eligible?100-(metadata.score||0):1000,now(),id);
+}
+async function refreshTrackedJobs(userId,applicant,intent){
+ const cutoff=new Date(Date.now()-15*60000).toISOString(),daily=new Date(Date.now()-86400000).toISOString();
+ const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status NOT IN ('duplicate','archived') AND (metadata_attempt_at IS NULL OR metadata_attempt_at<?) AND (json_extract(job_metadata_json,'$.checkedAt') IS NULL OR json_extract(job_metadata_json,'$.checkedAt')<?) ORDER BY CASE WHEN status IN ('saved','queued') THEN 0 ELSE 1 END,metadata_attempt_at,created_at DESC LIMIT 4").all(userId,applicant.id,cutoff,daily);
+ let refreshed=0;const errors=[];
+ await Promise.all(rows.map(async row=>{
+  db.prepare('UPDATE jobs SET metadata_attempt_at=? WHERE id=?').run(now(),row.id);
+  try{const job=await detailForJob(row);
+   if(job){saveMetadata(row.id,jobIntelligence(job,intent,applicant.focus));refreshed++;}
+   else if(job===null)saveMetadata(row.id,{available:false,score:0,checkedAt:now(),reasons:['Employer no longer lists this posting'],pay:[]});
+  }catch(error){
+   if([404,410].includes(error.status))saveMetadata(row.id,{available:false,score:0,checkedAt:now(),reasons:['Employer posting is no longer available'],pay:[]});
+   else errors.push('Pay/match refresh for '+row.company+': '+String(error.message).slice(0,100));
+  }
+ }));
+ return {refreshed,errors};
+}
+async function executeSearch(id,userId){
+ const search=db.prepare('SELECT * FROM searches WHERE id=? AND user_id=?').get(id,userId);
+ if(!search)throw Error('Search not found');
+ const applicant=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(search.applicant_id,userId);
+ if(!applicant)throw Error('Applicant not found');
+ const resolved=searchIntentForApplicant(search,applicant),intent=resolved.intent,requestedBoards=[...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')],boards=[...new Set([...requestedBoards,...defaultBoards,...curatedBoards(intent,applicant.focus)])];
+ const batch=sourceBatch(boards,search.source_cursor);
+ if(search.auto_generated&&resolved.instruction!==search.instruction)db.prepare('UPDATE searches SET instruction=? WHERE id=?').run(resolved.instruction,id);
+ db.prepare('UPDATE searches SET last_run=?,last_error=NULL,source_cursor=? WHERE id=?').run(now(),batch.next,id);
+ let scanned=0,matched=0,strongMatches=0,added=0,queued=0,duplicatesSkipped=0,detailsFetched=0;const errors=[],sources=[];
+ const results=await Promise.allSettled(batch.boards.map(listBoard));
+ results.forEach((result,index)=>{if(result.status==='fulfilled')sources.push({source:batch.boards[index],jobs:result.value});else errors.push(batch.boards[index]+': '+String(result.reason?.message).slice(0,150));});
+ // Aggregators are supplementary and cached for an hour; direct employer boards rotate every minute.
+ if(!search.source_cursor){const broad=await broadListings(intent);sources.push(...broad.batches);errors.push(...broad.errors);}
+ const candidates=sources.flatMap(s=>{scanned+=s.jobs.length;return s.jobs.map(job=>({...job,source:s.source}));})
+  .map(job=>({job,assessment:matchAssessment(job,intent,applicant.focus)})).filter(x=>x.assessment.matched)
+  .sort((a,b)=>b.assessment.score-a.assessment.score||String(a.job.url).localeCompare(String(b.job.url)));
+ for(const {job,assessment} of candidates){
+  if(added>=100)break;let url;try{url=normalizeURL(job.url)}catch{continue;}if(!directDiscoveryLink(url))continue;
+  if(job.descriptionURL){
+   const hit=feedCache.get(job.descriptionURL),cached=hit&&Date.now()-hit.at<3600000;
+   if(!cached&&detailsFetched>=12)continue;if(!cached)detailsFetched++;
+   try{const detail=await cachedJSON(job.descriptionURL,3600000);job.description=detail.content||'';job.pay_input_ranges=detail.pay_input_ranges;job.publishedAt=detail.first_published||job.publishedAt;}catch(e){errors.push('Could not verify '+job.company+': '+String(e.message).slice(0,100));continue;}
+  }
+  const metadata=jobIntelligence(job,intent,applicant.focus),existing=db.prepare('SELECT * FROM jobs WHERE applicant_id=? AND normalized_url=?').get(applicant.id,url);
+  if(existing)saveMetadata(existing.id,metadata);
+  if(intent.worldwideEligibility&&!metadata.eligibility.eligible)continue;
+  const ck=companyKey(job.company),tk=historyKey(job.title);
+  const imported=db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,ck,tk);
+  const prior=db.prepare("SELECT 1 FROM jobs WHERE user_id=? AND history_company(company)=? AND history_title(title)=? AND (status IN ('submitted','interview','offer','rejected','duplicate','archived','running','local_browser','queued') OR local_attempt_at IS NOT NULL)").get(userId,ck,tk);
+  if(imported||prior){duplicatesSkipped++;continue;}
+  matched++;if(assessment.strong)strongMatches++;
+  const jobId=randomUUID(),date=now();
+  const result=db.prepare("INSERT OR IGNORE INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'saved',?,?,?)")
+   .run(jobId,userId,applicant.id,String(job.title).slice(0,200),String(job.company).slice(0,200),url,url,'Source: '+job.source+(job.location?' · '+String(job.location).slice(0,100):'')+' · '+metadata.reasons.join(' · '),date,date);
+  if(result.changes){saveMetadata(jobId,metadata);added++;event(jobId,'saved','Found by search: '+resolved.instruction);}
+ }
+ const enrichment=await refreshTrackedJobs(userId,applicant,intent);errors.push(...enrichment.errors);
+ // Start at most one new strong eligible match per cycle. Never reclaim an attempted application.
+ if(search.auto_queue&&applicant.consent&&applicant.email&&applicant.resume_path){
+  const pending=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status='saved' AND challenge IS NULL AND local_attempt_at IS NULL AND attempts=0 ORDER BY match_score DESC,created_at DESC,id").all(userId,applicant.id);
+  const best=pending.find(row=>nextApplicationEligible(row)&&!db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,companyKey(row.company),historyKey(row.title)));
+  if(best&&db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND status='saved' AND challenge IS NULL AND local_attempt_at IS NULL AND attempts=0").run(now(),best.id).changes){queued++;event(best.id,'queued','Highest-ranked verified match queued by automatic search');}
+ }
+ const result={scanned,matched,strongMatches,added,queued,duplicatesSkipped,refreshed:enrichment.refreshed,errors,sources:sources.map(s=>({source:s.source,count:s.jobs.length})),sourceCount:boards.length,checkedBoards:batch.boards.length,intervalSeconds:SEARCH_INTERVAL_SECONDS,finishedAt:now()};
+ db.prepare('UPDATE searches SET last_error=?,last_result_json=? WHERE id=?').run(errors.join('; ').slice(0,600)||null,JSON.stringify(result),id);
+ return result;
+}
 export async function runDueSearches(){
-  const hours=Math.max(1,Math.min(24,Number(process.env.SEARCH_INTERVAL_HOURS)||1));
-  const cutoff=new Date(Date.now()-hours*60*60*1000).toISOString();
-  const due=db.prepare('SELECT id,user_id FROM searches WHERE enabled=1 AND (last_run IS NULL OR last_run<?) LIMIT 5').all(cutoff);
-  for(const search of due){try{await runSearch(search.id,search.user_id)}catch(e){console.error('Discovery:',e.message)}}
+ // One-second tolerance avoids skipping a minute because of timer jitter.
+ const cutoff=new Date(Date.now()-(SEARCH_INTERVAL_SECONDS-1)*1000).toISOString();
+ const due=db.prepare('SELECT id,user_id FROM searches WHERE enabled=1 AND (last_run IS NULL OR last_run<?) ORDER BY COALESCE(last_run,created_at),id LIMIT 5').all(cutoff);
+ await Promise.all(due.map(async search=>{try{await runSearch(search.id,search.user_id)}catch(e){console.error('Discovery:',e.message);}}));
 }

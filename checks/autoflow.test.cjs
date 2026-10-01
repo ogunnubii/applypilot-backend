@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
-const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
+const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
 test("routine submissions and receipt safety",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const wait=()=>new Promise(r=>setTimeout(r,35));
@@ -71,7 +71,7 @@ const assert=require('node:assert/strict'),readJSON=async()=>{throw Error('unexp
 const cachedJSON=async url=>{urls.push(url);return {jobs:[{id:42,title:'DevOps Engineer',location:{name:'London'},absolute_url:'https://job-boards.greenhouse.io/example/jobs/42'}]};};
 const source=sources['discovery.js'].slice(sources['discovery.js'].indexOf('async function listBoard'),sources['discovery.js'].indexOf('const defaultBoards'));
 const listBoard=new Function('cachedJSON','readJSON',source+';return listBoard;')(cachedJSON,readJSON);
-const jobs=await listBoard('https://job-boards.greenhouse.io/example');assert(!urls[0].includes('content=true'));assert.equal(jobs[0].descriptionURL,'https://boards-api.greenhouse.io/v1/boards/example/jobs/42');
+const jobs=await listBoard('https://job-boards.greenhouse.io/example');assert(!urls[0].includes('content=true'));assert.equal(jobs[0].descriptionURL,'https://boards-api.greenhouse.io/v1/boards/example/jobs/42?pay_transparency=true');
 return 'PASS Greenhouse adapter: bounded metadata feed and separate per-job evidence URL';
 })());
 
@@ -297,4 +297,78 @@ test('hosted worker stops an HTTP 503 before inspecting or submitting a form and
  await run({id:'j',user_id:'u',applicant_id:'p',url:'https://job-boards.greenhouse.io/example/jobs/42'},browser);
  assert.equal(gotoCount,1);assert.equal(status,'needs_review');assert.equal(challenge,'Employer site unavailable');assert(closed);
  assert(events.some(e=>e.message.includes('HTTP 503')));assert(!events.some(e=>['filled','submitted'].includes(e.type)));
+});
+
+function pureModule(file,bindings={}){
+ const code=sources[file].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const|let|class)/g,'');
+ return new Function(...Object.keys(bindings),code+';return {compensation:typeof compensation==="function"?compensation:null,jobIntelligence:typeof jobIntelligence==="function"?jobIntelligence:null,nextApplication:typeof nextApplication==="function"?nextApplication:null,nextApplicationEligible:typeof nextApplicationEligible==="function"?nextApplicationEligible:null,sourceBatch:typeof sourceBatch==="function"?sourceBatch:null,cachedJSON:typeof cachedJSON==="function"?cachedJSON:null,runSearch:typeof runSearch==="function"?runSearch:null};')(...Object.values(bindings));
+}
+test('posted pay preserves currency, period, pay tiers and conservative unknowns',()=>{
+ const assert=require('node:assert/strict'),{compensation}=pureModule('job-intelligence.js');
+ let pay=compensation({salaryRange:{currency:'CAD',interval:'hour',min:90,max:110}})[0];
+ assert.equal(pay.annualMin,187200);assert.equal(pay.annualMax,228800);assert(pay.estimated);assert.equal(pay.assumption,'2,080 paid hours');
+ const gh={pay_input_ranges:[{min_cents:35000000,max_cents:50000000,currency_type:'USD',title:'US salary'}]};
+ assert.equal(compensation(gh).length,0,'without period, cents alone must not imply yearly');
+ pay=compensation({...gh,description:'Annual salary range is shown below.'})[0];assert.equal(pay.annualMin,350000);assert(!pay.estimated);
+ const multi=compensation({compensation:{compensationTiers:[{title:'Canada',components:[{compensationType:'Salary',interval:'1 YEAR',currencyCode:'CAD',minValue:100000,maxValue:150000},{compensationType:'Equity',interval:'1 YEAR',currencyCode:'CAD',minValue:10,maxValue:20}]},{title:'US',components:[{compensationType:'Salary',interval:'1 YEAR',currencyCode:'USD',minValue:90000,maxValue:130000}]}]}});
+ assert.equal(multi.length,2);assert.deepEqual(multi.map(p=>p.currency),['CAD','USD']);assert.equal(multi[0].label,'Canada');
+ assert.equal(compensation({description:'Competitive salary $100k - $140k'}).length,0);
+ assert.equal(compensation({description:'Salary CAD 120,000–150,000 per year'})[0].annualMax,150000);
+ assert.equal(compensation({salaryRange:{currency:'USD',interval:'year',min:150000,max:100000}}).length,0);
+});
+test('next application ranks eligible fresh strong matches and never repeats attempted jobs',()=>{
+ const assert=require('node:assert/strict'),{nextApplication}=pureModule('job-intelligence.js');
+ const meta={available:true,strong:true,eligibility:{eligible:true},checkedAt:new Date().toISOString()};
+ const row=(id,score,changes={})=>({id,match_score:score,status:'saved',attempts:0,job_metadata_json:JSON.stringify(meta),...changes});
+ const jobs=[row('attempted',100,{local_attempt_at:'2026-01-01'}),row('ineligible',99,{job_metadata_json:JSON.stringify({...meta,eligibility:{eligible:false}})}),row('submitted',100,{status:'submitted'}),row('busy',100,{attempts:1}),row('unverified',100,{job_metadata_json:'{}'}),row('stale',100,{job_metadata_json:JSON.stringify({...meta,checkedAt:'2020-01-01'})}),row('best',94),row('other',90)];
+ assert.equal(nextApplication(jobs).id,'best');assert.equal(nextApplication(jobs.filter(j=>!['best','other'].includes(j.id))),null);
+});
+test('minute discovery rotates sources fairly and coalesces cached reads',async()=>{
+ const assert=require('node:assert/strict');let reads=0;
+ const {sourceBatch,cachedJSON}=pureModule('discovery.js',{fetch:async()=>{reads++;return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({jobs:[]})};}});
+ const boards=['a','b','c','d','e','f','g'];let cursor=0,seen=new Set();
+ for(let i=0;i<boards.length;i++){const b=sourceBatch(boards,cursor);assert.equal(b.boards.length,4);b.boards.forEach(x=>seen.add(x));cursor=b.next;}
+ assert.equal(seen.size,7);assert.equal(sourceBatch([],0).boards.length,0);
+ await Promise.all(Array.from({length:10},()=>cachedJSON('https://boards.example/jobs')));assert.equal(reads,1);
+ await cachedJSON('https://boards.example/jobs');assert.equal(reads,1);
+ assert(sources['discovery.js'].includes('SEARCH_INTERVAL_SECONDS=60'));
+ assert(!sources['discovery.js'].includes('SEARCH_INTERVAL_HOURS'));
+});
+test('employer rate limits stop repeated requests during cooldown',async()=>{
+ const assert=require('node:assert/strict');let reads=0;
+ const {cachedJSON}=pureModule('discovery.js',{fetch:async()=>{reads++;return {ok:false,status:429,headers:{get:()=> '300'}};}});
+ await assert.rejects(cachedJSON('https://boards.example/a'),/429/);
+ await assert.rejects(cachedJSON('https://boards.example/b'),/cooling down/);assert.equal(reads,1);
+});
+test('ranked salary card is prominent and annual estimates remain explicit',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;
+ w.setInterval=()=>0;
+ w.eval(sources['assistant-client.js']);
+ w.eval("document.querySelector('#workspace').hidden=false");
+ const metadata={available:true,strong:true,eligibility:{eligible:true},checkedAt:new Date().toISOString(),location:'Worldwide remote',reasons:['Strong role match'],pay:[{currency:'CAD',annualMin:187200,annualMax:228800,min:90,max:110,period:'hour',estimated:true,assumption:'2,080 paid hours'}]};
+ w.eval('renderNextMatch('+JSON.stringify([{id:'match',title:'Cloud Engineer',company:'Example',url:'https://example.com/job',status:'saved',match_score:94,metadata}])+')');
+ assert.equal(w.document.querySelector('#workspace').firstElementChild.id,'next-match');
+ assert(w.document.querySelector('#next-match').textContent.includes('CAD 187,200–228,800 / year · estimate'));
+ assert(w.document.querySelector('#next-match').textContent.includes('2,080 paid hours'));
+ assert(w.document.querySelector('#next-match').textContent.includes('Apply to this match next'));w.close();
+});
+
+test('discovery updates existing pay without resetting attempts and queues only the best new eligible job',async()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),{randomUUID}=require('node:crypto'),db=new DatabaseSync(':memory:');
+ db.exec("CREATE TABLE applicants(id TEXT PRIMARY KEY,user_id TEXT,focus TEXT,email TEXT,resume_path TEXT,consent INTEGER);CREATE TABLE searches(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,instruction TEXT,boards_json TEXT,auto_queue INTEGER,auto_generated INTEGER,enabled INTEGER,source_cursor INTEGER DEFAULT 0,last_run TEXT,last_error TEXT,last_result_json TEXT,created_at TEXT);CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,title TEXT,company TEXT,url TEXT,normalized_url TEXT,status TEXT,notes TEXT,created_at TEXT,updated_at TEXT,attempts INTEGER DEFAULT 0,local_attempt_at TEXT,handoff_available INTEGER DEFAULT 0,challenge TEXT,job_metadata_json TEXT DEFAULT '{}',match_score INTEGER DEFAULT 0,discovery_priority INTEGER DEFAULT 5,metadata_attempt_at TEXT,UNIQUE(applicant_id,normalized_url));CREATE TABLE external_application_history(user_id TEXT,company_key TEXT,title_key TEXT);");
+ const now=()=>new Date().toISOString(),key=v=>String(v).toLowerCase();db.function('history_company',key);db.function('history_title',key);
+ db.prepare('INSERT INTO applicants VALUES(?,?,?,?,?,?)').run('p','u','Cloud Engineer','fixture@example.test','fixture.pdf',1);
+ db.prepare('INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,auto_generated,enabled,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run('s','u','p','Cloud Engineer; eligibility: worldwide sponsorship, remote from Canada, or B2B','["https://jobs.ashbyhq.com/example"]',1,0,1,now());
+ const posting=(suffix,title,publishedAt)=>({title,location:'Worldwide remote',isRemote:true,descriptionPlain:'Work remotely from anywhere in the world.',publishedAt,jobUrl:'https://jobs.ashbyhq.com/example/12345678-1234-1234-1234-123456789ab'+suffix,compensation:{summaryComponents:[{compensationType:'Salary',currencyCode:'USD',interval:'1 YEAR',minValue:100000,maxValue:150000}]}});
+ const old=posting('1','Cloud Engineer already attempted',now()),best=posting('2','Cloud Engineer best',now()),lower=posting('3','Cloud Engineer older','2020-01-01'),excluded={...posting('4','Cloud Engineer Canada',now()),location:'Toronto, Canada',descriptionPlain:'Permanent employment.'};
+ db.prepare('INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at,attempts,local_attempt_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run('old','u','p',old.title,'example',old.jobUrl,old.jobUrl,'local_browser','Do not overwrite',now(),now(),2,'2026-01-01');
+ const matchAssessment=()=>({score:95,strong:true,matched:true}),workEligibility=new Function(sources['work-eligibility.js'].replace('export function','function')+';return workEligibility;')();
+ const intelligence=pureModule('job-intelligence.js',{matchAssessment,workEligibility});
+ const fetch=async url=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify(String(url).includes('/job-board/example')?{jobs:[old,best,lower,excluded]}:String(url).includes('arbeitnow')?{data:[],links:{}}:{jobs:[]})});
+ const discovery=pureModule('discovery.js',{db,event:()=>{},now,normalizeURL:v=>v,randomUUID,companyKey:key,historyKey:key,matchAssessment,locationPriority:()=>5,workEligibility,...intelligence,fetch});
+ const [one,two]=await Promise.all([discovery.runSearch('s','u'),discovery.runSearch('s','u')]);assert.equal(one,two);assert.equal(one.added,2);assert.equal(one.queued,1);
+ const previous=db.prepare("SELECT * FROM jobs WHERE id='old'").get();assert.equal(previous.status,'local_browser');assert.equal(previous.attempts,2);assert.equal(previous.local_attempt_at,'2026-01-01');assert.equal(previous.notes,'Do not overwrite');assert(JSON.parse(previous.job_metadata_json).pay.length);
+ const rows=db.prepare("SELECT title,status FROM jobs WHERE id!='old' ORDER BY title").all();assert.deepEqual(rows.map(r=>[r.title,r.status]),[[best.title,'queued'],[lower.title,'saved']]);
+ assert(!db.prepare('SELECT 1 FROM jobs WHERE title=?').get(excluded.title));assert.equal(db.prepare("SELECT source_cursor FROM searches WHERE id='s'").get().source_cursor,4);db.close();
 });

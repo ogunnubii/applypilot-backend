@@ -503,3 +503,13 @@ test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot s
  assert(queries.every(q=>q.startsWith('SELECT ')));
  const server=sources['server.js'];assert(server.indexOf("if(path==='/api/ai-test'")>server.indexOf("if(!uid)return send(res,401"));
 });
+
+test("Gemini diagnostic button sends POST and displays the verified response",async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
+ w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
+ const calls=[];w.fetch=async(url,opts={})=>{calls.push({url,opts});return{ok:true,json:async()=>url.endsWith('/ai-test')?{ok:true,model:'verified-model',company:'Example',title:'Engineer',checkedAt:'2026-10-01T20:00:00Z',answer:'Maintain systems.',citations:[{title:'Job',url:'https://example.org/job'}]}:{googleConfigured:true,profiles:[],attempts:[]}};};
+ await w.eval('updateAIStatus()');
+ const button=[...w.document.querySelectorAll('#ai-status button')].find(b=>b.textContent==='Test Gemini on a public job page');assert(button);
+ await button.onclick();assert.equal(calls.find(c=>c.url.endsWith('/ai-test')).opts.method,'POST');assert(w.document.querySelector('#ai-status').textContent.includes('Gemini test passed · verified-model'));assert(w.document.querySelector('#ai-status').textContent.includes('This test did not fill or submit an application.'));assert.equal(button.disabled,false);w.close();
+});

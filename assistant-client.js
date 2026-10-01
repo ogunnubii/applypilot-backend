@@ -617,7 +617,7 @@ async function updateAIStatus(){
   const testRow=el('div'),testButton=el('button','Test Gemini on a public job page'),testResult=el('p');testButton.type='button';testButton.disabled=!data.googleConfigured;testResult.setAttribute('role','status');testRow.append(testButton,testResult);box.append(testRow);
   testButton.onclick=async()=>{
    testButton.disabled=true;testResult.textContent='Checking Gemini with one saved public job page…';
-   try{const result=await api('/ai-test',{method:'POST',body:JSON.stringify({})});testResult.replaceChildren(el('strong','Gemini test passed · '+result.model),el('p',result.company+' · '+result.title),el('p',result.answer),el('small','Verified '+new Date(result.checkedAt).toLocaleTimeString()+'. This test did not fill or submit an application.'));
+   try{const result=await api('/ai-test','POST',{});testResult.replaceChildren(el('strong','Gemini test passed · '+result.model),el('p',result.company+' · '+result.title),el('p',result.answer),el('small','Verified '+new Date(result.checkedAt).toLocaleTimeString()+'. This test did not fill or submit an application.'));
     for(const cite of result.citations||[]){const link=el('a','Source: '+cite.title);link.href=cite.url;link.target='_blank';link.rel='noopener noreferrer';testResult.append(link);}
    }catch(error){testResult.textContent='Gemini test failed: '+error.message;}
    finally{testButton.disabled=false;}

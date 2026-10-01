@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
-const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
+const sources=Object.fromEntries(["application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
 test("routine submissions and receipt safety",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const wait=()=>new Promise(r=>setTimeout(r,35));
@@ -301,7 +301,7 @@ test('hosted worker stops an HTTP 503 before inspecting or submitting a form and
 
 function pureModule(file,bindings={}){
  const code=sources[file].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const|let|class)/g,'');
- return new Function(...Object.keys(bindings),code+';return {compensation:typeof compensation==="function"?compensation:null,jobIntelligence:typeof jobIntelligence==="function"?jobIntelligence:null,nextApplication:typeof nextApplication==="function"?nextApplication:null,nextApplicationEligible:typeof nextApplicationEligible==="function"?nextApplicationEligible:null,sourceBatch:typeof sourceBatch==="function"?sourceBatch:null,cachedJSON:typeof cachedJSON==="function"?cachedJSON:null,runSearch:typeof runSearch==="function"?runSearch:null};')(...Object.values(bindings));
+ return new Function(...Object.keys(bindings),code+';return {sameApplication:typeof sameApplication==="function"?sameApplication:null,priorApplication:typeof priorApplication==="function"?priorApplication:null,installRepeatGuard:typeof installRepeatGuard==="function"?installRepeatGuard:null,compensation:typeof compensation==="function"?compensation:null,jobIntelligence:typeof jobIntelligence==="function"?jobIntelligence:null,nextApplication:typeof nextApplication==="function"?nextApplication:null,nextApplicationEligible:typeof nextApplicationEligible==="function"?nextApplicationEligible:null,sourceBatch:typeof sourceBatch==="function"?sourceBatch:null,cachedJSON:typeof cachedJSON==="function"?cachedJSON:null,runSearch:typeof runSearch==="function"?runSearch:null};')(...Object.values(bindings));
 }
 test('posted pay preserves currency, period, pay tiers and conservative unknowns',()=>{
  const assert=require('node:assert/strict'),{compensation}=pureModule('job-intelligence.js');
@@ -366,7 +366,8 @@ test('discovery updates existing pay without resetting attempts and queues only 
  const matchAssessment=()=>({score:95,strong:true,matched:true}),workEligibility=new Function(sources['work-eligibility.js'].replace('export function','function')+';return workEligibility;')();
  const intelligence=pureModule('job-intelligence.js',{matchAssessment,workEligibility});
  const fetch=async url=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify(String(url).includes('/job-board/example')?{jobs:[old,best,lower,excluded]}:String(url).includes('arbeitnow')?{data:[],links:{}}:{jobs:[]})});
- const discovery=pureModule('discovery.js',{db,event:()=>{},now,normalizeURL:v=>v,randomUUID,companyKey:key,historyKey:key,matchAssessment,locationPriority:()=>5,workEligibility,...intelligence,fetch});
+ const {priorApplication}=pureModule('application-dedup.js',{companyKey:key});
+ const discovery=pureModule('discovery.js',{db,event:()=>{},now,normalizeURL:v=>v,randomUUID,companyKey:key,historyKey:key,matchAssessment,locationPriority:()=>5,workEligibility,...intelligence,priorApplication,fetch});
  const [one,two]=await Promise.all([discovery.runSearch('s','u'),discovery.runSearch('s','u')]);assert.equal(one,two);assert.equal(one.added,2);assert.equal(one.queued,1);
  const previous=db.prepare("SELECT * FROM jobs WHERE id='old'").get();assert.equal(previous.status,'local_browser');assert.equal(previous.attempts,2);assert.equal(previous.local_attempt_at,'2026-01-01');assert.equal(previous.notes,'Do not overwrite');assert(JSON.parse(previous.job_metadata_json).pay.length);
  const rows=db.prepare("SELECT title,status FROM jobs WHERE id!='old' ORDER BY title").all();assert.deepEqual(rows.map(r=>[r.title,r.status]),[[best.title,'queued'],[lower.title,'saved']]);
@@ -541,4 +542,24 @@ test("expanded explicit work eligibility remains conservative",async()=>{
  for(const description of ['B2B contract. US citizenship is required.','B2B contract. Must be based in Europe.','Visa Sponsorship Available: No','No visa sponsorship and relocation assistance.'])assert.equal(f({location:'Remote - US',description}).eligible,false,description);
  assert.equal(f({location:'Toronto',description:'Permanent employment. Visa sponsorship and relocation support.'}).eligible,false);
  assert.equal(f({location:'Canada',description:'B2B SaaS product company.'}).eligible,false);
+});
+test('repeat guards recognise board aliases and annotated titles without losing receipts',()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(':memory:');
+ const {sameApplication,installRepeatGuard,priorApplication}=pureModule('application-dedup.js',{companyKey:v=>String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'')});
+ const original={company:'Thinking Machines Lab',title:'Infrastructure Engineer, Security — San Francisco; sponsorship',url:'https://jobs.ashbyhq.com/thinkingmachines/11111111-1111-1111-1111-111111111111'};
+ const repost={company:'thinkingmachines',title:'Infrastructure Engineer, Security',url:'https://jobs.ashbyhq.com/thinkingmachines/22222222-2222-2222-2222-222222222222/application'};
+ assert(sameApplication(original,repost));assert(!sameApplication(original,{...repost,title:'Site Reliability Engineer, Production'}));assert(!sameApplication(original,{...repost,company:'other',url:'https://jobs.ashbyhq.com/other/33333333-3333-3333-3333-333333333333'}));
+ assert(sameApplication({...original,title:'old',url:repost.url.replace('/application','')},{...repost,title:'new'}));
+ db.exec("CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,title TEXT,company TEXT,url TEXT,status TEXT,local_attempt_at TEXT,attempts INTEGER DEFAULT 0,handoff_available INTEGER DEFAULT 0,created_at TEXT,updated_at TEXT,challenge TEXT,confirmation TEXT)");
+ const add=(id,u,j,status)=>db.prepare('INSERT INTO jobs(id,user_id,title,company,url,status,created_at,confirmation) VALUES(?,?,?,?,?,?,?,?)').run(id,u,j.title,j.company,j.url,status,'2026-10-01','Receipt retained');
+ add('receipt','u',original,'submitted');add('duplicate','u',repost,'saved');add('other-user','v',repost,'saved');
+ installRepeatGuard(db);
+ assert.equal(db.prepare("SELECT status FROM jobs WHERE id='duplicate'").get().status,'duplicate');
+ assert.equal(db.prepare("SELECT confirmation FROM jobs WHERE id='receipt'").get().confirmation,'Receipt retained');
+ assert.equal(db.prepare("SELECT status FROM jobs WHERE id='other-user'").get().status,'saved');
+ assert.throws(()=>db.prepare("UPDATE jobs SET status='queued' WHERE id='duplicate'").run(),/repeat application blocked/);
+ assert.throws(()=>db.prepare("UPDATE jobs SET local_attempt_at='now' WHERE id='duplicate'").run(),/repeat submission blocked/);
+ add('new-duplicate','u',repost,'saved');assert.equal(db.prepare("SELECT status FROM jobs WHERE id='new-duplicate'").get().status,'duplicate');
+ add('new-role','u',{...repost,title:'Site Reliability Engineer, Production'},'saved');assert.equal(priorApplication(db,'u',db.prepare("SELECT * FROM jobs WHERE id='new-role'").get()),null);
+ db.prepare("UPDATE jobs SET status='queued' WHERE id='new-role'").run();db.close();
 });

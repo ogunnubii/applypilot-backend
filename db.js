@@ -1,3 +1,4 @@
+import {installRepeatGuard} from './application-dedup.js';
 import {installHistory} from './application-history.js';
 import {canonicalJobURL} from './form-policy.js';
 import {DatabaseSync} from 'node:sqlite';
@@ -62,3 +63,5 @@ installHistory(db);
 for(const [table,name,type] of [['jobs','job_metadata_json',"TEXT NOT NULL DEFAULT '{}'"],['jobs','match_score','INTEGER NOT NULL DEFAULT 0'],['jobs','metadata_attempt_at','TEXT'],['searches','source_cursor','INTEGER NOT NULL DEFAULT 0']]){
  if(!db.prepare('PRAGMA table_info('+table+')').all().some(c=>c.name===name))db.exec('ALTER TABLE '+table+' ADD COLUMN '+name+' '+type);
 }
+
+installRepeatGuard(db);

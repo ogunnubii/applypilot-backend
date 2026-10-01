@@ -1,3 +1,4 @@
+import {priorApplication} from './application-dedup.js';
 import {jobIntelligence,nextApplicationEligible} from './job-intelligence.js';
 import {workEligibility} from './work-eligibility.js';
 import {companyKey,historyKey} from './application-history.js';
@@ -236,7 +237,7 @@ async function executeSearch(id,userId){
   const ck=companyKey(job.company),tk=historyKey(job.title);
   const imported=db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,ck,tk);
   const prior=db.prepare("SELECT 1 FROM jobs WHERE user_id=? AND history_company(company)=? AND history_title(title)=? AND (status IN ('submitted','interview','offer','rejected','duplicate','archived','running','local_browser','queued') OR local_attempt_at IS NOT NULL)").get(userId,ck,tk);
-  if(imported||prior){duplicatesSkipped++;continue;}
+  if(imported||prior||priorApplication(db,userId,{...job,id:existing?.id})){duplicatesSkipped++;continue;}
   matched++;if(assessment.strong)strongMatches++;
   const jobId=randomUUID(),date=now();
   const result=db.prepare("INSERT OR IGNORE INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'saved',?,?,?)")
@@ -247,7 +248,7 @@ async function executeSearch(id,userId){
  // Start at most one new strong eligible match per cycle. Never reclaim an attempted application.
  if(search.auto_queue&&applicant.consent&&applicant.email&&applicant.resume_path){
   const pending=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status='saved' AND challenge IS NULL AND local_attempt_at IS NULL AND attempts=0 ORDER BY match_score DESC,created_at DESC,id").all(userId,applicant.id);
-  const best=pending.find(row=>nextApplicationEligible(row)&&!db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,companyKey(row.company),historyKey(row.title)));
+  const best=pending.find(row=>nextApplicationEligible(row)&&!priorApplication(db,userId,row)&&!db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,companyKey(row.company),historyKey(row.title)));
   if(best&&db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND status='saved' AND challenge IS NULL AND local_attempt_at IS NULL AND attempts=0").run(now(),best.id).changes){queued++;event(best.id,'queued','Highest-ranked verified match queued by automatic search');}
  }
  const result={scanned,matched,strongMatches,added,queued,duplicatesSkipped,refreshed:enrichment.refreshed,errors,sources:sources.map(s=>({source:s.source,count:s.jobs.length})),sourceCount:boards.length,checkedBoards:batch.boards.length,intervalSeconds:SEARCH_INTERVAL_SECONDS,finishedAt:now()};

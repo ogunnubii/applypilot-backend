@@ -1,3 +1,4 @@
+import {installHistory} from './application-history.js';
 import {canonicalJobURL} from './form-policy.js';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync} from 'node:fs';
@@ -55,3 +56,5 @@ for(const [name,type] of [['local_owner','TEXT'],['local_attempt_at','TEXT'],['l
 }
 if(!db.prepare('PRAGMA table_info(applicants)').all().some(c=>c.name==='execution_mode'))db.exec("ALTER TABLE applicants ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'cloud'");
 if(!db.prepare('PRAGMA table_info(applicants)').all().some(c=>c.name==='google_research_consent'))db.exec('ALTER TABLE applicants ADD COLUMN google_research_consent INTEGER NOT NULL DEFAULT 0');
+
+installHistory(db);

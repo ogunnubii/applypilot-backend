@@ -62,6 +62,12 @@ async function fillCustom(e,a){
  return false;
 }
 
+async function updateAttentionPosition(){
+ if(!bar||!packet?.job?.id)return;
+ let counter=bar.querySelector('.attention-position');
+ if(!counter){counter=document.createElement('div');counter.className='attention-position';counter.style.cssText='font-weight:750;font-size:17px;margin-bottom:8px';counter.setAttribute('role','status');bar.prepend(counter);}
+ try{const data=await send('list'),waiting=P.attentionOrder(data.jobs),index=waiting.findIndex(j=>j.id===packet.job.id);counter.hidden=index<0;if(index>=0)counter.textContent=(index+1)+'/'+waiting.length+' · Needs your input';}catch{counter.hidden=true;}
+}
 function mount(){
  document.getElementById('applypilot-local-controls')?.remove();
  bar=document.createElement('aside');bar.id='applypilot-local-controls';bar.style.cssText='position:fixed;bottom:16px;right:16px;max-width:360px;z-index:2147483647;background:#12253b;color:white;padding:16px;border-radius:12px;box-shadow:0 3px 18px #0008;font:14px system-ui';
@@ -74,7 +80,7 @@ function mount(){
   try{await send('remember',{question,answer:value});packet=null;await fill();note.textContent='Answer saved for this applicant.';}catch(e){note.textContent=e.message;}
  };
  const capture=document.createElement('button');capture.textContent='Save form answers to library';capture.onclick=async()=>{capture.disabled=true;try{const r=await send('capture',{fields:formAnswers()});note.textContent=r.saved+' answers saved. Review them in the dashboard Answer library. Nothing was submitted.';}catch(e){note.textContent='Could not save answers: '+e.message;}finally{capture.disabled=false;}};
- bar.append(heading,note,refill,save,capture);document.body.append(bar);
+ bar.append(heading,note,refill,save,capture);document.body.append(bar);updateAttentionPosition();
 }
 function controls(){return [...document.querySelectorAll('input,select,textarea,[role=combobox],[role=checkbox],[role=radio]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&!e.readOnly);}
 function formAnswers(){
@@ -127,7 +133,7 @@ async function fill(){
  note.textContent=count+' saved fields filled.';
  if(count)await send('progress',{fields:[],message:'Filled '+count+' saved fields on the employer form.',blocked:false,filled:count});return count;
 }
-async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked});}
+async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked});if(blocked)await updateAttentionPosition();}
 function signature(){return location.href+'|'+controls().map(e=>label(e)+':'+e.type).join('|')+'|'+buttons().map(e=>e.innerText||e.value).join('|');}
 function buttons(){return [...document.querySelectorAll('button,input[type=submit],[role=button]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');}
 const buttonName=e=>(e.innerText||e.value||e.getAttribute('aria-label')||'').trim();

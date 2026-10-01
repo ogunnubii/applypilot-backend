@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
-const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
+const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
 test("routine submissions and receipt safety",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const wait=()=>new Promise(r=>setTimeout(r,35));
@@ -29,7 +29,7 @@ test("interview integration and deduplication",()=>(async()=>{
  w.sessionStorage.setItem('applypilot-token','fixture');
  w.setInterval=()=>0;
  w.fetch=async(url,options)=>({ok:true,json:async()=>{const p=String(url).replace('/api','');if(p==='/jobs')return {jobs};if(p==='/status')return {workerOnline:true};if(p==='/application-history')return {records};if(p==='/searches')return {searches:[]};if(p==='/notifications')return {enabled:false};return {enabled:false,parked:0};}});
- w.eval(sources['assistant-client.js']);await new Promise(r=>setTimeout(r,100));
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);await new Promise(r=>setTimeout(r,100));
  assert.equal(w.document.querySelector('#interview-count').textContent,'2','deduplicated native and external interviews');
  const board=[...w.document.querySelector('#jobs').children];assert.equal(board.filter(e=>e.dataset.state==='interview').length,2);
  const filter=w.document.querySelector('[data-filter=interview]');filter.click();
@@ -117,7 +117,7 @@ test('progress counts are based on evidence and do not recount outcomes',async()
 test('local missing answers are saved without queuing a new attempt',async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
- w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([url,opts?.method]);return {ok:true,json:async()=>({})};};w.eval(sources['assistant-client.js']);
+ w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([url,opts?.method]);return {ok:true,json:async()=>({})};};w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
  const job={id:'local',applicant_id:'p',company:'Example',title:'Engineer',status:'local_browser',local_phase:'blocked',challenge:'Local browser',required_fields_json:'["Preferred name","Required field","AI Policy for Application"]',answers_json:'{}'};
  w.renderMissingAnswers([job]);const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form'),input=form.querySelector('textarea');assert(!section.hidden);assert.equal(form.querySelectorAll('textarea').length,1);assert.equal(section.querySelector('details').open,false);input.value='Applicant';
  w.eval('refresh=async()=>{}');await form.onsubmit({preventDefault(){}});assert(requests.some(([url,method])=>url.endsWith('/answers')&&method==='PUT'));assert(!requests.some(([url])=>url.endsWith('/continue')));
@@ -175,7 +175,7 @@ test('saving complete browser answers requests continuation, partial and protect
  async function scenario(questions,attempted=false){
   const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
   w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([url,opts?.method,opts?.body]);return {ok:true,json:async()=>({state:'queued'})};};
-  w.eval(sources['assistant-client.js']);w.eval('refresh=async()=>{}');
+  w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);w.eval('refresh=async()=>{}');
   w.renderMissingAnswers([{id:'j',applicant_id:'p',company:'Fixture',title:'Engineer',status:'local_browser',local_phase:'blocked',required_fields_json:JSON.stringify(questions),answers_json:'{}',local_attempt_at:attempted?'today':null}]);
   const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form');
   if(form){form.querySelector('textarea').value='Applicant';await form.onsubmit({preventDefault(){}});}
@@ -190,7 +190,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.1",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.1",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -205,7 +205,7 @@ test('saved profile fills basic field aliases while unknown and conflicting answ
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window;
  const profile={id:'p',name:'Test Applicant',location:'Toronto, Ontario, Canada',reusableAnswers:{School:'First University',University:'Second University'}};
- w.setInterval=()=>0;w.fetch=async()=>({ok:true,json:async()=>({applicants:[profile]})});w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
+ w.setInterval=()=>0;w.fetch=async()=>({ok:true,json:async()=>({applicants:[profile]})});w.eval(sources['extension/policy.js']);w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
  w.renderMissingAnswers([{id:'j',applicant_id:'p',company:'Fixture',title:'Engineer',status:'local_browser',local_phase:'blocked',required_fields_json:JSON.stringify(['Given name','Country','State / Province','City','University','Do you need visa sponsorship?']),application_only_questions:['Do you need visa sponsorship?'],answers_json:'{}'}]);
  const form=w.document.querySelector('#missing-answers form');await form.querySelector('button').onclick();
  const values=Object.fromEntries([...form.querySelectorAll('textarea[data-answer-key]')].map(i=>[i.getAttribute('aria-label'),i.value]));
@@ -222,7 +222,7 @@ test('stalled browser sessions are separated from filling and receipt filters ex
  const jobs=[stale,{id:'receipt',company:'Receipt',title:'Engineer',status:'submitted',confirmation:'Thank you for applying',receipt_event:1},{id:'placeholder',company:'Placeholder',title:'Engineer',status:'submitted',confirmation:'Applicant verified GitHub'}];
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window;
  w.setInterval=()=>0;w.fetch=async url=>({ok:true,json:async()=>{const p=String(url).replace('/api','');if(p==='/jobs')return {jobs};if(p==='/application-history')return {records:[]};if(p==='/status')return {workerOnline:true};if(p==='/operations')return {totals:{stalled:1,confirmed:1},applications:jobs.map(j=>({id:j.id,...applicationEvidence(j)})),checkedAt:new Date().toISOString()};return {requests:[],searches:[],events:[]};}});
- w.eval(sources['assistant-client.js']);await w.refresh(true);
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);await w.refresh(true);
  assert.equal(w.document.querySelector('#applying-count').textContent,'0');assert(w.document.querySelector('#job-stale').textContent.includes('Browser check needed'));
  w.HTMLElement.prototype.scrollIntoView=function(){};[...w.document.querySelectorAll('#operations button')].find(b=>b.textContent.includes('Receipts recorded')).click();assert(!w.document.querySelector('#job-receipt').hidden);assert(w.document.querySelector('#job-placeholder').hidden);
  [...w.document.querySelectorAll('#operations button')].find(b=>b.textContent.includes('Browser check needed')).click();assert(!w.document.querySelector('#job-stale').hidden);assert(w.document.querySelector('#job-receipt').hidden);
@@ -344,7 +344,7 @@ test('ranked salary card is prominent and annual estimates remain explicit',asyn
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;
  w.setInterval=()=>0;
- w.eval(sources['assistant-client.js']);
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
  w.eval("document.querySelector('#workspace').hidden=false");
  const metadata={available:true,strong:true,eligibility:{eligible:true},checkedAt:new Date().toISOString(),location:'Worldwide remote',reasons:['Strong role match'],pay:[{currency:'CAD',annualMin:187200,annualMax:228800,min:90,max:110,period:'hour',estimated:true,assumption:'2,080 paid hours'}]};
  w.eval('renderNextMatch('+JSON.stringify([{id:'match',title:'Cloud Engineer',company:'Example',url:'https://example.com/job',status:'saved',match_score:94,metadata}])+')');
@@ -405,7 +405,7 @@ test('Gemini browser handoff uses public questions only, preserves user answers 
 
 test('recommendations include eligible related roles for review while automatic queue stays strong-only',async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
- const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;w.setInterval=()=>0;w.eval(sources['assistant-client.js']);
+ const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
  const metadata={available:true,strong:false,matched:true,eligibility:{eligible:true},checkedAt:new Date().toISOString(),location:'London',reasons:['Related role match','Posting states visa sponsorship'],pay:[]};
  w.eval('renderNextMatch('+JSON.stringify([{id:'related',title:'Staff Infrastructure Engineer',company:'Example',url:'https://example.com/job',status:'saved',match_score:70,metadata}])+')');
  assert(w.document.querySelector('#next-match').textContent.includes('review the required seniority'));
@@ -421,7 +421,49 @@ test('normal dashboard refresh loads Gemini diagnostics without exposing credent
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;
  w.sessionStorage.setItem('applypilot-token','fixture');w.setInterval=()=>0;const calls=[];
  w.fetch=async url=>({ok:true,json:async()=>{const p=String(url).replace('/api','');calls.push(p);if(p==='/jobs')return {jobs:[]};if(p==='/application-history')return {records:[]};if(p==='/ai-status')return {googleConfigured:true,personalDraftsConfigured:false,profiles:[{name:'Tester',googleConsent:true,hasBackground:false}],attempts:[{company:'Example',question:'What products does this company offer?',message:'Google research returned HTTP 429.'}]};if(p==='/searches')return {searches:[]};return {};}});
- w.eval(sources['assistant-client.js']);await new Promise(r=>setTimeout(r,100));
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);await new Promise(r=>setTimeout(r,100));
  assert(calls.includes('/ai-status'));const text=w.document.querySelector('#ai-status').textContent;
  assert(text.includes('Gemini key configured'));assert(text.includes('Professional background not yet saved'));assert(text.includes('HTTP 429'));assert(!text.includes('Bearer fixture'));w.close();
+});
+
+test('resume editor escapes content, restricts ownership, preserves prior file and rejects stale drafts',async()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),{createHash,randomUUID}=require('node:crypto');
+ const src=sources['resume-editor.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
+ const fail=()=>{throw Error('Unexpected filesystem access')};
+ const editor=new Function('createHash','randomUUID','promisify','execFile','readFile','writeFile','mkdir','mkdtemp','rm','tmpdir','join','chromium',src+';return {resumeHTML,installResumeEditor,prepareResumeEdit,saveResumeEdit,previousResumePath};')(createHash,randomUUID,()=>fail,fail,fail,fail,fail,fail,fail,()=>'/tmp',require('node:path').join,{});
+ const html=editor.resumeHTML('# Candidate\nSenior Platform Engineer\n## Experience\n- '+('<script>unsafe & bad</script> '.repeat(10)));
+ assert(html.includes('&lt;script&gt;'));assert(!html.includes('<script>unsafe'));assert.throws(()=>editor.resumeHTML('short'),/200/);assert.throws(()=>editor.resumeHTML(('x'.repeat(201)+'\n---\n').repeat(4)),/three/);
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE applicants(id TEXT PRIMARY KEY,user_id TEXT,name TEXT,resume_path TEXT);CREATE TABLE jobs(id TEXT,status TEXT);INSERT INTO applicants VALUES(\'p\',\'u\',\'Candidate\',\'old.docx\');INSERT INTO jobs VALUES(\'j\',\'submitted\')');editor.installResumeEditor(db);
+ const memory=new Map([['old.docx',Buffer.from('original')]]),read=async p=>memory.get(p),write=async(p,b)=>memory.set(p,b),makeDir=async()=>{};
+ const render=async()=>({pdf:Buffer.from('%PDF-revised'),text:'Revised text',images:['page']});
+ await assert.rejects(editor.prepareResumeEdit(db,'intruder','p','text',{render,read}),/Applicant/);
+ const draft=await editor.prepareResumeEdit(db,'u','p','text',{render,read});
+ await assert.rejects(editor.saveResumeEdit(db,'intruder','p',draft.draftId,'/data',{read,write,makeDir}),/expired/);
+ const result=await editor.saveResumeEdit(db,'u','p',draft.draftId,'/data',{read,write,makeDir});
+ assert(result.previousSaved);assert.equal(editor.previousResumePath(db,'u','p'),'old.docx');assert.equal(editor.previousResumePath(db,'intruder','p'),null);assert.equal(memory.get('old.docx').toString(),'original');assert.equal(memory.get(db.prepare('SELECT resume_path FROM applicants').get().resume_path).toString(),'%PDF-revised');assert.equal(db.prepare('SELECT status FROM jobs').get().status,'submitted');
+ await assert.rejects(editor.saveResumeEdit(db,'u','p',draft.draftId,'/data',{read,write,makeDir}),/expired/);
+ const stale=await editor.prepareResumeEdit(db,'u','p','text',{render,read});db.exec("UPDATE applicants SET resume_path='changed.pdf'");await assert.rejects(editor.saveResumeEdit(db,'u','p',stale.draftId,'/data',{read,write,makeDir}),/changed/);db.close();
+});
+test('needs-input numbering is stable, deduplicated, excludes completed jobs, and renders in extension popup',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ const jobs=[{id:'two',title:'Platform',company:'B',status:'paused',created_at:'2026-02-01'},{id:'done',title:'Done',status:'submitted',local_phase:'blocked'},{id:'one',title:'SRE',company:'A',status:'local_browser',local_phase:'blocked',created_at:'2026-01-01'},{id:'queued',title:'Queued',status:'queued'}, {id:'one',status:'paused'}];
+ const dom=new JSDOM(sources['extension/popup.html'],{runScripts:'outside-only'}),w=dom.window;
+ w.chrome={runtime:{sendMessage:async()=>({ok:true,data:{jobs,state:{environment:'hosted',enabled:false,queue:[]}}})}};
+ w.eval(sources['extension/policy.js']);assert.deepEqual(Array.from(w.ApplyPilotPolicy.attentionOrder(jobs),j=>j.id),['one','two']);
+ w.eval(sources['extension/popup.js']);await new Promise(r=>setTimeout(r,10));
+ assert.deepEqual(Array.from(w.document.querySelectorAll('.attention-position'),n=>n.textContent),['1/2 · Needs your input','2/2 · Needs your input']);assert(w.document.querySelector('#jobs').textContent.includes('2 applications need your input'));dom.window.close();
+});
+test('resume editor previews before save and invalidates edited drafts',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ const dom=new JSDOM(sources['web/setup.html'],{runScripts:'outside-only',url:'https://app.test/setup'}),w=dom.window;
+ w.HTMLElement.prototype.scrollIntoView=()=>{};const writes=[];
+ w.fetch=async(url,opts={})=>{const data=opts.body?JSON.parse(opts.body):null;if(data)writes.push(data);
+ const result=String(url).endsWith('/resume-edit')?(data.action==='preview'?{draftId:'draft',pages:['AA=='],name:'Resume.pdf'}:{ok:true,name:'Resume.pdf',previousSaved:true}):String(url).endsWith('/resume')?{text:'Old resume'}:{applicants:[{id:'p',name:'Candidate',email:'a@example.test',has_resume:true,answers:{}}]};
+ return {ok:true,json:async()=>result};
+ };
+ w.sessionStorage.setItem('applypilot-token','fixture');w.eval(sources['web/setup.js']);await new Promise(r=>setTimeout(r,10));
+ w.document.querySelector('#profiles').value='p';w.document.querySelector('#profiles').dispatchEvent(new w.Event('change'));w.document.querySelector('#current-resume .secondary').click();await new Promise(r=>setTimeout(r,10));
+ const area=w.document.querySelector('#resume-editor-text');area.value='Revision';area.dispatchEvent(new w.Event('input'));assert(w.document.querySelector('#save-edited-resume').disabled);
+ w.document.querySelector('#preview-edited-resume').click();await new Promise(r=>setTimeout(r,10));assert(!w.document.querySelector('#save-edited-resume').disabled);assert.equal(w.document.querySelectorAll('#resume-editor-pages img').length,1);
+ area.value='Edited again';area.dispatchEvent(new w.Event('input'));assert(w.document.querySelector('#save-edited-resume').disabled);assert(!writes.some(x=>x.action==='save'));dom.window.close();
 });

@@ -73,5 +73,14 @@
    return null;
   }
 
-  globalThis.ApplyPilotPolicy = Object.freeze({employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
+
+  function needsInput(job){
+   return !!job&&!['duplicate','archived','submitted','interview','rejected','offer'].includes(job.status)&&(['paused','needs_review'].includes(job.status)||job.status==='local_browser'&&(job.local_phase==='blocked'||job.evidence?.stalled)||job.evidence?.blocked===true);
+  }
+  function attentionOrder(jobs){
+   const seen=new Set();
+   return (Array.isArray(jobs)?jobs:[]).filter(job=>needsInput(job)&&job.id&&!seen.has(job.id)&&seen.add(job.id)).sort((a,b)=>(Date.parse(a.created_at)||0)-(Date.parse(b.created_at)||0)||String(a.id).localeCompare(String(b.id)));
+  }
+
+  globalThis.ApplyPilotPolicy = Object.freeze({needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
 })();

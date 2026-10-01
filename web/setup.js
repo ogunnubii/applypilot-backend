@@ -30,11 +30,12 @@ if((location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pag
 
 for (const choice of document.querySelectorAll('[name="source-choice"]')) choice.addEventListener('change',()=>{const direct=choice.value==='job';if($('#job'))$('#job').hidden=!direct;if($('#search'))$('#search').hidden=direct;});
 
-let resumeBlobUrl=null;
+let resumeBlobUrl=null,previousResumeBlobUrl=null,resumeEditorProfile=null,resumeDraftId=null;
 function renderCurrentResume(){
  const box=$('#current-resume');if(!box)return;box.replaceChildren();const p=profiles.find(p=>p.id===$('#profiles').value);
  if(!p)return;
  const label=document.createElement('p');label.textContent=p.has_resume?'A resume is saved for '+p.name+'. Applications attach this file.':'No resume is saved for this profile.';box.append(label);
+ const edit=document.createElement('button');edit.type='button';edit.className='secondary';edit.textContent='Edit resume text';box.append(edit);edit.onclick=()=>openResumeEditor(p.id);
  if(!p.has_resume)return;
  const button=document.createElement('button');button.type='button';button.textContent='View current resume';box.append(button);
  button.onclick=async()=>{button.disabled=true;try{
@@ -44,8 +45,39 @@ function renderCurrentResume(){
   $('#resume-preview-title').textContent=data.applicant+' · Current resume';
   $('#resume-preview-note').textContent=data.name+' · '+Math.round(data.bytes/1024)+' KB. This is the saved file attached to new applications. '+(data.previewNotice||'Text preview below; download the original to see its formatting.');
   $('#resume-original').href=resumeBlobUrl;$('#resume-original').download=data.name;
+  $('#resume-previous').hidden=!data.hasPrevious;$('#resume-previous').onclick=async e=>{if(!$('#resume-previous').href){e.preventDefault();try{const previous=await api('/applicants/'+p.id+'/resume-previous');if(previousResumeBlobUrl)URL.revokeObjectURL(previousResumeBlobUrl);previousResumeBlobUrl=URL.createObjectURL(new Blob([Uint8Array.from(atob(previous.base64),c=>c.charCodeAt(0))],{type:previous.mime}));$('#resume-previous').href=previousResumeBlobUrl;$('#resume-previous').download=previous.name;$('#resume-previous').click();}catch(error){notice(error.message);}}};$('#resume-previous').removeAttribute('href');
   $('#resume-preview-text').textContent=data.text||'No readable text found.';
   $('#resume-preview').showModal();
  }catch(err){notice(err.message);}finally{button.disabled=false;}};
 }
 $('#close-resume').onclick=()=>$('#resume-preview').close();
+
+function invalidateResumeDraft(){resumeDraftId=null;$('#save-edited-resume').disabled=true;$('#resume-editor-pages').replaceChildren();}
+async function openResumeEditor(id){
+ resumeEditorProfile=id;invalidateResumeDraft();$('#resume-editor').hidden=false;$('#resume-editor-status').textContent='Loading your saved resume…';
+ try{const p=profiles.find(p=>p.id===id),data=p?.has_resume?await api('/applicants/'+id+'/resume'):{text:''};
+ if(resumeEditorProfile!==id)return;$('#resume-editor-text').value=data.text||'';$('#resume-editor-status').textContent='Edit the text, then preview the exact PDF before saving.';
+ $('#resume-editor').scrollIntoView({behavior:'smooth',block:'start'});
+ }catch(error){$('#resume-editor-status').textContent=error.message;}
+}
+$('#resume-editor-text').addEventListener('input',()=>{invalidateResumeDraft();$('#resume-editor-status').textContent='Text changed. Preview it again before saving.';});
+$('#preview-edited-resume').onclick=async()=>{
+ const id=resumeEditorProfile,content=$('#resume-editor-text').value,button=$('#preview-edited-resume');
+ if(!id||id!==$('#profiles').value)return $('#resume-editor-status').textContent='Select the same profile, then open its resume editor.';
+ button.disabled=true;invalidateResumeDraft();$('#resume-editor-status').textContent='Building the PDF and its page previews…';
+ try{const result=await api('/applicants/'+id+'/resume-edit','POST',{action:'preview',text:content});
+ if(resumeEditorProfile!==id||$('#resume-editor-text').value!==content)return;
+ resumeDraftId=result.draftId;$('#save-edited-resume').disabled=false;
+ for(const [index,data]of result.pages.entries()){const img=document.createElement('img');img.alt='Revised resume PDF page '+(index+1);img.src='data:image/png;base64,'+data;img.style.cssText='display:block;width:100%;height:auto;border:1px solid #dfe7e1';$('#resume-editor-pages').append(img);}
+ $('#resume-editor-status').textContent=result.pages.length+' PDF page(s) ready. Review the pages, then use this resume for new applications.';
+ }catch(error){$('#resume-editor-status').textContent=error.message;}finally{button.disabled=false;}
+};
+$('#save-edited-resume').onclick=async()=>{
+ const id=resumeEditorProfile,draftId=resumeDraftId;if(!id||!draftId||id!==$('#profiles').value)return;
+ const button=$('#save-edited-resume');button.disabled=true;
+ try{const result=await api('/applicants/'+id+'/resume-edit','POST',{action:'save',draftId});
+ resumeDraftId=null;$('#resume-editor-status').textContent='Saved '+result.name+' as your application resume. New applications will attach this PDF.'+(result.previousSaved?' Your previous resume is retained.':'');
+ $('#resume').value='';await load();$('#profiles').value=id;renderCurrentResume();notice('Revised resume saved for '+profiles.find(p=>p.id===id)?.name+'. New applications will use this PDF.');
+ }catch(error){$('#resume-editor-status').textContent=error.message;button.disabled=false;}
+};
+$('#cancel-edited-resume').onclick=()=>{resumeEditorProfile=null;invalidateResumeDraft();$('#resume-editor').hidden=true;};

@@ -36,7 +36,7 @@ async function openJob(id,auto=true){
 function eligible(j,s){
  const r=s.records[j.id];
  return j.execution_mode==='local'&&P.supported(j.url)&&!j.local_attempt_at&&!r?.attempted&&!['Unconfirmed submission','Submission in progress','Sensitive action'].includes(j.challenge)&&
- (['saved','queued','paused','needs_review'].includes(j.status)&&!r);
+ (j.status==='queued'&&!r);
 }
 async function tick(){
  const s=await read();if(!s.enabled)return;
@@ -83,13 +83,15 @@ async function handle(m,sender){
  if(!b||sender.frameId!==0)throw Error('This tab is not linked to an active ApplyPilot application.');
  if(m.action==='packet'){const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);return {...packet,automatic:b.auto&&!b.attempted};}
  if(m.action==='state')return {attempted:b.attempted,automatic:b.auto&&!b.attempted,phase:b.phase};
+ if(m.action==='research-answer')return api('/jobs/'+b.id+'/local/research-answer','POST',{question:m.question});
+ if(m.action==='research-used')return api('/jobs/'+b.id+'/local/research-used','POST',{questions:m.questions});
  if(m.action==='attempt'){
-  if(m.human!==true)throw Error('Review the employer form and click Submit yourself.');
-  if(m.human!==true&&!b.auto)throw Error('Automation was stopped. Review the employer form manually.');
+  const automatic=m.automatic===true&&b.auto===true;
+  if(m.human!==true&&!automatic)throw Error('Automation was stopped. Review the employer form manually.');
   b.attempted=true;b.phase='verifying';b.touched=Date.now();await saveRecord(b);
-  await api('/jobs/'+b.id+'/local/attempt','POST',{url:sender.url,before:m.before,human:m.human===true});return {};
+  try{await api('/jobs/'+b.id+'/local/attempt','POST',{url:sender.url,before:m.before,human:m.human===true,automatic});}catch(e){b.attempted=false;b.phase='ready';await saveRecord(b);throw e;}return {};
  }
- if(m.action==='step'){if(!b.auto)throw Error('Automation was stopped');b.steps=(b.steps||0)+1;if(b.steps>15)throw Error('Step limit reached. Continue manually.');await saveRecord(b);return {};}
+ if(m.action==='step'){if(!b.auto)throw Error('Automation was stopped');if((b.steps||0)>=15)throw Error('Step limit reached. Continue manually.');await api('/jobs/'+b.id+'/local/step','POST',{});b.steps=(b.steps||0)+1;await saveRecord(b);return {};}
  if(m.action==='progress'){
   b.touched=Date.now();if(m.blocked){b.phase='blocked';b.auto=false;}await saveRecord(b);
   const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked});if(m.blocked)await tick();return result;

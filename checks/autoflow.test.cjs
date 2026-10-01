@@ -518,13 +518,14 @@ test("Gemini duplicate retrieval records are accepted only for the same verified
  const assert=require('node:assert/strict');
  const source=sources['google-research.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
  const {researchAnswer}=new Function('isIP','Buffer','AbortSignal',source+';return {researchAnswer};')(require('node:net').isIP,Buffer,AbortSignal);
- const url='https://boards.greenhouse.io/example/jobs/1234?gh_jid=1234',canonical='https://job-boards.greenhouse.io/example/jobs/1234',answer='Maintain reliable infrastructure.';
+ const url='https://boards.greenhouse.io/example/jobs/1234?gh_jid=1234',canonical='https://job-boards.greenhouse.io/example/jobs/1234';let answer='Maintain reliable infrastructure.',prefix='';
  let records=[{url,status:'success'},{url:canonical,status:'success'}],isError=false;
  const options={question:'What are the responsibilities of this role?',job:{url},env:{GEMINI_API_KEY:'fixture-only'},fetchImpl:async(endpoint,options)=>{
   const body=JSON.parse(options.body);assert.equal(body.model,'gemini-3.5-flash-lite');assert.equal(body.store,false);assert.deepEqual(body.tools,[{type:'url_context'}]);
-  return{ok:true,json:async()=>({status:'completed',steps:[{type:'url_context_call',id:'call-1',arguments:{urls:[url]}},{type:'url_context_result',call_id:'call-1',is_error:isError,result:records},{type:'model_output',content:[{type:'text',text:answer,annotations:[{type:'url_citation',url,title:'Job',start_index:0,end_index:Buffer.byteLength(answer)}]}]}]})};
+  return{ok:true,json:async()=>({status:'completed',steps:[{type:'url_context_call',id:'call-1',arguments:{urls:[url]}},{type:'url_context_result',call_id:'call-1',is_error:isError,result:records},{type:'model_output',content:[{type:'text',text:prefix+answer,annotations:[{type:'url_citation',url,title:'Job',start_index:Buffer.byteLength(prefix),end_index:Buffer.byteLength(prefix+answer)}]}]}]})};
  }};
  const result=await researchAnswer(options);assert.equal(result.answer,answer);assert.equal(result.citations.length,1);
+ prefix='This uncited introduction must not enter the form. ';assert.equal((await researchAnswer(options)).answer,answer);prefix='';
  records=[{url,status:'error'},{url:canonical,status:'success'}];assert.equal((await researchAnswer(options)).answer,answer);
  records=[{url,status:'error'}];await assert.rejects(researchAnswer(options),/all retrieval attempts failed/);
  records=[{url,status:'success'},{url:'https://other.example/jobs/1234',status:'success'}];await assert.rejects(researchAnswer(options),/different page/);

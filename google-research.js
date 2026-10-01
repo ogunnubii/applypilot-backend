@@ -197,10 +197,25 @@ export async function researchAnswer({question,job={},fetchImpl=fetch,env=proces
  const answer=blocks.map(block=>typeof block.text==='string'?block.text.trim():'').filter(Boolean).join('\n').trim();
  if(!answer||answer.length>4000)throw Error('Google research returned an invalid answer.');
  if(answer==='INSUFFICIENT_PUBLIC_PAGE_CONTEXT')return {answer:null,reason:'The public job page does not contain enough information to answer this question.',citations:[],requiresReview:true};
- const seen=new Set(),citations=[];
- for(const block of blocks){const spans=[];for(const annotation of Array.isArray(block.annotations)?block.annotations:[]){const span=citationSpanFrom(annotation,block.text);if(span&&sameCanonicalPage(span.citation.url,retrievedUrl))spans.push(span);}if(!spans.length)throw Error('Google research returned text without a valid public-page citation span.');if(citedCharacterRatio(block.text,spans)<0.9||claimRanges(block.text).some(claim=>citedCharacterRatio(block.text,spans,claim)<0.9))throw Error('Google research returned a claim without substantial citation coverage.');for(const {citation} of spans)if(!seen.has(citation.url)){seen.add(citation.url);citations.push(citation);}}
- if(!citations.length)throw Error('Google research returned no verifiable HTTPS citations.');
- return {answer,reason:'Draft based on the cited public job page.',citations,requiresReview:true};
+
+ const seen=new Set(),citations=[],verifiedClaims=[];
+ for(const block of blocks){
+  const spans=[];
+  for(const annotation of Array.isArray(block.annotations)?block.annotations:[]){
+   const span=citationSpanFrom(annotation,block.text);
+   if(span&&sameCanonicalPage(span.citation.url,retrievedUrl))spans.push(span);
+  }
+  if(!spans.length)continue;
+  const supported=claimRanges(block.text).filter(claim=>citedCharacterRatio(block.text,spans,claim)>=0.9);
+  for(const claim of supported){
+   verifiedClaims.push(block.text.slice(claim.start,claim.end).trim());
+   for(const {citation,start,end} of spans)if(end>claim.start&&start<claim.end&&!seen.has(citation.url)){seen.add(citation.url);citations.push(citation);}
+  }
+ }
+ const verifiedAnswer=verifiedClaims.join('\n').trim();
+ if(!verifiedAnswer||!citations.length)throw Error('Google research returned no complete claim with substantial public-page citation coverage.');
+ return {answer:verifiedAnswer,reason:'Draft includes only substantially cited claims from the public job page.',citations,requiresReview:true};
+
 }
 
 export function installResearch(db){

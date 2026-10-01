@@ -226,5 +226,6 @@ test('stalled browser sessions are separated from filling and receipt filters ex
  assert.equal(w.document.querySelector('#applying-count').textContent,'0');assert(w.document.querySelector('#job-stale').textContent.includes('Browser check needed'));
  w.HTMLElement.prototype.scrollIntoView=function(){};[...w.document.querySelectorAll('#operations button')].find(b=>b.textContent.includes('Receipts recorded')).click();assert(!w.document.querySelector('#job-receipt').hidden);assert(w.document.querySelector('#job-placeholder').hidden);
  [...w.document.querySelectorAll('#operations button')].find(b=>b.textContent.includes('Browser check needed')).click();assert(!w.document.querySelector('#job-stale').hidden);assert(w.document.querySelector('#job-receipt').hidden);
+ [...w.document.querySelectorAll('#operations button')].find(b=>b.textContent.includes('Needs a step')).click();assert(w.document.querySelector('#job-stale').hidden,'stalled forms have a separate metric');
  w.close();
 });

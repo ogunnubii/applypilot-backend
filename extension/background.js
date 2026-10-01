@@ -15,6 +15,11 @@ async function api(path,method='GET',data){
  }
  throw Error('Open ApplyPilot and sign in to sync this browser.');
 }
+async function listedJobs(){
+ const data=await api('/jobs'),operations=await api('/operations');
+ const evidence=new Map((operations.applications||[]).map(j=>[j.id,j]));
+ return {...data,jobs:data.jobs.map(j=>({...j,evidence:evidence.get(j.id)}))};
+}
 async function initialize(){const s=await read();if(!s.automaticDefault)await chrome.storage.local.set({automaticDefault:true,enabled:true,userPaused:false});if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
 async function saveRecord(record){const s=await read();s.records[record.id]=record;await chrome.storage.local.set({records:s.records});}
 async function openJob(id,auto=true){
@@ -97,7 +102,7 @@ async function handle(m,sender){
  }
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){
-  if(m.action==='list')return {...await api('/jobs'),state:await read()};
+  if(m.action==='list')return {...await listedJobs(),state:await read()};
   if(m.action==='open')return openJob(m.id,m.auto!==false);
   if(m.action==='dashboard'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard});}
   if(m.action==='environment'){if(!environments[m.value])throw Error('Unknown environment');const s=await read();if(Object.keys(s.records).length)throw Error('Use a separate browser profile for another server while applications are tracked');await chrome.storage.local.set({environment:m.value,enabled:false,queue:[]});return {};}
@@ -115,6 +120,7 @@ async function handle(m,sender){
  }
  if(!b||sender.frameId!==0)throw Error('This tab is not linked to an active ApplyPilot application.');
  if(m.action==='packet'){const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);return {...packet,automatic:b.auto&&!b.attempted};}
+ if(m.action==='attention-position'){const {jobs}=await listedJobs(),waiting=P.attentionOrder(jobs),index=waiting.findIndex(j=>j.id===b.id);return {position:index<0?0:index+1,total:waiting.length};}
  if(m.action==='state')return {attempted:b.attempted,automatic:b.auto&&!b.attempted,phase:b.phase};
  if(m.action==='research-answer')return api('/jobs/'+b.id+'/local/research-answer','POST',{question:m.question});
  if(m.action==='research-used')return api('/jobs/'+b.id+'/local/research-used','POST',{questions:m.questions});

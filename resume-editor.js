@@ -27,7 +27,7 @@ export function resumeHTML(input){
   }
   close();return '<section class="sheet" aria-label="Resume page '+(index+1)+'">'+out.join('\n')+'</section>';
  });
- return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><title>Resume</title><style>@page{size:Letter;margin:0}*{box-sizing:border-box}body{margin:0;background:#fff;color:#111;font:10.5pt/1.28 Arial,sans-serif}.sheet{width:8.5in;height:11in;padding:.58in .65in;break-after:page;overflow:hidden}.sheet:last-child{break-after:auto}h1{font-size:21pt;line-height:1.12;margin:0 0 5pt;font-weight:700;color:#000}h2{font-size:11pt;line-height:1.2;margin:14pt 0 5pt;font-weight:700;color:#000}h3{font-size:10.7pt;line-height:1.25;margin:9pt 0 3pt;font-weight:700;color:#000}p{margin:0 0 5pt}ul{margin:4pt 0 8pt;padding-left:14pt}li{margin:0 0 4pt}h1+p{font-weight:700;font-size:11pt}h1+p+p{font-size:9.2pt;color:#333}</style></head><body>'+sections.join('')+'</body></html>';
+ return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><title>Resume</title><style>@page{size:Letter;margin:.58in .65in}*{box-sizing:border-box}body{margin:0;background:#fff;color:#111;font:10.5pt/1.28 Arial,sans-serif}.sheet{width:7.2in;break-after:page;display:flow-root}.sheet:last-child{break-after:auto}h1{font-size:21pt;line-height:1.12;margin:0 0 5pt;font-weight:700;color:#000}h2{font-size:11pt;line-height:1.2;margin:14pt 0 5pt;font-weight:700;color:#000}h3{font-size:10.7pt;line-height:1.25;margin:9pt 0 3pt;font-weight:700;color:#000}p{margin:0 0 5pt}ul{margin:4pt 0 8pt;padding-left:14pt}li{margin:0 0 4pt}h1+p{font-weight:700;font-size:11pt}h1+p+p{font-size:9.2pt;color:#333}</style></head><body>'+sections.join('')+'</body></html>';
 }
 export async function renderResume(input){
  const html=resumeHTML(input),directory=await mkdtemp(join(tmpdir(),'applypilot-resume-'));let browser;
@@ -36,7 +36,7 @@ export async function renderResume(input){
   const page=await browser.newPage({viewport:{width:816,height:1056}});
   await page.route('**/*',route=>route.abort());
   await page.setContent(html,{waitUntil:'load',timeout:15000});
-  const overflow=await page.locator('.sheet').evaluateAll(nodes=>nodes.some(n=>n.scrollHeight>n.clientHeight+1));
+  const overflow=await page.locator('.sheet').evaluateAll(nodes=>nodes.some(n=>n.getBoundingClientRect().height>9.84*96));
   if(overflow)throw Error('A resume page is too long. Shorten it or insert --- on its own line to start another page.');
   const pdf=await page.pdf({format:'Letter',printBackground:true,preferCSSPageSize:true});
   const file=join(directory,'resume.pdf');await writeFile(file,pdf,{mode:0o600});

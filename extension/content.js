@@ -66,7 +66,7 @@ async function updateAttentionPosition(){
  if(!bar||!packet?.job?.id)return;
  let counter=bar.querySelector('.attention-position');
  if(!counter){counter=document.createElement('div');counter.className='attention-position';counter.style.cssText='font-weight:750;font-size:17px;margin-bottom:8px';counter.setAttribute('role','status');bar.prepend(counter);}
- try{const data=await send('list'),waiting=P.attentionOrder(data.jobs),index=waiting.findIndex(j=>j.id===packet.job.id);counter.hidden=index<0;if(index>=0)counter.textContent=(index+1)+'/'+waiting.length+' · Needs your input';}catch{counter.hidden=true;}
+ try{const data=await send('attention-position');counter.hidden=!data.position;if(data.position)counter.textContent=data.position+'/'+data.total+' · Needs your input';}catch{counter.hidden=true;}
 }
 function mount(){
  document.getElementById('applypilot-local-controls')?.remove();

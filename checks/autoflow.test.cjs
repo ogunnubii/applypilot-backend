@@ -467,3 +467,22 @@ test('resume editor previews before save and invalidates edited drafts',async()=
  w.document.querySelector('#preview-edited-resume').click();await new Promise(r=>setTimeout(r,10));assert(!w.document.querySelector('#save-edited-resume').disabled);assert.equal(w.document.querySelectorAll('#resume-editor-pages img').length,1);
  area.value='Edited again';area.dispatchEvent(new w.Event('input'));assert(w.document.querySelector('#save-edited-resume').disabled);assert(!writes.some(x=>x.action==='save'));dom.window.close();
 });
+
+test('attention counters share operation evidence while linked employer tabs receive only their position',async()=>{
+ const assert=require('node:assert/strict'),vm=require('node:vm');
+ const state={automaticDefault:true,device:'fixture',records:{second:{id:'second',tabId:8,url:'https://jobs.lever.co/example/second'}},queue:[],enabled:false};
+ const jobs=[{id:'first',status:'paused',created_at:'2026-01-01'},{id:'second',status:'local_browser',created_at:'2026-01-02'},{id:'done',status:'submitted',local_phase:'blocked'}];
+ const noOp={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},tabs:{query:async()=>[{id:4}],onRemoved:noOp},scripting:{executeScript:async({args})=>[{result:{data:args[1]==='/jobs'?{jobs}:{applications:[{id:'second',stalled:true}]}}}]},runtime:{getURL:p=>'chrome-extension://fixture/'+p,onMessage:noOp,onStartup:noOp,onInstalled:noOp},alarms:{get:async()=>({}),onAlarm:noOp}};
+ const c={chrome,URL,console,Date,crypto:require('node:crypto').webcrypto,importScripts(){}};
+ vm.runInNewContext(sources['extension/policy.js'],c);vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;',c);
+ const popup=await c.testHandle({action:'list'},{url:'chrome-extension://fixture/popup.html'});
+ assert.equal(popup.jobs.find(j=>j.id==='second').evidence.stalled,true);
+ const result=await c.testHandle({action:'attention-position'},{tab:{id:8},frameId:0,url:'https://jobs.lever.co/example/second'});
+ assert.equal(result.position,2);assert.equal(result.total,2);assert.deepEqual(Object.keys(result).sort(),['position','total']);
+ await assert.rejects(c.testHandle({action:'attention-position'},{tab:{id:9},frameId:0,url:'https://jobs.lever.co/example/unrelated'}),/not linked/);
+ assert(sources['extension/content.js'].includes("send('attention-position')"));
+ assert(!sources['extension/content.js'].includes("send('list')"));
+ const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
+ w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.3'));w.close();
+});

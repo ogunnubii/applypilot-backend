@@ -518,7 +518,7 @@ test("Gemini duplicate retrieval records are accepted only for the same verified
  const assert=require('node:assert/strict');
  const source=sources['google-research.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
  const {researchAnswer}=new Function('isIP','Buffer','AbortSignal',source+';return {researchAnswer};')(require('node:net').isIP,Buffer,AbortSignal);
- const url='https://boards.greenhouse.io/example/jobs/1234',canonical='https://job-boards.greenhouse.io/example/jobs/1234',answer='Maintain reliable infrastructure.';
+ const url='https://boards.greenhouse.io/example/jobs/1234?gh_jid=1234',canonical='https://job-boards.greenhouse.io/example/jobs/1234',answer='Maintain reliable infrastructure.';
  let records=[{url,status:'success'},{url:canonical,status:'success'}],isError=false;
  const options={question:'What are the responsibilities of this role?',job:{url},env:{GEMINI_API_KEY:'fixture-only'},fetchImpl:async(endpoint,options)=>{
   const body=JSON.parse(options.body);assert.equal(body.model,'gemini-3.5-flash-lite');assert.equal(body.store,false);assert.deepEqual(body.tools,[{type:'url_context'}]);

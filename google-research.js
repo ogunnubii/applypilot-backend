@@ -104,8 +104,16 @@ function clean(value,max){return typeof value==='string'?value.trim().slice(0,ma
 function exactPublicJobUrl(value){const publicUrl=publicHttpsUrl(value),jobUrl=publicJobContextUrl(value);return publicUrl&&publicUrl===jobUrl?jobUrl:'';}
 function canonicalHost(host){const value=host.toLowerCase().replace(/\.$/,'').replace(/^www\./,'');return value==='job-boards.greenhouse.io'?'boards.greenhouse.io':value;}
 function canonicalPath(path){const value=path.replace(/\/+$/,'');return value||'/';}
+function canonicalQuery(url){
+ const params=new URLSearchParams(url.search),id=canonicalHost(url.hostname)==='boards.greenhouse.io'?url.pathname.match(/^\/[a-z0-9_-]+\/jobs\/(\d+)\/?$/i)?.[1]:null;
+ if(id&&params.getAll('gh_jid').length===1&&params.get('gh_jid')===id)params.delete('gh_jid');
+ params.sort();return params.toString();
+}
 function sameCanonicalPage(left,right){
- try{const a=new URL(left),b=new URL(right);return canonicalHost(a.hostname)===canonicalHost(b.hostname)&&a.port===b.port&&canonicalPath(a.pathname)===canonicalPath(b.pathname)&&a.search===b.search;}catch{return false;}
+ try{const a=new URL(left),b=new URL(right);return canonicalHost(a.hostname)===canonicalHost(b.hostname)&&a.port===b.port&&canonicalPath(a.pathname)===canonicalPath(b.pathname)&&canonicalQuery(a)===canonicalQuery(b);}catch{return false;}
+}
+function sourceMismatchSummary(left,right){
+ try{const a=new URL(left),b=new URL(right);return 'scheme '+(b.protocol==='https:'?'HTTPS':b.protocol==='http:'?'HTTP':'unsupported')+', same host '+(canonicalHost(a.hostname)===canonicalHost(b.hostname))+', same path '+(canonicalPath(a.pathname)===canonicalPath(b.pathname))+', same query '+(canonicalQuery(a)===canonicalQuery(b));}catch{return 'invalid URL';}
 }
 function byteOffsetToStringIndex(text,offset){
  let bytes=0,index=0;for(const character of text){if(bytes===offset)return index;const size=Buffer.byteLength(character);if(bytes+size>offset)return -1;bytes+=size;index+=character.length;}return bytes===offset?index:-1;
@@ -178,7 +186,7 @@ export async function researchAnswer({question,job={},fetchImpl=fetch,env=proces
  const retrievals=resultSteps[0].result;
  for(const retrieval of retrievals){
   const url=exactPublicJobUrl(retrieval?.url);
-  if(!url||!sameCanonicalPage(publicJobUrl,url))throw Error('Google retrieved a different page than the requested public job page.');
+  if(!url||!sameCanonicalPage(publicJobUrl,url))throw Error('Google retrieved a different page than the requested public job page ('+sourceMismatchSummary(publicJobUrl,retrieval?.url)+').');
   if(['unsafe','paywall'].includes(retrieval?.status))throw Error(`Google could not read this public job page (${retrieval.status}).`);
   if(!['success','error'].includes(retrieval?.status))throw Error('Google did not verify the public job page.');
  }

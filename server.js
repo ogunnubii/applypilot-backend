@@ -1,3 +1,4 @@
+import {installContinuations,requestContinuation,listContinuations,claimContinuation,settleContinuation,cancelContinuation} from './continuation-queue.js';
 import {operationSnapshot} from './operation-evidence.js';
 import {extensionArchive} from './extension-package.js';
 import {importHistory} from './application-history.js';
@@ -16,7 +17,7 @@ import {createServer} from 'node:http';import {randomUUID} from 'node:crypto';im
 import {parseBoards,parseIntent,profileSearchInstruction,runSearch} from './discovery.js';
 import {resumeRoles} from './resume.js';
 installNotifications(db);installLibrary(db);installDrafts(db);installResearch(db);db.exec('CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT)');
-installArchive(db);
+installArchive(db);installContinuations(db);
 let emailBusy=false;
 const emailTimer=setInterval(async()=>{if(emailBusy)return;emailBusy=true;try{await sendBlockerEmails(db)}catch{console.error('Blocker notification delivery failed')}finally{emailBusy=false}},60000);emailTimer.unref();
 const origin=process.env.PUBLIC_ORIGIN;if(!origin)throw Error('Set PUBLIC_ORIGIN');if(!process.env.REGISTRATION_CODE||process.env.REGISTRATION_CODE.length<24)throw Error('Set REGISTRATION_CODE to a random value of at least 24 characters');const attempts=new Map();const uploadDir=resolve(process.env.UPLOAD_DIR||'./data/resumes');const limit=6*1024*1024;
@@ -36,12 +37,13 @@ function createResumeSearch(uid,applicant,roles){
 const allowedOrigins=new Set([origin,process.env.SERVICE_ORIGIN,'https://applypilot-jobs.pages.dev'].filter(Boolean));
 createServer(async(req,res)=>{const requestOrigin=req.headers.origin;if(requestOrigin&&!allowedOrigins.has(requestOrigin))return send(res,403,{error:'Origin not allowed'});res.setHeader('access-control-allow-origin',requestOrigin||origin);res.setHeader('vary','Origin');res.setHeader('access-control-allow-headers','authorization,content-type,x-applypilot-device');res.setHeader('access-control-allow-methods','GET,POST,PUT,DELETE,OPTIONS');if(req.method==='OPTIONS'){res.writeHead(204);res.end();return}
 try{let path=new URL(req.url,'http://localhost').pathname;if(req.method==='GET'&&['/','/assistant','/assistant.js'].includes(path)){res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./assistant-client.js':'./assistant-page.html',import.meta.url)));return;}
+if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./extension/policy.js',import.meta.url)));return;}
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
 if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.1.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-01-live-operations',extensionVersion:'0.6.1',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-01-answer-continuations',extensionVersion:'0.6.1',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(req));if(input.registration_code!==process.env.REGISTRATION_CODE)return send(res,403,{error:'Registration code required'});let email=text(input.email,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return send(res,400,{error:'Valid email required'});let id=randomUUID(),hash=hashPassword(input.password);try{db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(id,email,hash,now())}catch{return send(res,409,{error:'Account already exists'})}return send(res,201,{token:issueToken(id,input.remember===true)})}
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id,input.remember===true)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
@@ -77,6 +79,16 @@ if(path==='/api/work-focus'&&['GET','PUT'].includes(req.method)){
 }
 if(path==='/api/chat'&&req.method==='POST')return send(res,200,await chat(uid,JSON.parse(await body(req))));
 if(path==='/api/status'&&req.method==='GET'){const heartbeat=db.prepare('SELECT heartbeat FROM worker_status WHERE id=1').get()?.heartbeat;return send(res,200,{workerOnline:!!heartbeat&&Date.now()-Date.parse(heartbeat)<45000,heartbeat:heartbeat||null,queue:db.prepare("SELECT status,COUNT(*) AS count FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived') GROUP BY status").all(uid)});}
+const continuationCheck=job=>researchConsentWithdrawn(db,job.id,job.applicant_id)?'Drafting consent changed. Review saved answers before continuing.':'';
+if(path==='/api/continuations'&&req.method==='GET')return send(res,200,{requests:listContinuations(db,uid)});
+if(path==='/api/continuations/claim'&&req.method==='POST')return send(res,200,{request:claimContinuation(db,uid,continuationCheck)});
+const continuationRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/continuation$/);
+if(continuationRoute){
+ if(req.method==='POST')return send(res,200,requestContinuation(db,uid,continuationRoute[1],continuationCheck));
+ if(req.method==='DELETE')return send(res,200,cancelContinuation(db,uid,continuationRoute[1]));
+ if(req.method==='PUT'){const x=JSON.parse(await body(req));return send(res,200,settleContinuation(db,uid,continuationRoute[1],x.claimId,x.result));}
+}
+
 if(path==='/api/operations'&&req.method==='GET')return send(res,200,operationSnapshot(db,uid));
 if(path==='/api/activity'&&req.method==='GET')return send(res,200,{events:db.prepare('SELECT e.at,e.type,e.message,j.id AS job_id,j.title,j.company,j.applicant_id FROM events e JOIN jobs j ON j.id=e.job_id WHERE j.user_id=? AND j.status NOT IN (\'archived\',\'duplicate\') ORDER BY e.id DESC LIMIT 100').all(uid)});
 if(path==='/api/me')return send(res,200,{email:db.prepare('SELECT email FROM users WHERE id=?').get(uid)?.email});

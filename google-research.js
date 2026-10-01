@@ -169,7 +169,10 @@ export async function researchAnswer({question,job={},fetchImpl=fetch,env=proces
  const calls=data.steps.filter(step=>step?.type==='url_context_call');
  if(calls.length!==1||typeof calls[0].id!=='string'||!calls[0].id||!Array.isArray(calls[0].arguments?.urls)||calls[0].arguments.urls.length!==1||calls[0].arguments.urls[0]!==publicJobUrl)throw Error('Google did not limit URL Context to the exact public job page.');
  const resultSteps=data.steps.filter(step=>step?.type==='url_context_result');
- if(resultSteps.length!==1||resultSteps[0].call_id!==calls[0].id||!Array.isArray(resultSteps[0].result)||resultSteps[0].result.length!==1)throw Error('Google did not verify exactly one public job page.');
+ if(resultSteps.length!==1)throw Error(`Google returned ${resultSteps.length} URL Context result steps; exactly one is required.`);
+ if(resultSteps[0].call_id!==calls[0].id)throw Error('Google URL Context result did not match the requested tool call.');
+ if(!Array.isArray(resultSteps[0].result))throw Error('Google URL Context returned an unrecognized result format.');
+ if(resultSteps[0].result.length!==1)throw Error(`Google returned ${resultSteps[0].result.length} page retrieval records; exactly one is required.`);
  const retrieval=resultSteps[0].result[0],retrievedUrl=exactPublicJobUrl(retrieval?.url);
  if(retrieval?.status!=='success'){const status=['unsafe','paywall','error'].includes(retrieval?.status)?retrieval.status:null;throw Error(status?`Google could not read this public job page (${status}).`:'Google did not verify the public job page.');}
  if(!retrievedUrl||!sameCanonicalPage(publicJobUrl,retrievedUrl))throw Error('Google retrieved a different page than the requested public job page.');

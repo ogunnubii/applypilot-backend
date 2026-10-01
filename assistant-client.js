@@ -72,8 +72,9 @@ async function refresh(force=false){
  $('#local-count').textContent=current.filter(j=>j.status==='local_browser').length;
  const totals=Object.fromEntries(['saved','submitted','interview','offer','rejected'].map(state=>[state,(state==='interview'?interviews.length:current.filter(j=>j.status===state).length)]));
  for(const [state,value] of Object.entries(totals)){const target=$('#'+(state==='saved'?'found':state)+'-count');if(target)target.textContent=value;}
- const decided=totals.interview+totals.offer+totals.rejected;
- const success=$('#success-rate');if(success)success.textContent=decided?Math.round((totals.interview+totals.offer)*100/decided)+'%':'—';
+ const outcomes=new Map();for(const r of [...current,...externalRecords].filter(r=>['interview','offer','rejected'].includes(r.status)))outcomes.set(interviewIdentity(r),r.status);
+ const decided=outcomes.size,positive=[...outcomes.values()].filter(s=>s==='interview'||s==='offer').length;
+ const success=$('#success-rate');if(success)success.textContent=decided?Math.round(positive*100/decided)+'%':'—';
  $('#worker-state').textContent=health.workerOnline?'● Worker connected · Progress updates automatically':'○ Worker offline · Saved information is retained';
  const signature=JSON.stringify([current,externalRecords]);
  if(!force&&(signature===lastSignature||$('#jobs').contains(document.activeElement)||$('#jobs').querySelector('[data-dirty="true"],details[open]')))return;
@@ -82,10 +83,10 @@ async function refresh(force=false){
  const rank=j=>blocked(j)?0:1+['local_browser','running','queued','saved','submitted','interview','rejected','offer'].indexOf(j.status);
  const updated=j=>Number.isFinite(Date.parse(j.updated_at))?Date.parse(j.updated_at):0;
  current.sort((a,b)=>rank(a)-rank(b)||updated(b)-updated(a)||String(a.id).localeCompare(String(b.id)));
- for(const r of externalInterviews)$('#jobs').append(interviewCard(r));
+ for(const r of externalInterviews){const card=interviewCard(r);card.id='external-'+r.id;$('#jobs').append(card);}
  for(const job of current){
-  if(job.status==='interview'){const r=interviews.find(r=>interviewIdentity(r)===interviewIdentity(job));$('#jobs').append(interviewCard(r));continue;}
-  const card=el('article');card.className='job';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');card.dataset.state=job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');names.append(el('h2',job.title),el('small',job.company));const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.local_phase==='blocked'?(/^Ready for your review/.test(job.last_message||'')?'Ready for your review':'Needs your input'):job.local_attempt_at?'Applying · verifying':'Applying · local',submitted:'Submitted',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
+  if(job.status==='interview'){const r=interviews.find(r=>interviewIdentity(r)===interviewIdentity(job));const card=interviewCard(r);card.id='job-'+job.id;$('#jobs').append(card);continue;}
+  const card=el('article');card.id='job-'+job.id;card.className='job';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');card.dataset.state=job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');names.append(el('h2',job.title),el('small',job.company));const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.local_phase==='blocked'?(/^Ready for your review/.test(job.last_message||'')?'Ready for your review':'Needs your input'):job.local_attempt_at?'Applying · verifying':'Applying · local',submitted:'Submitted',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
   const updated=Date.parse(job.updated_at),stamp=el('p');stamp.className='last-updated';stamp.style.cssText='font-size:13px;color:#626c65;margin:8px 0';
   if(Number.isFinite(updated)){const time=el('time',new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(updated)));time.dateTime=new Date(updated).toISOString();stamp.append(document.createTextNode('Last updated: '),time);}else stamp.textContent='Last updated: unavailable';card.append(stamp);
   if(!['running','queued','local_browser'].includes(job.status)&&!job.handoff_available){const remove=el('button','Delete application permanently');remove.onclick=async()=>{if(!window.confirm('Permanently delete '+job.title+' at '+job.company+' and its application history and captured answers? This cannot be undone, does not withdraw an employer application, and discovery may find the listing again.'))return;remove.disabled=true;try{await api('/jobs/'+job.id,'DELETE',{confirm:job.id});await refresh(true);}catch(e){$('#notice').textContent=e.message;remove.disabled=false;}};card.append(remove);}
@@ -151,7 +152,7 @@ async function refresh(force=false){
   const label=el('label'),check=el('input');check.type='checkbox';check.required=true;check.style.cssText='display:inline;width:auto;margin-right:8px';label.append(check,document.createTextNode('The employer confirmed receipt.'));receiptForm.append(label);
   const confirm=el('button','Confirm submitted');receiptForm.append(confirm);receiptForm.onsubmit=async e=>{e.preventDefault();confirm.disabled=true;busy=true;try{await api('/jobs/'+job.id+'/confirm','POST',{receipt:receipt.value});busy=false;await refresh(true);$('#notice').textContent='Submission recorded. The application is now shown as Submitted.'}catch(e){msg.textContent=e.message}finally{busy=false;confirm.disabled=false}};done.append(receiptForm);actions.append(done);$('#jobs').append(card);
  }
- for(let i=0;i<current.length;i++)$('#jobs').children[i].id='job-'+current[i].id;
+
  applyFilters();
  const linked=document.getElementById(location.hash.slice(1));
  if(linked?.classList.contains('job')){linked.hidden=false;linked.style.outline='3px solid #74ad91';const details=linked.querySelector('details');if(details)details.open=true;if(!linked.dataset.focused){linked.scrollIntoView?.({block:'center'});linked.dataset.focused='true';}}
@@ -221,7 +222,7 @@ async function updateDiscovery(){
  const latest=searches.filter(s=>s.last_run).sort((a,b)=>b.last_run.localeCompare(a.last_run))[0],result=latest?.last_result;
  section.append(el('p',`${searches.length} enabled search${searches.length===1?'':'es'} · Checks every ${data.intervalHours||1} hour(s). New matches appear automatically; duplicates are skipped.`));
  section.append(el('p',latest?`Last check: ${new Date(latest.last_run).toLocaleString()}${result?` · ${result.scanned} postings checked · ${result.added} new matches · ${result.queued} queued`: ' · Results pending'}`:'First check is pending.'));
- if(latest?.last_error)section.append(el('p','Some sources could not be checked. Available sources continue to run.'));
+ if(latest?.last_error)section.append(el('p','Some sources could not be checked: '+latest.last_error));
  if(searches.some(s=>s.instruction.includes('priority: York Region')))section.append(el('p','Priority: York Region → Toronto → GTA → remote → Canada → worldwide. Matches are based on your role preferences; eligibility may still need your input.'));
  }catch{section.textContent='Search activity could not be loaded. Refresh to try again.';}
 }
@@ -393,7 +394,7 @@ function interviewForm(record={}){
  const l=el('label','Interview stage'),stage=el('select');stage.setAttribute('aria-label','Interview stage');
  for(const [value,label] of [['scheduled','Scheduled'],['completed','Completed'],['needs_scheduling','Needs scheduling']]){const o=el('option',label);o.value=value;stage.append(o);}stage.value=record.interview_stage||'scheduled';l.append(stage);form.append(l);fields.interview_stage=stage;
  const save=el('button','Save interview'),feedback=el('p');save.type='submit';feedback.setAttribute('role','status');form.append(save,feedback);
- form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{const row=Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,v.value.trim()]));row.status='interview';await api('/application-history','POST',{rows:[row]});form.closest('details').open=false;overviewSignature='';await refresh(true);$('#notice').textContent='Interview saved.';}catch(e){feedback.textContent=e.message;save.disabled=false;}};
+ form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{const row=Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,v.value.trim()]));row.status='interview';await api('/application-history','POST',{rows:[row]});form.closest('details').open=false;document.activeElement?.blur();overviewSignature='';await refresh(true);$('#notice').textContent='Interview saved.';}catch(e){feedback.textContent=e.message;save.disabled=false;}};
  return form;
 }
 function renderHistoryOverview(records,jobs=[]){

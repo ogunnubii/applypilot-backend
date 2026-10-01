@@ -9,7 +9,7 @@ export function workEligibility(job){
  if(b2b&&!noB2b)return {eligible:true,reason:'Posting specifies '+b2b[0],kind:'business-contract'};
  if(canada)return {eligible:false,reason:'Canadian role has no explicit B2B / consulting-contract evidence'};
  const noSponsor=/\b(?:no|without)\s+(?:visa\s+)?sponsorship\b|\b(?:cannot|can't|unable to|do not|don't|not able to|will not)\s+(?:provide|offer|support)?\s*(?:visa\s+)?sponsor|\b(?:visa\s+)?sponsorship\s+(?:is\s+)?(?:not|unavailable)/i.test(text);
- const sponsor=text.match(/\b(?:we\s+(?:can\s+|will\s+|do\s+)?(?:offer|provide|support)\s+(?:work\s+)?visa\s+sponsorship|we\s+sponsor\s+(?:work\s+)?visas|(?:work\s+)?visa\s+sponsorship\s+(?:is\s+)?(?:available|provided|offered|supported)|(?:offer|provide)\s+sponsorship\s+for\s+(?:work\s+)?visas)\b/i);
+ const sponsor=text.match(/\b(?:we\s+(?:can\s+|will\s+|do\s+)?(?:offer|provide|support)\s+(?:work\s+)?visa\s+sponsorship|we\s+(?:can\s+|will\s+|do\s+)?sponsor\s+(?:work\s+)?visas|(?:work\s+)?visa\s+sponsorship\s+(?:is\s+)?(?:available|provided|offered|supported)|(?:offer|provide)\s+sponsorship\s+for\s+(?:work\s+)?visas)\b/i);
  if(sponsor&&!noSponsor)return {eligible:true,reason:'Posting states '+sponsor[0],kind:'sponsorship'};
  const remote=job.remote===true||/\bremote\b/i.test(location+' '+text);
  const explicitGlobal=/\b(?:worldwide|global|anywhere)\b/i.test(location)||/\b(?:worldwide remote|remote worldwide|globally remote|remote globally|work (?:remotely )?from anywhere(?: in the world)?)\b/i.test(text);

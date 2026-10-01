@@ -36,7 +36,7 @@ test("interview integration and deduplication",()=>(async()=>{
  assert.equal(board.filter(e=>!e.hidden).length,2);assert(board.find(e=>e.textContent.includes('Project X')).textContent.includes('Completed interview'));
  assert(w.document.querySelector('#career-overview').textContent.includes('GitLab CI and DevSecOps'));
  assert(!w.document.body.textContent.includes('Hidden Past Employer'));
- assert.equal(w.document.querySelector('#external-history').open,false);
+ assert.equal(w.document.querySelector('#external-history').open,false);assert(w.document.querySelector('#job-saved').textContent.includes('Example'));assert(w.document.querySelector('#external-px').textContent.includes('Project X'));
  const form=w.document.querySelector('#career-overview form'),input=form.querySelector('textarea');form.closest('details').open=true;input.value='Unsaved feedback';await w.eval('refresh(true)');assert.equal(input.value,'Unsaved feedback');
  dom.window.close();return 'PASS UI: imported and native interviews merged, filter/count correct, completed feedback visible, prior jobs hidden, edits preserved';
 })());

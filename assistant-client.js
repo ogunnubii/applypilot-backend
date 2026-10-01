@@ -163,7 +163,7 @@ async function refresh(force=false){
 }
 function renderMissingAnswers(jobs){
  let section=$('#missing-answers');
- if(section?.dataset.dirty==='true')return;
+ if(section?.dataset.dirty==='true'||section?.querySelector('details[open]'))return;
  const signature=JSON.stringify(jobs.map(j=>[j.id,j.status,j.challenge,j.required_fields_json,j.answers_json,j.handoff_available,j.application_only_questions,j.local_phase,j.local_attempt_at]));
  if(section?.dataset.signature===signature)return;
  if(!section){section=el('section');section.id='missing-answers';section.style.cssText='padding:24px;margin:20px 0;border:2px solid #74ad91;border-radius:14px;background:#f4faf6';$('#workspace').insertBefore(section,$('#jobs').closest('.list-panel')||$('#jobs'));}
@@ -179,7 +179,7 @@ function renderMissingAnswers(jobs){
   if(human.has(job.challenge)){employerOnly++;continue;}
   let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}
   questions=[...new Set(questions)].filter(q=>typeof q==='string'&&q.trim());
-  const usable=questions.filter(q=>q.length<=240&&!/cards\[|field\d+|\b(certify|attest|signature|arbitration|arbitrate|waiver|agree that|agree to|consent to|passport number|ssn|payment)\b/i.test(q));
+  const usable=questions.filter(q=>q.length<=240&&!/^required field\s*[*?]?$/i.test(q.trim())&&!/AI policy|cards\[|field\d+|\b(certify|attest|signature|arbitration|arbitrate|waiver|agree that|agree to|consent to|passport number|ssn|payment)\b/i.test(q));
   if(!usable.length){employerOnly++;continue;}
   let savedAnswers={};try{savedAnswers=JSON.parse(job.answers_json||'{}')||{}}catch{}
   const answered=q=>typeof savedAnswers[q]==='string'&&savedAnswers[q].trim();
@@ -216,7 +216,7 @@ function renderMissingAnswers(jobs){
    }finally{busy=false;submit.disabled=false;}
   };
  }else form.append(el('p','No readable missing-answer questions are available right now.'));
- section.append(form,el('p',`${employerOnly} applications need an employer-site step, such as verification, a declaration, an upload, or a question whose label could not be read. Open Resolve next step below for those.`));
+ const disclosure=el('details');disclosure.append(el('summary',`Review ${groups.size} missing question${groups.size===1?'':'s'}${ready.length?' · '+ready.length+' ready to continue':''}`),form);section.append(disclosure,el('p',`${employerOnly} applications need an employer-site step, such as verification, a declaration, an upload, or a question whose label could not be read. Open Resolve next step below for those.`));
 }
 async function updateDiscovery(){
  let section=$('#discovery-status');if(section?.contains(document.activeElement)||section?.querySelector('details[open]'))return;if(!section){section=el('section');section.id='discovery-status';section.style.cssText='padding:16px;border:1px solid #dce6df;border-radius:12px;margin-bottom:20px';$('#workspace').prepend(section);}
@@ -484,6 +484,7 @@ function renderOperations(snapshot,activity){
  if(!snapshot?.totals)snapshot=null;
  let box=$('#operations');
  if(!box){box=el('section');box.id='operations';box.className='operations';$('#workspace').prepend(box);}
+ $('#workspace').prepend(box);
  const signature=JSON.stringify([snapshot?.totals,activity?.events]);
  if(box.dataset.signature===signature)return;box.dataset.signature=signature;
  box.replaceChildren();

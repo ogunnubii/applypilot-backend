@@ -118,8 +118,8 @@ test('local missing answers are saved without queuing a new attempt',async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([url,opts?.method]);return {ok:true,json:async()=>({})};};w.eval(sources['assistant-client.js']);
- const job={id:'local',applicant_id:'p',company:'Example',title:'Engineer',status:'local_browser',local_phase:'blocked',challenge:'Local browser',required_fields_json:'["Preferred name"]',answers_json:'{}'};
- w.renderMissingAnswers([job]);const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form'),input=form.querySelector('textarea');assert(!section.hidden);input.value='Applicant';
+ const job={id:'local',applicant_id:'p',company:'Example',title:'Engineer',status:'local_browser',local_phase:'blocked',challenge:'Local browser',required_fields_json:'["Preferred name","Required field","AI Policy for Application"]',answers_json:'{}'};
+ w.renderMissingAnswers([job]);const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form'),input=form.querySelector('textarea');assert(!section.hidden);assert.equal(form.querySelectorAll('textarea').length,1);assert.equal(section.querySelector('details').open,false);input.value='Applicant';
  w.eval('refresh=async()=>{}');await form.onsubmit({preventDefault(){}});assert(requests.some(([url,method])=>url.endsWith('/answers')&&method==='PUT'));assert(!requests.some(([url])=>url.endsWith('/continue')));
  section.dataset.dirty='false';w.renderMissingAnswers([{...job,local_attempt_at:'2026-10-01'}]);assert(section.hidden,'attempted application must not re-enter the answer/resume flow');w.close();
 });

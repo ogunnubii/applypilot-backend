@@ -13,10 +13,10 @@
     u.searchParams.sort(); return u.toString();
   }
   function sameApplication(a,b) { try { return supported(a) && supported(b) && identity(a) === identity(b); } catch { return false; } }
-  const sensitive = value => /\b(certify|certification of accuracy|attest|perjury|legally binding|arbitrat(?:ion|e)|waive|waiver|agree that|electronic signature|e-signature|signature|agree to|accept the terms|terms and conditions|acknowledge|declare that|accurate and complete|consent to|authorize.*(?:background|credit)|payment|application fee|pay now|purchase|checkout|credit card|card number|cardholder|bank account|social security|national insurance|passport number|ssn)\b/i.test(String(value));
+  const sensitive = value => /\b(certify|certification of accuracy|attest|perjury|legally binding|AI policy|arbitrat(?:ion|e)|waive|waiver|agree that|electronic signature|e-signature|signature|agree to|accept the terms|terms and conditions|acknowledge|declare that|accurate and complete|consent to|authorize.*(?:background|credit)|payment|application fee|pay now|purchase|checkout|credit card|card number|cardholder|bank account|social security|national insurance|passport number|ssn)\b/i.test(String(value));
   const receipt = value => (String(value).match(/(?:your )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b[^\n]{0,100}|thank(?:s| you) for (?:applying|your application)\b[^\n]{0,100}/i)||[])[0] || '';
   function savedAnswer(question, answers) {
-    if (sensitive(question)) return null;
+    if (sensitive(question)||normalize(question)==='required field') return null;
     const keys = Object.keys(answers || {}).filter(k => normalize(k) === normalize(question));
     return keys.length === 1 && ['string','number','boolean'].includes(typeof answers[keys[0]]) ? String(answers[keys[0]]) : null;
   }
@@ -31,7 +31,7 @@
   };
   function fieldKind(question){const q=normalize(question).replace(/[():/_-]/g,' ').replace(/\b(optional|required)\b/g,'').replace(/\s+/g,' ').trim();return Object.keys(aliases).find(k=>aliases[k].includes(q));}
   function knownAnswer(question,profile,answers){
-   if(sensitive(question))return null;
+   if(sensitive(question)||normalize(question)==='required field')return null;
    const exact=savedAnswer(question,answers);if(exact!==null)return exact;
    const kind=fieldKind(question);
    if(!kind){

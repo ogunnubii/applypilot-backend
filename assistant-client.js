@@ -61,7 +61,7 @@ async function refresh(force=false){
    pendingHandoff=null;document.querySelector('#preparing-browser')?.remove();$('#notice').textContent=message;force=true;
   }else if(Date.now()-pendingHandoff.started>180000){pendingHandoff=null;const banner=$('#preparing-browser');if(banner)banner.textContent='The live browser is taking longer than expected. Check the application below or try again when the worker is available.';force=true;}
  }
- renderMissingAnswers(current);renderLibraryLauncher();renderFocusControl();
+ renderMissingAnswers(current);renderLibraryLauncher();renderFocusControl();renderArchiveControl(current);
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  $('#needs-count').textContent=current.filter(j=>['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
  $('#applying-count').textContent=current.filter(j=>['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase!=='blocked').length;
@@ -335,4 +335,27 @@ function renderLibraryLauncher(){
 function renderFocusControl(){if($('#work-focus'))return;const section=el('section');section.id='work-focus';section.style.cssText='padding:20px;background:#edf6ef;border-radius:12px;margin:16px 0';const message=el('p','Work through one application at a time. Other jobs stay saved in your backlog.'),start=el('button','Work on one application at a time'),next=el('button','Next application'),all=el('button','Show all saved applications');section.append(message,start,next,all);$('#workspace').prepend(section);
  const show=f=>{currentFilter=f.enabled?'active':'all';applyFilters();message.textContent=f.enabled?'One application at a time. '+f.parked+' jobs are saved in your backlog. Submitted applications stay in Submitted.':'All saved applications are visible.';start.hidden=next.hidden=all.hidden=false;start.hidden=f.enabled;next.hidden=all.hidden=!f.enabled;};
  const change=async data=>{try{show(await api('/work-focus','PUT',data));await refresh(true);}catch(e){message.textContent=e.message;}};start.onclick=()=>change({enabled:true});next.onclick=()=>change({enabled:true,next:true});all.onclick=()=>change({enabled:false});api('/work-focus').then(show).catch(e=>message.textContent=e.message);
+}
+
+function renderArchiveControl(jobs){
+ let box=$('#application-archive-control');
+ if(!box){
+ box=el('section');box.id='application-archive-control';box.style.cssText='padding:20px;margin:16px 0;border:1px solid #74ad91;border-radius:12px';
+ box.append(el('h2','Application archive'),el('p','Remove old pending applications from your workspace while retaining their answers, history, and duplicate protection. Submitted and actively running applications are protected.'));
+ const review=el('button'),browse=el('button','View archived applications'),panel=el('div'),status=el('p');review.id='review-archive';status.setAttribute('role','status');box.append(review,browse,status,panel);$('#workspace').prepend(box);
+ review.onclick=()=>{
+ const candidates=box.archiveCandidates||[];panel.replaceChildren();
+ if(!candidates.length){status.textContent='No attention-needed applications can be archived right now.';return;}
+ panel.append(el('p',candidates.length+' applications will be archived. They can be restored here. This does not withdraw applications from employers.'));
+ const list=el('details');list.append(el('summary','Review applications to archive'));for(const j of candidates)list.append(el('p',j.company+' — '+j.title));panel.append(list);
+ const confirm=el('button','Archive listed applications'),cancel=el('button','Cancel');panel.append(confirm,cancel);
+ cancel.onclick=()=>panel.replaceChildren();
+ confirm.onclick=async()=>{confirm.disabled=true;review.disabled=true;try{const result=await api('/application-archive','POST',{ids:candidates.map(j=>j.id)});status.textContent=result.archived.length+' archived; '+result.skipped.length+' protected or changed since review.';panel.replaceChildren();await refresh(true);}catch(e){status.textContent=e.message;confirm.disabled=false;}finally{review.disabled=false;}};
+ };
+ browse.onclick=async()=>{browse.disabled=true;try{const {jobs:archived}=await api('/application-archive');panel.replaceChildren();status.textContent=archived.length+' archived applications. Their identities remain tracked to prevent rediscovery.';
+ for(const j of archived){const row=el('div');row.append(el('p',j.company+' — '+j.title));const restore=el('button','Restore for review');row.append(restore);restore.onclick=async()=>{restore.disabled=true;try{await api('/application-archive/'+j.id+'/restore','POST');row.remove();status.textContent='Application restored for review; no submission was started.';await refresh(true);}catch(e){status.textContent=e.message;restore.disabled=false;}};panel.append(row);}
+ }catch(e){status.textContent=e.message;}finally{browse.disabled=false;}};
+ }
+ box.archiveCandidates=jobs.filter(j=>!j.handoff_available&&(['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked'&&!j.local_attempt_at));
+ $('#review-archive').textContent='Review '+box.archiveCandidates.length+' attention-needed applications for archive';
 }

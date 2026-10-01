@@ -48,7 +48,9 @@ async function notificationSettings(){
 }
 async function refresh(force=false){
  if(busy||activeHandoff)return;
- const [{jobs},health,history]=await Promise.all([api('/jobs'),api('/status'),api('/application-history')]);
+ const [{jobs},health,history,operations,activity]=await Promise.all([api('/jobs'),api('/status'),api('/application-history'),api('/operations').catch(()=>null),api('/activity').catch(()=>null)]);
+ const evidence=new Map((operations?.applications||[]).map(j=>[j.id,j]));
+ for(const job of jobs)job.evidence=evidence.get(job.id);
  externalRecords=history.records;
  $('#login').hidden=true;$('#workspace').hidden=false;$('#logout').hidden=false;
  notificationSettings();
@@ -65,10 +67,10 @@ async function refresh(force=false){
    pendingHandoff=null;document.querySelector('#preparing-browser')?.remove();$('#notice').textContent=message;force=true;
   }else if(Date.now()-pendingHandoff.started>180000){pendingHandoff=null;const banner=$('#preparing-browser');if(banner)banner.textContent='The live browser is taking longer than expected. Check the application below or try again when the worker is available.';force=true;}
  }
- renderBrowserReadiness(current);renderMissingAnswers(current);renderLibraryLauncher();renderFocusControl();renderArchiveControl(current);if($('#career-overview'))$('#workspace').prepend($('#career-overview'));
+ renderBrowserReadiness(current);renderMissingAnswers(current);renderLibraryLauncher();renderFocusControl();renderArchiveControl(current);if($('#career-overview'))$('#workspace').prepend($('#career-overview'));renderOperations(operations,activity);
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  $('#needs-count').textContent=current.filter(j=>['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
- $('#applying-count').textContent=current.filter(j=>['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase!=='blocked').length;
+ $('#applying-count').textContent=current.filter(j=>!j.local_attempt_at&&(['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='ready')).length;
  $('#local-count').textContent=current.filter(j=>j.status==='local_browser').length;
  const totals=Object.fromEntries(['saved','submitted','interview','offer','rejected'].map(state=>[state,(state==='interview'?interviews.length:current.filter(j=>j.status===state).length)]));
  for(const [state,value] of Object.entries(totals)){const target=$('#'+(state==='saved'?'found':state)+'-count');if(target)target.textContent=value;}
@@ -86,12 +88,13 @@ async function refresh(force=false){
  for(const r of externalInterviews){const card=interviewCard(r);card.id='external-'+r.id;$('#jobs').append(card);}
  for(const job of current){
   if(job.status==='interview'){const r=interviews.find(r=>interviewIdentity(r)===interviewIdentity(job));const card=interviewCard(r);card.id='job-'+job.id;$('#jobs').append(card);continue;}
-  const card=el('article');card.id='job-'+job.id;card.className='job';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');card.dataset.state=job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');names.append(el('h2',job.title),el('small',job.company));const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.local_phase==='blocked'?(/^Ready for your review/.test(job.last_message||'')?'Ready for your review':'Needs your input'):job.local_attempt_at?'Applying · verifying':'Applying · local',submitted:'Submitted',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
+  const card=el('article');card.id='job-'+job.id;card.className='job';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');card.dataset.state=job.evidence?.awaiting||job.local_attempt_at&&!job.evidence?.confirmed&&job.status==='local_browser'?'awaiting':job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');names.append(el('h2',job.title),el('small',job.company));const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.local_phase==='blocked'?(/^Ready for your review/.test(job.last_message||'')?'Ready for your review':'Needs your input'):job.local_attempt_at?'Awaiting receipt':'Applying · local',submitted:job.evidence?.confirmed?'Receipt recorded':'Submission needs evidence',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
   const updated=Date.parse(job.updated_at),stamp=el('p');stamp.className='last-updated';stamp.style.cssText='font-size:13px;color:#626c65;margin:8px 0';
   if(Number.isFinite(updated)){const time=el('time',new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(updated)));time.dateTime=new Date(updated).toISOString();stamp.append(document.createTextNode('Last updated: '),time);}else stamp.textContent='Last updated: unavailable';card.append(stamp);
   if(!['running','queued','local_browser'].includes(job.status)&&!job.handoff_available){const remove=el('button','Delete application permanently');remove.onclick=async()=>{if(!window.confirm('Permanently delete '+job.title+' at '+job.company+' and its application history and captured answers? This cannot be undone, does not withdraw an employer application, and discovery may find the listing again.'))return;remove.disabled=true;try{await api('/jobs/'+job.id,'DELETE',{confirm:job.id});await refresh(true);}catch(e){$('#notice').textContent=e.message;remove.disabled=false;}};card.append(remove);}
   if(['submitted','interview','rejected','offer'].includes(job.status)){
    card.append(el('p',job.confirmation||'Employer outcome recorded.'));
+   if(job.evidence?.unverifiedOutcome)card.append(el('p','This status has no qualifying receipt text on file. It is excluded from the receipt total.'));
    const label=el('label','Employer outcome '),select=el('select');
    for(const [value,title] of [['','Choose outcome'],['interview','Interview'],['rejected','Rejected'],['offer','Offer']]){const o=el('option',title);o.value=value;select.append(o);}
    select.value=['interview','rejected','offer'].includes(job.status)?job.status:'';
@@ -106,7 +109,7 @@ async function refresh(force=false){
    {const start=el('button',local?'Queue for my browser':'Apply automatically'),message=el('p');message.setAttribute('role','status');start.onclick=async()=>{start.disabled=true;try{await api('/jobs/'+job.id+'/queue','POST',{});await refresh(true);$('#notice').textContent=local?'Application queued. Keep your updated browser helper and signed-in dashboard open.':'Application queued. You can close this page; the hosted worker will continue.';}catch(e){message.textContent=e.message;start.disabled=false;}};card.append(start,message);}
    $('#jobs').append(card);continue;
   }
-  if(['running','queued'].includes(job.status)){card.append(el('p',job.status==='running'?'Applying with your saved answers…':'Waiting for the worker. No action needed.'));$('#jobs').append(card);continue}
+  if(['running','queued'].includes(job.status)){card.append(el('p',job.status==='running'?'Applying with your saved answers…':job.execution_mode==='local'?'Queued for your browser. Keep the signed-in dashboard and browser helper open.':'Queued for the hosted worker.'));$('#jobs').append(card);continue}
   const blocker=el('p',job.status==='local_browser'?(job.last_message||'Continue in your employer browser tab.'):job.blocker_message||job.challenge||'This application needs your input.');blocker.className='blocker';card.append(blocker);const actions=el('details');actions.className='job-actions';actions.append(el('summary',job.status==='local_browser'?'Continue application':'Resolve next step'));card.append(actions);
   const msg=el('p');msg.className='message';msg.setAttribute('role','status');actions.append(msg);
   const human=['CAPTCHA','Sign-in','Unconfirmed submission','Submission in progress','Sensitive action'].includes(job.challenge);
@@ -135,6 +138,7 @@ async function refresh(force=false){
     try{await focusLocalApplication(job.id);msg.textContent='Your employer form is open in Chrome. Continue where ApplyPilot stopped.';}
     catch(e){msg.textContent=e.message;}finally{resume.disabled=false;}
    };card.insertBefore(resume,actions);
+   if(!job.local_attempt_at){const automatic=el('button','Resume automatically');automatic.onclick=async()=>{automatic.disabled=true;actions.open=true;msg.textContent='Resuming saved answers…';try{await resumeLocalApplication(job.id);msg.textContent='Routine steps resumed. The helper will stop if employer input is still needed.';await refresh(true);}catch(e){msg.textContent=e.message;}finally{automatic.disabled=false;}};card.insertBefore(automatic,actions);}
   }
   if(job.status!=='local_browser'&&!human&&!upload&&!job.handoff_available){
    const form=el('form');form.oninput=()=>{form.dataset.dirty='true'};
@@ -160,7 +164,7 @@ async function refresh(force=false){
 function renderMissingAnswers(jobs){
  let section=$('#missing-answers');
  if(section?.dataset.dirty==='true')return;
- const signature=JSON.stringify(jobs.map(j=>[j.id,j.status,j.challenge,j.required_fields_json,j.answers_json,j.handoff_available,j.application_only_questions]));
+ const signature=JSON.stringify(jobs.map(j=>[j.id,j.status,j.challenge,j.required_fields_json,j.answers_json,j.handoff_available,j.application_only_questions,j.local_phase,j.local_attempt_at]));
  if(section?.dataset.signature===signature)return;
  if(!section){section=el('section');section.id='missing-answers';section.style.cssText='padding:24px;margin:20px 0;border:2px solid #74ad91;border-radius:14px;background:#f4faf6';$('#workspace').insertBefore(section,$('#jobs').closest('.list-panel')||$('#jobs'));}
  section.dataset.signature=signature;section.replaceChildren(el('h2','Complete missing answers'));
@@ -170,11 +174,12 @@ function renderMissingAnswers(jobs){
  const human=new Set(['CAPTCHA','Sign-in','Unconfirmed submission','Submission in progress','Sensitive action','Upload needs review']);
  let employerOnly=0;
  for(const job of jobs){
-  if(!['paused','needs_review'].includes(job.status))continue;
+  if(!['paused','needs_review'].includes(job.status)&&!(job.status==='local_browser'&&job.local_phase==='blocked'))continue;
+  if(job.local_attempt_at)continue;
   if(human.has(job.challenge)){employerOnly++;continue;}
   let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}
   questions=[...new Set(questions)].filter(q=>typeof q==='string'&&q.trim());
-  const usable=questions.filter(q=>q.length<=240&&!/cards\[|field\d+|\b(certify|attest|signature|agree to|consent to|passport number|ssn|payment)\b/i.test(q));
+  const usable=questions.filter(q=>q.length<=240&&!/cards\[|field\d+|\b(certify|attest|signature|arbitration|arbitrate|waiver|agree that|agree to|consent to|passport number|ssn|payment)\b/i.test(q));
   if(!usable.length){employerOnly++;continue;}
   let savedAnswers={};try{savedAnswers=JSON.parse(job.answers_json||'{}')||{}}catch{}
   const answered=q=>typeof savedAnswers[q]==='string'&&savedAnswers[q].trim();
@@ -200,10 +205,10 @@ function renderMissingAnswers(jobs){
   form.onsubmit=async e=>{e.preventDefault();const filled=[...groups.values()].filter(g=>g.input.value.trim());if(!filled.length&&!ready.length){message.textContent='Enter at least one answer. You can leave questions blank and return later.';return;}submit.disabled=true;busy=true;let saved=0,queued=0;const failures=[];
    try{for(const {job,questions,usable,savedAnswers} of eligible){const answers={};for(const q of usable){const g=groups.get(groupKey(job,q));if(g?.jobs.some(j=>j.id===job.id)&&g.input.value.trim())answers[q]=g.input.value.trim();}const combined={...savedAnswers,...answers};if(!Object.keys(answers).length&&!ready.some(r=>r.job.id===job.id))continue;
     try{for(const [question,answer] of Object.entries(answers)){const group=groups.get(groupKey(job,question)),allowReuse=remember.checked&&!group?.applicationOnly&&group?.input.dataset.researchDraft!=='true';await api('/jobs/'+job.id+'/answers','PUT',{question,answer,remember:allowReuse});saved++;}
-     if(!job.handoff_available&&questions.every(q=>typeof combined[q]==='string'&&combined[q].trim())){await api('/jobs/'+job.id+'/continue','POST',{answers:combined,remember:false});queued++;}
+     if(job.status!=='local_browser'&&!job.handoff_available&&questions.every(q=>typeof combined[q]==='string'&&combined[q].trim())){await api('/jobs/'+job.id+'/continue','POST',{answers:combined,remember:false});queued++;}
     }catch(error){failures.push(job.company+': '+error.message);}
    }
-   message.textContent=`Saved ${saved} answers. ${queued} applications queued to continue.`+(failures.length?' Some applications need attention: '+failures.join('; '):' Any unanswered questions and employer-site steps still need your input.');
+   message.textContent=`Saved ${saved} answers. ${queued} applications queued to continue.`+(failures.length?' Some applications need attention: '+failures.join('; '):' For browser applications, choose Resume automatically on the application card to use these answers. Any unanswered or employer-only steps still need your input.');
    const pending=new Map([...groups].map(([key,g])=>[key,{value:g.input.value,researchDraft:g.input.dataset.researchDraft==='true'}]));
    section.dataset.dirty='false';delete section.dataset.signature;$('#notice').textContent=message.textContent;
    busy=false;
@@ -214,7 +219,7 @@ function renderMissingAnswers(jobs){
  section.append(form,el('p',`${employerOnly} applications need an employer-site step, such as verification, a declaration, an upload, or a question whose label could not be read. Open Resolve next step below for those.`));
 }
 async function updateDiscovery(){
- let section=$('#discovery-status');if(!section){section=el('section');section.id='discovery-status';section.style.cssText='padding:16px;border:1px solid #dce6df;border-radius:12px;margin-bottom:20px';$('#workspace').prepend(section);}
+ let section=$('#discovery-status');if(section?.contains(document.activeElement)||section?.querySelector('details[open]'))return;if(!section){section=el('section');section.id='discovery-status';section.style.cssText='padding:16px;border:1px solid #dce6df;border-radius:12px;margin-bottom:20px';$('#workspace').prepend(section);}
  try{const data=await api('/searches'),searches=(data.searches||[]).filter(s=>s.enabled);section.replaceChildren(el('strong','Automatic job discovery'));
  const controls=el('details');controls.append(el('summary','Manage saved searches'));
  for(const saved of data.searches||[]){const row=el('div'),toggle=el('button',saved.enabled?'Pause search':'Enable search');row.append(el('p',saved.instruction),toggle);toggle.onclick=async()=>{toggle.disabled=true;try{await api('/searches/'+saved.id+'/toggle','POST');await updateDiscovery();}catch(e){$('#notice').textContent=e.message;toggle.disabled=false;}};const run=el('button','Run search now');run.onclick=async()=>{run.disabled=true;run.textContent='Checking employer postings…';try{await api('/searches/'+saved.id+'/run','POST',{});await updateDiscovery();await refresh(true);}catch(e){$('#notice').textContent=e.message;run.disabled=false;run.textContent='Run search now';}};row.append(run);controls.append(row);}section.append(controls);
@@ -330,7 +335,7 @@ function focusLocalApplication(jobId){
 function renderLibraryLauncher(){
  if(document.querySelector('#answer-library'))return;
  const box=el('section');box.id='answer-library';box.style.cssText='padding:20px;margin:16px 0;border:1px solid #74ad91;border-radius:12px';
- box.append(el('h2','Answer library'),el('p','Save filled employer forms with the extension’s Save form answers to library button. Confirmed ordinary answers can fill matching questions automatically. Approve other reusable answers here; conflicts and application-specific answers need review. Matching dropdowns fill automatically. With extension 0.6.0, approved queued applications can submit routine forms and record employer receipts.'));
+ box.append(el('h2','Answer library'),el('p','Save filled employer forms with the extension’s Save form answers to library button. Confirmed ordinary answers can fill matching questions automatically. Approve other reusable answers here; conflicts and application-specific answers need review. Matching dropdowns fill automatically. With extension 0.6.1, approved queued applications can submit routine forms and record employer receipts.'));
  const load=el('button','Open / refresh answer library'),list=el('div');box.append(load,list);$('#workspace').prepend(box);
  load.onclick=async()=>{load.disabled=true;try{const {answers}=await api('/answer-library');list.replaceChildren();if(!answers.length)list.append(el('p','No captured answers yet. Save a filled form from its employer tab.'));
  for(const entry of answers){const form=el('form');form.style.cssText='padding:12px 0;border-top:1px solid #ddd';const input=field(form,entry.question);input.value=entry.answer;form.append(el('small',entry.company+' · '+(entry.confirmed?'Employer receipt recorded':'Captured draft — not proof of submission')));
@@ -446,19 +451,67 @@ mountExternalHistory();
 for(const a of document.querySelectorAll('a'))if(a.textContent.trim().includes('Home'))a.href='/';
 
 function renderBrowserReadiness(jobs){
- if(!jobs.some(j=>j.execution_mode==='local')||$('#browser-readiness'))return;
- const box=el('section');box.id='browser-readiness';box.style.cssText='padding:16px;border:1px solid #74ad91;border-radius:12px;margin:16px 0';
+ if(!jobs.some(j=>j.execution_mode==='local'))return;
+ let box=$('#browser-readiness');
+ if(box){if(Date.now()-Number(box.dataset.checkedAt||0)>30000)box.querySelector('button').click();return;}
+ box=el('section');box.id='browser-readiness';box.style.cssText='padding:16px;border:1px solid #74ad91;border-radius:12px;margin:16px 0';
  box.append(el('h2','Automatic applications in your browser'));
- const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.0)');
- setup.href='https://marvelous-vitality-production-c2d8.up.railway.app/local-browser.html';setup.style.marginLeft='12px';status.setAttribute('role','status');
+ const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.1)');
+ setup.href='/local-browser.html';setup.style.marginLeft='12px';status.setAttribute('role','status');
  box.append(status,check,setup);$('#workspace').prepend(box);
  check.onclick=()=>{
-  check.disabled=true;const requestId=crypto.randomUUID();
+  if(check.disabled)return;check.disabled=true;box.dataset.checkedAt=String(Date.now());const requestId=crypto.randomUUID();
   const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);check.disabled=false;
-   status.textContent=error|| (data.version!=='0.6.0'?'Browser helper '+data.version+' is connected. Update to 0.6.0 for automatic submission and queue fixes.':data.enabled?'Browser helper 0.6.0 connected. New queued applications run automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine applications.')+(data?.error?' '+data.error:'');
+   status.textContent=error|| (data?.version!=='0.6.1'?'Browser helper '+data?.version+' is connected. Update to 0.6.1 for improved dropdowns and dashboard resume.':data?.enabled?'Browser helper 0.6.1 connected. New queued applications run automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine applications.')+(data?.error?' '+data.error:'');
   };
   const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-browser-status-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
-  const timer=setTimeout(()=>finish('Browser helper not detected here. Open this dashboard in the Chrome or Edge profile with ApplyPilot Local 0.6.0 enabled.'),3500);
+  const timer=setTimeout(()=>finish('Browser helper not detected here. Open this dashboard in the Chrome or Edge profile with ApplyPilot Local enabled.'),3500);
   window.addEventListener('message',receive);window.postMessage({type:'applypilot-browser-status',requestId},location.origin);
  };check.onclick();
+}
+
+
+function resumeLocalApplication(jobId){
+ return new Promise((resolve,reject)=>{
+  const requestId=crypto.randomUUID();
+  const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);error?reject(Error(error)):resolve(data);};
+  const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-resume-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
+  const timer=setTimeout(()=>finish('Resume needs browser helper 0.6.1. Update it, reload the extension, then refresh this dashboard. Your saved answers are retained.'),4000);
+  window.addEventListener('message',receive);window.postMessage({type:'applypilot-resume-application',requestId,jobId},location.origin);
+ });
+}
+function renderOperations(snapshot,activity){
+ if(!snapshot?.totals)snapshot=null;
+ let box=$('#operations');
+ if(!box){box=el('section');box.id='operations';box.className='operations';$('#workspace').prepend(box);}
+ const signature=JSON.stringify([snapshot?.totals,activity?.events]);
+ if(box.dataset.signature===signature)return;box.dataset.signature=signature;
+ box.replaceChildren();
+ const header=el('div');header.className='operations-heading';
+ const title=el('div');title.append(el('span','Live application activity'),el('h2','From saved facts to employer receipts.'));
+ const checked=el('small',snapshot?'Updated '+new Date(snapshot.checkedAt).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'Unable to refresh progress');header.append(title,checked);box.append(header);
+ if(!snapshot){box.append(el('p','Progress could not be verified. Refresh to try again.'));return;}
+ const metrics=el('div');metrics.className='operation-metrics';
+ for(const [key,label,detail,filter] of [
+  ['confirmed','Receipts recorded','Employer receipt text on file','submitted'],
+  ['worked','Forms filled / attempted','Distinct applications with form evidence','all'],
+  ['awaiting','Awaiting receipt','Attempt recorded · automatic retry held','awaiting'],
+  ['active','Queued / filling','Routine work in progress','applying'],
+  ['blocked','Needs a step','Answers or employer verification','needs']]){
+   const button=el('button');button.className='operation-metric';button.type='button';button.append(el('span',label),el('strong',String(snapshot.totals[key]||0)),el('small',detail));
+   button.onclick=()=>{currentFilter=filter;for(const b of document.querySelectorAll('[data-filter]'))b.setAttribute('aria-pressed',String(b.dataset.filter===filter));applyFilters();$('#jobs').closest('.list-panel').scrollIntoView({behavior:'smooth',block:'start'});};metrics.append(button);
+ }
+ box.append(metrics,el('p','Filled forms and submission attempts are not successful submissions. Imported history, placeholders and outcome changes do not add receipts.'));
+ if(snapshot.totals.unverifiedOutcome)box.append(el('p',snapshot.totals.unverifiedOutcome+' recorded outcomes have no qualifying receipt text and are excluded from the receipt total.'));
+ const feed=el('div');feed.className='activity-feed';feed.append(el('h3','Latest activity'));
+ if(!activity)feed.append(el('p','Activity could not be refreshed.'));
+ const events=(activity?.events||[]).filter(e=>e.job_id).slice(0,6);
+ if(activity&&!events.length)feed.append(el('p','New application activity will appear here automatically.'));
+ for(const event of events){
+  const row=el('a');row.className='activity-row';row.href='#job-'+event.job_id;
+  const date=Date.parse(event.at),time=el('time',Number.isFinite(date)?new Date(date).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'');if(Number.isFinite(date)){time.dateTime=new Date(date).toISOString();time.title=new Date(date).toLocaleString();}
+  const text=el('div');text.append(el('strong',event.company+' · '+event.title),el('span',event.message));
+  row.append(time,text);row.onclick=()=>{currentFilter='all';$('#job-search').value='';for(const b of document.querySelectorAll('[data-filter]'))b.setAttribute('aria-pressed',String(b.dataset.filter==='all'));applyFilters();};feed.append(row);
+ }
+ box.append(feed);$('#workspace').prepend(box);
 }

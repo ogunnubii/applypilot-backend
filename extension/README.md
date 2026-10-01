@@ -16,4 +16,7 @@ Submitted means the extension observed a recognized receipt after a submission a
 
 The popup environment cannot switch servers while records exist. Use a separate browser profile for another backend. To customize hosting/port, update background.js and manifest.json together. Reload the extension after changing files.
 
-Version 0.6.0 fixes missing-tab queue stalls and resumes routine submissions after a durable attempt record. A timeout or uncertain receipt is never retried automatically. Existing paused forms need explicit continuation. Reload the updated extension in the existing browser profile; keep its stored records. The hosted download is built from the deployed extension source, not an older checked-in ZIP.
+Version 0.6.1 fixes missing-tab queue stalls and resumes routine submissions after a durable attempt record. A timeout or uncertain receipt is never retried automatically. Existing paused forms need explicit continuation. Reload the updated extension in the existing browser profile; keep its stored records. The hosted download is built from the deployed extension source, not an older checked-in ZIP.
+
+
+0.6.1 opens associated dropdown menus before matching exact saved answers, verifies the displayed selection, reports filled-field progress, and supports guarded dashboard resume. Attempts are never automatically retried. Arbitration and waiver statements require applicant review.

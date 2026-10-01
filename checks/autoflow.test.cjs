@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
-const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
+const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
 test("routine submissions and receipt safety",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const wait=()=>new Promise(r=>setTimeout(r,35));
@@ -74,3 +74,63 @@ const listBoard=new Function('cachedJSON','readJSON',source+';return listBoard;'
 const jobs=await listBoard('https://job-boards.greenhouse.io/example');assert(!urls[0].includes('content=true'));assert.equal(jobs[0].descriptionURL,'https://boards-api.greenhouse.io/v1/boards/example/jobs/42');
 return 'PASS Greenhouse adapter: bounded metadata feed and separate per-job evidence URL';
 })());
+
+test('React Select opens before discovering options and verifies the selected value',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ async function scenario({ambiguous=false,accepted=true,preselected=false,legal=''}={}){
+  const dom=new JSDOM('<form><label id="country-label">Country</label><div class="select__control"><div class="select__value-container"><input id="country" role="combobox" aria-labelledby="country-label" aria-required="true" aria-expanded="false"></div></div>'+legal+'<button type="button" id="submit">Submit application</button></form>',{runScripts:'outside-only',url:'https://job-boards.greenhouse.io/example/jobs/42'}),w=dom.window;
+  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});
+  w.HTMLElement.prototype.getClientRects=function(){return this.isConnected&&!this.closest('[hidden]')?[{}]:[];};
+  w.setInterval=()=>0;w.clearInterval=()=>{};const messages=[];let attempts=0,clicks=0;
+  const input=w.document.querySelector('input'),container=input.parentElement;
+  const select=()=>{const selected=w.document.createElement('div');selected.className='select__single-value';selected.textContent='Canada';container.prepend(selected);input.value='';input.setAttribute('aria-expanded','false');w.document.getElementById('country-options')?.remove();};
+  if(preselected)select();
+  input.onclick=()=>{if(w.document.getElementById('country-options'))return;const list=w.document.createElement('div');list.id='country-options';list.setAttribute('role','listbox');for(let i=0;i<(ambiguous?2:1);i++){const option=w.document.createElement('div');option.setAttribute('role','option');option.textContent='Canada +1';option.onclick=()=>{if(accepted)select();else {input.value='Canada';list.remove();}};list.append(option);}w.document.body.append(list);input.setAttribute('aria-controls',list.id);input.setAttribute('aria-expanded','true');};
+  w.document.getElementById('submit').onclick=()=>{assert(attempts===1);clicks++;};
+  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Fixture'},profile:{location:'Toronto, Ontario, Canada'},answers:{},resume:{name:'resume.pdf',base64:''}}};if(m.action==='state')return {ok:true,data:{automatic:true,attempted:!!attempts}};if(m.action==='attempt')attempts++;return {ok:true,data:{}};}}};
+  w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);await new Promise(r=>setTimeout(r,1150));
+  const result={attempts,clicks,messages};w.close();return result;
+ }
+ const success=await scenario();assert.equal(success.clicks,1);assert(success.messages.some(m=>m.action==='capture'&&m.fields.some(f=>f.question==='Country'&&f.answer==='Canada')));
+ assert.equal((await scenario({preselected:true})).clicks,1);
+ for(const opts of [{ambiguous:true},{accepted:false},{legal:'<p>Agreement to Arbitrate: please read the arbitration agreement.</p>'},{legal:'<label>Unknown employer question<input required></label>'}])assert.equal((await scenario(opts)).attempts,0);
+});
+test('progress counts are based on evidence and do not recount outcomes',async()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite');
+ const policy='data:text/javascript;base64,'+Buffer.from(sources['extension/policy.js']+'\nexport const receipt=globalThis.ApplyPilotPolicy.receipt;').toString('base64');
+ const code=sources['operation-evidence.js'].replace("'./local-policy.js'",JSON.stringify(policy));
+ const {operationSnapshot}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE jobs(id TEXT,user_id TEXT,company TEXT,title TEXT,url TEXT,status TEXT,confirmation TEXT,local_phase TEXT,local_attempt_at TEXT,updated_at TEXT); CREATE TABLE events(job_id TEXT,type TEXT,message TEXT); CREATE TABLE answer_history(job_id TEXT);');
+ const insert=db.prepare("INSERT INTO jobs(id,user_id,status,confirmation,local_attempt_at,local_phase) VALUES(?,'owner',?,?,?,?)");
+ insert.run('receipt','interview','Browser extension observed: Thank you for applying',null,null);
+ insert.run('placeholder','submitted','Applicant verified: https://github.com/example',null,null);
+ insert.run('uncertain','local_browser',null,'2026-10-01','verifying');
+ insert.run('zero','queued',null,null,null);
+ insert.run('filled','needs_review',null,null,null);
+ insert.run('captured','local_browser',null,null,'blocked');
+ insert.run('archive','archived','Thank you for applying',null,null);
+ db.exec("INSERT INTO events VALUES('receipt','submitted','Receipt'),('placeholder','manual_confirmation','Manual'),('archive','submitted','Receipt'),('zero','filled','Filled 0 standard fields'),('filled','filled','Filled 3 standard fields'); INSERT INTO answer_history VALUES('captured');");
+ const snapshot=operationSnapshot(db,'owner');assert.deepEqual(snapshot.totals,{confirmed:1,worked:4,awaiting:1,active:1,blocked:2,unverifiedOutcome:1});
+ assert.equal(operationSnapshot(db,'another-user').applications.length,0);
+ db.prepare("UPDATE jobs SET status='offer' WHERE id='receipt'").run();assert.equal(operationSnapshot(db,'owner').totals.confirmed,1);db.close();
+});
+test('local missing answers are saved without queuing a new attempt',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
+ w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([url,opts?.method]);return {ok:true,json:async()=>({})};};w.eval(sources['assistant-client.js']);
+ const job={id:'local',applicant_id:'p',company:'Example',title:'Engineer',status:'local_browser',local_phase:'blocked',challenge:'Local browser',required_fields_json:'["Preferred name"]',answers_json:'{}'};
+ w.renderMissingAnswers([job]);const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form'),input=form.querySelector('textarea');assert(!section.hidden);input.value='Applicant';
+ w.eval('refresh=async()=>{}');await form.onsubmit({preventDefault(){}});assert(requests.some(([url,method])=>url.endsWith('/answers')&&method==='PUT'));assert(!requests.some(([url])=>url.endsWith('/continue')));
+ section.dataset.dirty='false';w.renderMissingAnswers([{...job,local_attempt_at:'2026-10-01'}]);assert(section.hidden,'attempted application must not re-enter the answer/resume flow');w.close();
+});
+
+test('dashboard resume rejects attempted applications and other origins',async()=>{
+ const assert=require('node:assert/strict'),vm=require('node:vm');
+ const state={automaticDefault:true,device:'00000000-0000-0000-0000-000000000001',enabled:true,records:{j:{id:'j',attempted:true,phase:'blocked'}},queue:[]};
+ const noop={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop},alarms:{get:async()=>({}),onAlarm:noop},tabs:{onRemoved:noop}};
+ const context={chrome,URL,console,Date,crypto:require('node:crypto').webcrypto,importScripts(){},ApplyPilotPolicy:{}};
+ vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;',context);
+ await assert.rejects(()=>context.testHandle({action:'resume-existing',id:'j'},{tab:{id:1},frameId:0,url:'https://malicious.example/'}),/Untrusted/);
+ await assert.rejects(()=>context.testHandle({action:'resume-existing',id:'j'},{tab:{id:1},frameId:0,url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),/cannot automatically restart/);
+ assert.equal(state.records.j.attempted,true);
+});

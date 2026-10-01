@@ -16,28 +16,47 @@ function answer(e){
  const token=(e.autocomplete||'').split(' ').pop(),kind={'given-name':'first name','family-name':'last name','name':'full name','email':'email','tel':'phone','address-level2':'city','address-level1':'province','postal-code':'postal code','country-name':'country'}[token];
  return kind?P.knownAnswer(kind,packet.profile,packet.answers):null;
 }
-const completedCustom=new WeakSet();
+const completedCustom=new WeakMap();
 let attemptedCustom=new WeakMap();
 let fieldErrors=[];
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+function customValue(e){
+ const container=e.closest('[class*="select__control"]')||e.parentElement?.parentElement;
+ const selected=container?.querySelector('[class*="single-value"],[class*="singleValue"]');
+ return selected?.textContent?.trim()||e.getAttribute('aria-valuetext')||'';
+}
+function customComplete(e){
+ if(e.getAttribute('role')!=='combobox')return false;
+ const selected=customValue(e),saved=completedCustom.get(e);
+ if(saved!==undefined)return !!selected&&P.optionMatches(label(e),selected,saved,packet.profile);
+ return !!selected&&!/^(select|choose)(\b|\.\.\.)/i.test(selected);
+}
 async function fillCustom(e,a){
- if(completedCustom.has(e))return false;
+ if(customComplete(e))return false;
  if(e.matches('input')&&e.value?.trim())return false;
  if(attemptedCustom.get(e)===String(a))return false;
- const ids=(e.getAttribute('aria-controls')||e.getAttribute('aria-owns')||'').split(/\s+/).filter(Boolean);
- if(!ids.length)return false;
- attemptedCustom.set(e,String(a));e.click();
- if(e.matches('input')&&!e.readOnly)setValue(e,a);
- for(let retry=0;retry<4;retry++){
-  const options=ids.flatMap(id=>[...(document.getElementById(id)?.querySelectorAll('[role=option]')||[])]).filter(o=>visible(o)&&o.getAttribute('aria-disabled')!=='true');
+ attemptedCustom.set(e,String(a));
+ // React Select creates aria-controls only once its menu has opened.
+ e.focus();e.click();
+ for(let retry=0;retry<10;retry++){
+  const ids=(e.getAttribute('aria-controls')||e.getAttribute('aria-owns')||'').split(/\s+/).filter(Boolean);
+  const options=[...new Set(ids.flatMap(id=>[...(document.getElementById(id)?.querySelectorAll('[role=option]')||[])]))].filter(o=>visible(o)&&o.getAttribute('aria-disabled')!=='true');
   const matches=options.filter(o=>P.optionMatches(label(e),o.textContent,a,packet.profile));
+  if(matches.length>1)return false;
   if(matches.length===1){
-   const chosen=matches[0];chosen.click();
-   if(chosen.getAttribute('aria-selected')==='true'||e.matches('input')&&P.optionMatches(label(e),e.value,a,packet.profile)&&!visible(chosen)){completedCustom.add(e);return true;}
+   matches[0].click();
+   for(let verify=0;verify<6;verify++){
+    if(P.optionMatches(label(e),customValue(e),a,packet.profile)){
+     completedCustom.set(e,String(a));return true;
+    }
+    await pause(50);
+   }
+   // An input's search text is not evidence that a choice was accepted.
    return false;
   }
-  if(matches.length>1)return false;
-  if(retry<3)await pause(50);
+  // Search only this control, and still require an exact associated option.
+  if(retry===1&&e.matches('input')&&!e.readOnly)setValue(e,a);
+  await pause(75);
  }
  return false;
 }
@@ -60,24 +79,25 @@ function controls(){return [...document.querySelectorAll('input,select,textarea,
 function formAnswers(){
  const rows=[];for(const e of controls()){
   const q=label(e);if(P.sensitive(q)||/password|one.?time|verification code|captcha|birth|ethnic|race|gender|disability|veteran|sexual orientation|religion|medical/i.test(q)||['password','file','hidden','submit','button'].includes(e.type))continue;
-  if(e.getAttribute('role')==='combobox'&&!completedCustom.has(e))continue;
-  let value=e.value;if(e.type==='radio'){if(!e.checked)continue;value=labelText(e.labels?.[0])||e.value;}else if(e.type==='checkbox'){if(!e.checked)continue;value='Yes';}else if(e.tagName==='SELECT'){if(!e.value||e.selectedOptions[0]?.disabled)continue;value=e.selectedOptions[0]?.textContent;}
+  if(e.getAttribute('role')==='combobox'&&!customComplete(e))continue;
+  let value=e.getAttribute('role')==='combobox'?customValue(e):e.value;if(e.type==='radio'){if(!e.checked)continue;value=labelText(e.labels?.[0])||e.value;}else if(e.type==='checkbox'){if(!e.checked)continue;value='Yes';}else if(e.tagName==='SELECT'){if(!e.value||e.selectedOptions[0]?.disabled)continue;value=e.selectedOptions[0]?.textContent;}
   if(typeof value==='string'&&value.trim())rows.push({question:q,answer:value.trim().slice(0,4000)});
  }return rows.slice(0,120);
 }
 function review(){
  const fields=controls(),missing=fields.filter(e=>{
   if(!(e.required||e.getAttribute('aria-required')==='true'))return false;
-  if(completedCustom.has(e))return false;
+  if(customComplete(e))return false;
   if(e.type==='radio')return !fields.some(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form&&o.checked);
   if(e.type==='checkbox')return !e.checked;
   if(e.type==='file')return !e.files?.length;
+  if(e.getAttribute('role')==='combobox')return !customComplete(e);
   return !e.value||e.validity&&!e.validity.valid;
  }).map(label);
  const captcha=[...document.querySelectorAll('iframe[src*="captcha"],iframe[title*="challenge" i],.g-recaptcha,.h-captcha,[data-sitekey]')].some(visible);
  const login=fields.some(e=>e.type==='password'||e.autocomplete==='one-time-code'||/\b(verification code|authentication code|one.time code)\b/i.test(label(e)));
  const sensitive=P.sensitive(bodyText())||fields.some(e=>P.sensitive(label(e)));
- const custom=fields.some(e=>e.matches('[role=combobox],[role=checkbox],[role=radio]')&&!completedCustom.has(e)&&!e.matches('select')&&(e.required||e.getAttribute('aria-required')==='true'||!e.matches('input')));
+ const custom=fields.some(e=>e.matches('[role=combobox],[role=checkbox],[role=radio]')&&!customComplete(e)&&!e.matches('select')&&(e.required||e.getAttribute('aria-required')==='true'));
  const errors=[...document.querySelectorAll('[aria-invalid=true],[role=alert]')].filter(visible).filter(e=>e.getAttribute('aria-invalid')==='true'||/required|invalid|error/i.test(e.innerText||''));
  const embedded=[...document.querySelectorAll('iframe')].filter(visible).some(e=>!/captcha|challenge/i.test(e.src)&&e.getBoundingClientRect().height>150);
  return {fields:[...new Set(missing)],reason:fieldErrors.length?'Could not fill: '+fieldErrors.join('; '):captcha?'CAPTCHA requires you':login?'Sign-in or MFA requires you':sensitive?'Sensitive statement, payment or legal attestation requires you':custom?'Custom form control requires review':embedded?'Embedded form requires review':missing.length?'Needs your input: '+[...new Set(missing)].join('; '):errors.length?'Employer validation needs review':''};
@@ -102,7 +122,8 @@ async function fill(){
  for(const group of groups.values()){if(group.some(e=>e.checked))continue;const a=answer(group[0]);if(a===null)continue;const match=group.filter(e=>norm(labelText(e.labels?.[0])||e.value)===norm(a));if(match.length===1){match[0].click();count++;}}
  const files=[...document.querySelectorAll('input[type=file]')].filter(e=>!e.disabled&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
  if(files.length===1&&!files[0].files.length){const r=packet.resume,bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0)),dt=new DataTransfer();dt.items.add(new File([bytes],r.name,{type:r.name.endsWith('.pdf')?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));files[0].files=dt.files;files[0].dispatchEvent(new Event('input',{bubbles:true}));files[0].dispatchEvent(new Event('change',{bubbles:true}));count++;}
- note.textContent=count+' saved fields filled.';return count;
+ note.textContent=count+' saved fields filled.';
+ if(count)await send('progress',{fields:[],message:'Filled '+count+' saved fields on the employer form.',blocked:false,filled:count});return count;
 }
 async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked});}
 function signature(){return location.href+'|'+controls().map(e=>label(e)+':'+e.type).join('|')+'|'+buttons().map(e=>e.innerText||e.value).join('|');}

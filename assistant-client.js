@@ -382,7 +382,7 @@ function renderHistoryOverview(records){
  const render=(rows,label)=>{stats.append(el('h3',label+' ('+rows.length+')'));const {modes,countries}=count(rows);stats.append(el('p','Work arrangement: '+['remote','hybrid','on-site','unknown'].map(k=>k+': '+(modes[k]||0)).join(' · ')));stats.append(el('p','Countries: '+Object.entries(countries).sort((a,b)=>b[1]-a[1]).map(([k,n])=>k+': '+n).join(' · ')));};
  render(records,'Imported application history');
  stats.append(el('small','Imported records are applicant-reported applications, not newly verified employer receipts. Unknown means the source did not specify the work arrangement or country. Add details using the import fields; matching records are merged.'));
- api('/jobs').then(({jobs})=>{const submitted=jobs.filter(j=>['submitted','interview','rejected','offer'].includes(j.status));render(submitted.map(j=>({work_mode:'unknown',country:''})),'ApplyPilot submission records');stats.append(el('small','ApplyPilot totals retain the dashboard’s recorded statuses; external records are not added to that total.'));}).catch(()=>{});
+ api('/jobs').then(({jobs})=>{const submitted=jobs.filter(j=>['submitted','interview','rejected','offer'].includes(j.status));render(submitted.map(j=>({work_mode:/\bremote\b/i.test(j.title)?'remote':/\bhybrid\b/i.test(j.title)?'hybrid':/\bon-site\b/i.test(j.title)?'on-site':'unknown',country:/\bCanada\b|Toronto area/i.test(j.title)?'Canada':/\bUnited States\b|Columbus OHIO/i.test(j.title)?'United States':''})),'ApplyPilot submission records');stats.append(el('small','ApplyPilot totals retain the dashboard’s recorded statuses; external records are not added to that total.'));}).catch(()=>{});
 }
 
 function mountExternalHistory(){
@@ -408,3 +408,5 @@ function mountExternalHistory(){
  show().catch(e=>status.textContent=e.message);
 }
 mountExternalHistory();
+
+for(const a of document.querySelectorAll('a'))if(a.textContent.trim().includes('Home'))a.href='/';

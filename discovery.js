@@ -139,7 +139,7 @@ async function broadListings(intent){
   return {batches,errors};
 }
 
-async function listBoard(board){
+async function listBoard(board,options={}){
   const u=new URL(board),token=decodeURIComponent(u.pathname.slice(1));
   if(u.hostname.includes('greenhouse.io')){
     const data=await cachedJSON(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs`);
@@ -147,7 +147,7 @@ async function listBoard(board){
   }
   if(u.hostname==='jobs.ashbyhq.com'){
     const data=await cachedJSON(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(token)}?includeCompensation=true`);
-    return (data.jobs||[]).filter(j=>j.isListed!==false).map(j=>({title:j.title,company:token,location:j.location,publishedAt:j.publishedAt,compensation:j.compensation,description:j.descriptionPlain||j.descriptionHtml,employmentType:j.employmentType,remote:j.isRemote===true||j.workplaceType==='Remote',url:j.applyUrl||j.jobUrl}));
+    return (data.jobs||[]).filter(j=>options.includeUnlisted||j.isListed!==false).map(j=>({title:j.title,company:token,location:j.location,publishedAt:j.publishedAt,compensation:j.compensation,description:j.descriptionPlain||j.descriptionHtml,employmentType:j.employmentType,remote:j.isRemote===true||j.workplaceType==='Remote',url:j.applyUrl||j.jobUrl}));
   }
   const api=u.hostname==='jobs.eu.lever.co'?'https://api.eu.lever.co':'https://api.lever.co';
   const data=await cachedJSON(`${api}/v0/postings/${encodeURIComponent(token)}?mode=json&limit=500`);
@@ -178,7 +178,7 @@ async function detailForJob(row){
   return {title:j.title,company:row.company,url:row.url,location:j.location?.name,description:j.content,pay_input_ranges:j.pay_input_ranges,publishedAt:j.first_published};
  }
  if(u.hostname==='jobs.ashbyhq.com'){
-  const jobs=await listBoard(board);return jobs.find(j=>normalizeURL(j.url)===normalizeURL(row.url))||null;
+  const jobs=await listBoard(board,{includeUnlisted:true});return jobs.find(j=>normalizeURL(j.url)===normalizeURL(row.url))||null;
  }
  if(u.hostname==='jobs.lever.co'||u.hostname==='jobs.eu.lever.co'){
   const host=u.hostname==='jobs.eu.lever.co'?'https://api.eu.lever.co':'https://api.lever.co';
@@ -192,7 +192,7 @@ function saveMetadata(id,metadata){
 }
 async function refreshTrackedJobs(userId,applicant,intent){
  const cutoff=new Date(Date.now()-15*60000).toISOString(),daily=new Date(Date.now()-86400000).toISOString();
- const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status NOT IN ('duplicate','archived') AND (metadata_attempt_at IS NULL OR metadata_attempt_at<?) AND (json_extract(job_metadata_json,'$.checkedAt') IS NULL OR json_extract(job_metadata_json,'$.checkedAt')<?) ORDER BY CASE WHEN status IN ('saved','queued') THEN 0 ELSE 1 END,metadata_attempt_at,created_at DESC LIMIT 4").all(userId,applicant.id,cutoff,daily);
+ const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status NOT IN ('duplicate','archived') AND (metadata_attempt_at IS NULL OR metadata_attempt_at<?) AND (json_extract(job_metadata_json,'$.available')=0 OR json_extract(job_metadata_json,'$.checkedAt') IS NULL OR json_extract(job_metadata_json,'$.checkedAt')<?) ORDER BY CASE WHEN status IN ('saved','queued') THEN 0 ELSE 1 END,metadata_attempt_at,created_at DESC LIMIT 4").all(userId,applicant.id,cutoff,daily);
  let refreshed=0;const errors=[];
  await Promise.all(rows.map(async row=>{
   db.prepare('UPDATE jobs SET metadata_attempt_at=? WHERE id=?').run(now(),row.id);

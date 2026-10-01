@@ -1,7 +1,7 @@
 
 function paySummary(job){
  const wrap=el('div');wrap.className='job-pay';const rows=job.metadata?.pay||[];
- if(job.metadata?.available===false){wrap.append(el('strong','Employer posting no longer available'));return wrap;}
+ if(job.metadata?.available===false){wrap.append(el('strong','Posting availability needs review'));return wrap;}
  if(!rows.length){wrap.append(el('strong',job.metadata?.checkedAt?'Annual pay not disclosed':'Annual pay · checking employer posting'));return wrap;}
  for(const pay of rows){
   const number=n=>Number(n).toLocaleString('en-US',{maximumFractionDigits:0}),range=(lo,hi)=>number(lo)+(lo===hi?'':'–'+number(hi));
@@ -12,7 +12,7 @@ function paySummary(job){
  wrap.append(el('small','Employer-posted ranges; location and level may affect your offer.'));return wrap;
 }
 function nextMatchCandidate(job){
- const m=job.metadata||{};return ['saved','queued'].includes(job.status)&&!job.local_attempt_at&&!Number(job.attempts||0)&&!job.challenge&&!job.handoff_available&&m.available===true&&m.strong===true&&m.eligibility?.eligible===true&&Date.now()-Date.parse(m.checkedAt||'')<86400000;
+ const m=job.metadata||{};return ['saved','queued'].includes(job.status)&&!job.local_attempt_at&&!Number(job.attempts||0)&&!job.challenge&&!job.handoff_available&&m.available===true&&(m.strong===true||m.matched===true)&&m.eligibility?.eligible===true&&Date.now()-Date.parse(m.checkedAt||'')<86400000;
 }
 function renderNextMatch(jobs){
  let box=$('#next-match');if(!box){box=el('section');box.id='next-match';box.className='next-match';$('#workspace').prepend(box);}
@@ -21,8 +21,9 @@ function renderNextMatch(jobs){
  const job=[...jobs].filter(nextMatchCandidate).sort((a,b)=>(Number(b.match_score)||0)-(Number(a.match_score)||0)||String(b.created_at||'').localeCompare(String(a.created_at||''))||String(a.id).localeCompare(String(b.id)))[0];
  const signature=JSON.stringify(job||null);if(box.dataset.signature===signature)return;box.dataset.signature=signature;
  box.replaceChildren(el('span','YOUR NEXT APPLICATION'));
- if(!job){box.append(el('h2','Checking for your next strong match'),el('p','New recommendations appear after profile fit, employer availability and work eligibility are checked. Applications already attempted stay out of this list.'));return;}
+ if(!job){box.append(el('h2','Checking for your next eligible match'),el('p','New recommendations appear after profile fit, employer availability and work eligibility are checked. Applications already attempted stay out of this list.'));return;}
  const heading=el('div');heading.className='next-match-heading';heading.append(el('h2',job.title),paySummary(job));box.append(heading,el('p',job.company+' · '+(job.metadata.location||'Location not listed')));
+ if(!job.metadata.strong)box.append(el('p','Related role match — review the required seniority and skills before applying. Strong matches are the ones selected for automatic applications.'));
  box.append(el('p','Ranked #1 · '+job.match_score+'/100 role and eligibility score'),el('p',(job.metadata.reasons||[]).join(' · ')),el('small','This score compares saved role preferences and posting evidence; it is not a hiring probability.'));
  const actions=el('div');actions.className='actions';
  if(job.status==='saved'){
@@ -90,7 +91,7 @@ async function refresh(force=false){
  externalRecords=history.records;
  $('#login').hidden=true;$('#workspace').hidden=false;$('#logout').hidden=false;
  notificationSettings();
- updateDiscovery();
+ updateDiscovery();updateAIStatus();
  const current=jobs.filter(j=>j.status!=='duplicate');
  const interviews=interviewRecords(externalRecords,current);
  renderHistoryOverview(externalRecords,current);
@@ -139,6 +140,8 @@ async function refresh(force=false){
    label.append(select);card.append(label);$('#jobs').append(card);continue;
   }
   if(job.status==='saved'){
+   const posting=el('a','Read employer posting ↗');posting.href=job.url;posting.target='_blank';posting.rel='noopener noreferrer';card.append(posting);
+   if(job.metadata?.available===false){card.append(el('p','This posting is absent from the current employer feed or its page could not be found. Automatic applications are held pending an availability check.'));$('#jobs').append(card);continue;}
    const local=job.execution_mode==='local';
    const p=el('p',local?'This profile uses your Windows browser. Open the extension to start this application.':'ApplyPilot can fill and submit routine steps using your saved profile. It will stop for verification, unknown facts and sensitive statements.');
    card.append(p);

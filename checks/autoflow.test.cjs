@@ -402,3 +402,26 @@ test('Gemini browser handoff uses public questions only, preserves user answers 
  let retries=0;await publicFill.fillPublicQuestions(db,'j',{env:{GEMINI_API_KEY:'fixture'},research:async()=>{retries++;}});assert.equal(retries,0,'provider errors back off for one hour');
  db.close();
 });
+
+test('recommendations include eligible related roles for review while automatic queue stays strong-only',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;w.setInterval=()=>0;w.eval(sources['assistant-client.js']);
+ const metadata={available:true,strong:false,matched:true,eligibility:{eligible:true},checkedAt:new Date().toISOString(),location:'London',reasons:['Related role match','Posting states visa sponsorship'],pay:[]};
+ w.eval('renderNextMatch('+JSON.stringify([{id:'related',title:'Staff Infrastructure Engineer',company:'Example',url:'https://example.com/job',status:'saved',match_score:70,metadata}])+')');
+ assert(w.document.querySelector('#next-match').textContent.includes('review the required seniority'));
+ assert.equal(pureModule('job-intelligence.js').nextApplication([{id:'related',status:'saved',job_metadata_json:JSON.stringify(metadata)}]),null);
+ w.close();
+ const boardSource=sources['discovery.js'].slice(sources['discovery.js'].indexOf('async function listBoard'),sources['discovery.js'].indexOf('const defaultBoards'));
+ const board=new Function('cachedJSON','readJSON',boardSource+';return listBoard;')(async()=>({jobs:[{title:'Private posting',isListed:false,jobUrl:'https://jobs.ashbyhq.com/example/12345678-1234-1234-1234-123456789abc'}]}),()=>{});
+ assert.equal((await board('https://jobs.ashbyhq.com/example')).length,0);
+ assert.equal((await board('https://jobs.ashbyhq.com/example',{includeUnlisted:true})).length,1,'manual tracked private postings are not mistaken for removed jobs');
+});
+
+test('normal dashboard refresh loads Gemini diagnostics without exposing credentials',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;
+ w.sessionStorage.setItem('applypilot-token','fixture');w.setInterval=()=>0;const calls=[];
+ w.fetch=async url=>({ok:true,json:async()=>{const p=String(url).replace('/api','');calls.push(p);if(p==='/jobs')return {jobs:[]};if(p==='/application-history')return {records:[]};if(p==='/ai-status')return {googleConfigured:true,personalDraftsConfigured:false,profiles:[{name:'Tester',googleConsent:true,hasBackground:false}],attempts:[{company:'Example',question:'What products does this company offer?',message:'Google research returned HTTP 429.'}]};if(p==='/searches')return {searches:[]};return {};}});
+ w.eval(sources['assistant-client.js']);await new Promise(r=>setTimeout(r,100));
+ assert(calls.includes('/ai-status'));const text=w.document.querySelector('#ai-status').textContent;
+ assert(text.includes('Gemini key configured'));assert(text.includes('Professional background not yet saved'));assert(text.includes('HTTP 429'));assert(!text.includes('Bearer fixture'));w.close();
+});

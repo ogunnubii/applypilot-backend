@@ -631,3 +631,10 @@ test('completion groups preserve a ranked browser pipeline including already que
  vm.runInNewContext(sources['extension/background.js']+';api=async()=>({jobs:fixtureJobs});openJob=async(id)=>opened.push(id);globalThis.testTick=tick;',context);
  await context.testTick();assert.deepEqual(opened,['high']);assert.deepEqual(Array.from(state.queue),['low']);
 });
+
+test('completion groups next application reflects the actual approved queue even without fresh discovery metadata',()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
+ const jobs=[{id:'saved',title:'High saved',company:'A',status:'saved',match_score:99,metadata:{available:true,strong:true,eligibility:{eligible:true},checkedAt:new Date().toISOString()}},{id:'queued',title:'Actual next queued',company:'B',status:'queued',match_score:70,url:'https://jobs.lever.co/b/123'},{id:'attempted',title:'Attempted',company:'C',status:'queued',match_score:100,local_attempt_at:'now'}];
+ w.eval('renderNextMatch('+JSON.stringify(jobs)+')');const text=w.document.querySelector('#next-match').textContent;assert(text.includes('Actual next queued'));assert(text.includes('Queued for your application worker'));assert(!text.includes('High saved'));assert(!text.includes('Attempted'));w.close();
+});

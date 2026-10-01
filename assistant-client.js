@@ -12,19 +12,22 @@ function paySummary(job){
  wrap.append(el('small','Employer-posted ranges; location and level may affect your offer.'));return wrap;
 }
 function nextMatchCandidate(job){
- const m=job.metadata||{};return ['saved','queued'].includes(job.status)&&!job.local_attempt_at&&!Number(job.attempts||0)&&!job.challenge&&!job.handoff_available&&m.available===true&&(m.strong===true||m.matched===true)&&m.eligibility?.eligible===true&&Date.now()-Date.parse(m.checkedAt||'')<86400000;
+ const m=job.metadata||{};if(!['saved','queued'].includes(job.status)||job.local_attempt_at||Number(job.attempts||0)||job.challenge||job.handoff_available||m.available===false)return false;
+ if(job.status==='queued')return true;
+ return m.available===true&&(m.strong===true||m.matched===true)&&m.eligibility?.eligible===true&&Date.now()-Date.parse(m.checkedAt||'')<86400000;
 }
 function renderNextMatch(jobs){
  let box=$('#next-match');if(!box){box=el('section');box.id='next-match';box.className='next-match';$('#workspace').prepend(box);}
  $('#workspace').prepend(box);
  if(box.contains(document.activeElement))return;
- const job=[...jobs].filter(nextMatchCandidate).sort((a,b)=>(Number(b.match_score)||0)-(Number(a.match_score)||0)||String(b.created_at||'').localeCompare(String(a.created_at||''))||String(a.id).localeCompare(String(b.id)))[0];
+ const job=[...jobs].filter(nextMatchCandidate).sort((a,b)=>Number(b.status==='queued')-Number(a.status==='queued')||(Number(b.match_score)||0)-(Number(a.match_score)||0)||String(b.created_at||'').localeCompare(String(a.created_at||''))||String(a.id).localeCompare(String(b.id)))[0];
  const signature=JSON.stringify(job||null);if(box.dataset.signature===signature)return;box.dataset.signature=signature;
  box.replaceChildren(el('span','YOUR NEXT APPLICATION'));
  if(!job){box.append(el('h2','Checking for your next eligible match'),el('p','New recommendations appear after profile fit, employer availability and work eligibility are checked. Applications already attempted stay out of this list.'));return;}
- const heading=el('div');heading.className='next-match-heading';heading.append(el('h2',job.title),paySummary(job));box.append(heading,el('p',job.company+' · '+(job.metadata.location||'Location not listed')));
- if(!job.metadata.strong)box.append(el('p','Related role match — review the required seniority and skills before applying. Strong matches are the ones selected for automatic applications.'));
- box.append(el('p','Ranked #1 · '+job.match_score+'/100 role and eligibility score'),el('p',(job.metadata.reasons||[]).join(' · ')),el('small','This score compares saved role preferences and posting evidence; it is not a hiring probability.'));
+ const heading=el('div');heading.className='next-match-heading';heading.append(el('h2',job.title),paySummary(job));box.append(heading,el('p',job.company+' · '+(job.metadata?.location||'Location not listed')));
+ if(job.status==='queued'&&job.metadata?.eligibility?.eligible!==true)box.append(el('p','Queued by your all-found setting. Work eligibility still needs confirmation from the posting.'));
+ else if(!job.metadata?.strong)box.append(el('p','Related role match — review the required seniority and skills before applying.'));
+ box.append(el('p','Ranked #1 · '+job.match_score+'/100 role and eligibility score'),el('p',(job.metadata?.reasons||[]).join(' · ')),el('small','This score compares saved role preferences and posting evidence; it is not a hiring probability.'));
  const actions=el('div');actions.className='actions';
  if(job.status==='saved'){
   const apply=el('button','Apply to this match next');apply.onclick=async()=>{apply.disabled=true;try{await api('/jobs/'+job.id+'/queue','POST',{});$('#notice').textContent='Top match queued. Your application worker will continue when ready.';await refresh(true);}catch(error){$('#notice').textContent=error.message;apply.disabled=false;}};actions.append(apply);

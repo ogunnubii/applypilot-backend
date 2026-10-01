@@ -27,7 +27,7 @@ export function queueFoundApplications(db,userId,{applicantId=null}={}){
     record(job,'duplicate','Prior application retained; repeat application excluded from the pipeline.');result.duplicates++;continue;
    }else if(job.challenge)reason='Resolve the existing application blocker: '+job.challenge;
    else if(!profile?.consent||!profile.email||!profile.resume_path)reason='Profile consent, email and a resume are required before application preparation.';
-   else if(metadataFor(job).available===false)reason='The employer no longer lists this posting. A current employer application link is required.';
+   else if(metadataFor(job).available===false)reason='A current employer posting could not be verified. Check that the application link is still available.';
    else if(!supported(job.url))reason='A supported direct employer application link is required.';
    else if(researchConsentWithdrawn(db,job.id,profile.id))reason='Google public job-page drafting consent was withdrawn.';
    if(reason){

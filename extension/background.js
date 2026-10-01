@@ -1,10 +1,10 @@
 importScripts('policy.js');
 const P=globalThis.ApplyPilotPolicy;
-const environments={hosted:{dashboard:'https://applypilot-jobs.pages.dev/',legacyDashboard:'https://applypilot-jobs.netlify.app/',api:'https://marvelous-vitality-production-c2d8.up.railway.app/api'},local:{dashboard:'http://localhost:8080/assistant',api:'http://localhost:8080/api'}};
+const environments={hosted:{dashboard:'https://marvelous-vitality-production-c2d8.up.railway.app/',pagesDashboard:'https://applypilot-jobs.pages.dev/',legacyDashboard:'https://applypilot-jobs.netlify.app/',api:'https://marvelous-vitality-production-c2d8.up.railway.app/api'},local:{dashboard:'http://localhost:8080/assistant',api:'http://localhost:8080/api'}};
 const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','error','automaticDefault','userPaused'])});
 async function api(path,method='GET',data){
  const state=await read(),env=environments[state.environment]||environments.hosted;
- const origins=[env.dashboard,env.legacyDashboard].filter(Boolean).map(url=>new URL(url).origin+'/*');
+ const origins=[env.dashboard,env.pagesDashboard,env.legacyDashboard].filter(Boolean).map(url=>new URL(url).origin+'/*');
  const tabs=await chrome.tabs.query({url:origins});
  for(const tab of tabs){
   const result=await chrome.scripting.executeScript({target:{tabId:tab.id},func:async(base,path,method,data,device)=>{
@@ -42,7 +42,7 @@ async function tick(){
  const s=await read();if(!s.enabled)return;
  const active=Object.values(s.records).find(r=>r.auto&&['ready','verifying'].includes(r.phase));
  if(active){
-  const tab=await chrome.tabs.get(active.tabId).catch(()=>null);
+  const tab=Number.isInteger(active.tabId)?await chrome.tabs.get(active.tabId).catch(()=>null):null;
   if(tab&&P.sameApplication(tab.url,active.url)&&Date.now()-active.touched<90000)return;
   active.phase='blocked';active.auto=false;await saveRecord(active);
   await api('/jobs/'+active.id+'/local/progress','POST',{blocked:true,fields:[],message:active.attempted?'Submission uncertain; check employer receipt.':'Browser stopped responding. Reopen from extension.'}).catch(()=>{});
@@ -53,11 +53,16 @@ async function tick(){
 }
 async function handle(m,sender){
  await initialize();
+ if(m.action==='dashboard-status'){
+  const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
+  if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
+  const s=await read();return {version:chrome.runtime.getManifest().version,enabled:!!s.enabled,queued:s.queue.length,error:s.error||''};
+ }
  if(m.action==='focus-existing'){
-  const allowed=['https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
+  const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
   if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
   const s=await read(),record=s.records[m.id];
-  if(!record?.tabId)throw Error('The original employer tab is no longer open. Open ApplyPilot Local to review this application before restarting it.');
+  if(!Number.isInteger(record?.tabId))throw Error('The original employer tab is no longer open. Open ApplyPilot Local to review this application before restarting it.');
   const tab=await chrome.tabs.get(record.tabId).catch(()=>null);
   if(!tab||!P.sameApplication(tab.url,record.url))throw Error('The original employer form is no longer available. Open ApplyPilot Local to review it; no application was restarted.');
   await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});await chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']}));return {focused:true};
@@ -89,7 +94,7 @@ async function handle(m,sender){
   const automatic=m.automatic===true&&b.auto===true;
   if(m.human!==true&&!automatic)throw Error('Automation was stopped. Review the employer form manually.');
   b.attempted=true;b.phase='verifying';b.touched=Date.now();await saveRecord(b);
-  try{await api('/jobs/'+b.id+'/local/attempt','POST',{url:sender.url,before:m.before,human:m.human===true,automatic});}catch(e){b.attempted=false;b.phase='ready';await saveRecord(b);throw e;}return {};
+  try{await api('/jobs/'+b.id+'/local/attempt','POST',{url:sender.url,before:m.before,human:m.human===true,automatic});}catch(e){b.auto=false;b.phase='blocked';await saveRecord(b);throw e;}return {};
  }
  if(m.action==='step'){if(!b.auto)throw Error('Automation was stopped');if((b.steps||0)>=15)throw Error('Step limit reached. Continue manually.');await api('/jobs/'+b.id+'/local/step','POST',{});b.steps=(b.steps||0)+1;await saveRecord(b);return {};}
  if(m.action==='progress'){

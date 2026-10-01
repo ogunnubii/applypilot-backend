@@ -123,7 +123,15 @@ async function advance(){
  if(submit.length===1&&next.length===0){
   if(!controls().length&&!document.querySelector('form'))return report('Cannot identify the final application form.');
   await send('capture',{fields:formAnswers()});
-  return report('Ready for your review — check your answers, then click Submit on the employer page.',[],true);
+  // Persist submission intent before clicking. A transport error never triggers a retry.
+  const latest=await send('state');
+  if(!latest.automatic||latest.attempted)return report('Application paused or already attempted. Check the employer receipt.');
+  const finalCheck=review();if(finalCheck.reason)return report(finalCheck.reason,finalCheck.fields);
+  const finalButtons=buttons(),finalSubmit=finalButtons.filter(e=>/^(submit(?: application)?|send application|send my application)$/i.test(buttonName(e)));
+  if(finalSubmit.length!==1||finalButtons.some(e=>/^(next|continue|save and continue|review application)$/i.test(buttonName(e))))return report('The form changed before submission. Review this step.');
+  await send('attempt',{before:bodyText(),automatic:true});
+  attempted=true;submitAt=Date.now();note.textContent='Submitting application. Waiting for employer confirmation…';
+  finalSubmit[0].click();return;
  }
  if(next.length===1&&submit.length===0){
   if(!controls().length)return report('Cannot identify fields for this step.');
@@ -140,6 +148,6 @@ document.addEventListener('click',e=>{
  if(/^(submit(?: application)?|send application|send my application)$/i.test(buttonName(b))&&!attempted){attempted=true;submitAt=Date.now();stopped=false;clearInterval(timer);timer=setInterval(monitor,2500);send('capture',{fields:formAnswers()}).catch(()=>{}).then(()=>send('attempt',{before:bodyText(),human:true})).catch(err=>{note.textContent='Sync unavailable: '+err.message+'. Record the employer receipt in the dashboard.';});}
 },true);
 document.addEventListener('submit',e=>{if(started&&e.isTrusted&&!attempted&&buttons().some(b=>/^(submit(?: application)?|send application)$/i.test(buttonName(b)))){attempted=true;submitAt=Date.now();send('attempt',{before:bodyText(),human:true}).catch(()=>{});}},true);
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.action==='fill'){packet=null;attemptedCustom=new WeakMap();fill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}});
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.action==='fill'){packet=null;attemptedCustom=new WeakMap();fill().then(async()=>{stopped=false;clearInterval(timer);await advance();if(!stopped)timer=setInterval(monitor,2500);reply({ok:true});}).catch(e=>reply({error:e.message}));return true;}});
 begin();
 })();

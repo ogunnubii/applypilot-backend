@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ApplyPilot Local",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Run approved applications in your normal Chrome or Edge profile with durable receipt tracking.",
   "minimum_chrome_version": "120",
   "permissions": [
@@ -21,7 +21,8 @@
     "https://*.workable.com/*",
     "https://*.bamboohr.com/*",
     "https://*.recruitee.com/*",
-    "https://applypilot-jobs.pages.dev/*"
+    "https://applypilot-jobs.pages.dev/*",
+    "https://marvelous-vitality-production-c2d8.up.railway.app/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -53,7 +54,8 @@
       "matches": [
         "https://applypilot-jobs.pages.dev/*",
         "https://applypilot-jobs.netlify.app/*",
-        "http://localhost:8080/*"
+        "http://localhost:8080/*",
+        "https://marvelous-vitality-production-c2d8.up.railway.app/*"
       ],
       "js": [
         "dashboard-bridge.js"

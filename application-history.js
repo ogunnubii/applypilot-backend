@@ -16,20 +16,22 @@ export function installHistory(db){
  CREATE TRIGGER IF NOT EXISTS history_block_attempt BEFORE UPDATE OF local_attempt_at ON jobs
  WHEN OLD.local_attempt_at IS NULL AND NEW.local_attempt_at IS NOT NULL AND EXISTS(SELECT 1 FROM external_application_history h WHERE h.user_id=NEW.user_id AND h.company_key=history_company(NEW.company) AND h.title_key=history_title(NEW.title))
  BEGIN SELECT RAISE(ABORT,'Already applied externally: repeat submission blocked'); END;`);
+ const columns=new Set(db.prepare('PRAGMA table_info(external_application_history)').all().map(r=>r.name));
+ if(!columns.has('interview_stage'))db.exec("ALTER TABLE external_application_history ADD COLUMN interview_stage TEXT NOT NULL DEFAULT 'scheduled'");
 }
 export function importHistory(db,uid,rows){
  if(!Array.isArray(rows)||!rows.length||rows.length>500)throw Error('Import 1–500 application records');
- const clean=rows.map(r=>{const company=String(r.company||'').trim(),title=String(r.title||'').trim(),status=r.status||'applied';
+ const clean=rows.map(r=>{if(r.interview_stage!==undefined&&!['scheduled','completed','needs_scheduling'].includes(r.interview_stage))throw Error('Choose a valid interview stage');const company=String(r.company||'').trim(),title=String(r.title||'').trim(),status=r.status||'applied';
  if(!company||!title||company.length>200||title.length>300||!['applied','interview','screening','rejected','offer'].includes(status))throw Error('Each record needs company, title and a valid status');
- return {company,title,status,notes:String(r.notes||'').slice(0,2000),source:String(r.source||'Tsenta — applicant supplied').slice(0,200),work_mode:['remote','hybrid','on-site'].includes(r.work_mode)?r.work_mode:'unknown',country:String(r.country||'').trim().slice(0,100),interview_at:String(r.interview_at||'').trim().slice(0,100)};});
+ return {company,title,status,interview_stage:r.interview_stage,notes:String(r.notes||'').slice(0,2000),source:String(r.source||'Tsenta — applicant supplied').slice(0,200),work_mode:['remote','hybrid','on-site'].includes(r.work_mode)?r.work_mode:'unknown',country:String(r.country||'').trim().slice(0,100),interview_at:String(r.interview_at||'').trim().slice(0,100)};});
  let added=0,updated=0,blocked=0;const active=[];const at=new Date().toISOString();
  db.exec('BEGIN IMMEDIATE');try{
  for(const r of clean){const ck=companyKey(r.company),tk=historyKey(r.title);if(!ck||!tk)throw Error('Company and title must contain letters or numbers');
  const old=db.prepare('SELECT * FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(uid,ck,tk);
  // Re-importing a plain application must not erase a later outcome.
  const status=old&&r.status==='applied'&&old.status!=='applied'?old.status:r.status;
- if(old){db.prepare("UPDATE external_application_history SET status=?,notes=?,updated_at=?,work_mode=?,country=?,interview_at=? WHERE id=?").run(status,r.notes||old.notes,at,r.work_mode==='unknown'?old.work_mode:r.work_mode,r.country||old.country,r.interview_at||old.interview_at,old.id);updated++;}
- else{db.prepare('INSERT INTO external_application_history(id,user_id,company,title,company_key,title_key,status,source,notes,imported_at,updated_at,work_mode,country,interview_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(randomUUID(),uid,r.company,r.title,ck,tk,status,r.source,r.notes,at,at,r.work_mode,r.country,r.interview_at);added++;}
+ if(old){db.prepare("UPDATE external_application_history SET status=?,notes=?,updated_at=?,work_mode=?,country=?,interview_at=?,interview_stage=? WHERE id=?").run(status,r.notes||old.notes,at,r.work_mode==='unknown'?old.work_mode:r.work_mode,r.country||old.country,r.interview_at||old.interview_at,r.interview_stage||old.interview_stage,old.id);updated++;}
+ else{db.prepare('INSERT INTO external_application_history(id,user_id,company,title,company_key,title_key,status,source,notes,imported_at,updated_at,work_mode,country,interview_at,interview_stage) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(randomUUID(),uid,r.company,r.title,ck,tk,status,r.source,r.notes,at,at,r.work_mode,r.country,r.interview_at,r.interview_stage||'scheduled');added++;}
  const matches=db.prepare('SELECT * FROM jobs WHERE user_id=? AND history_company(company)=? AND history_title(title)=?').all(uid,ck,tk);
  for(const j of matches){
  if(['saved','queued','paused','needs_review'].includes(j.status)&&!j.handoff_available&&!j.local_attempt_at){

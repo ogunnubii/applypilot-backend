@@ -1,3 +1,5 @@
+import {workEligibility} from './work-eligibility.js';
+import {companyKey,historyKey} from './application-history.js';
 import {matchAssessment,locationPriority} from './matching.js';
 import {randomUUID} from 'node:crypto';
 import {db,event,now,normalizeURL} from './db.js';
@@ -24,7 +26,9 @@ export function parseBoards(input){
 }
 
 export function parseIntent(input){
-  const instruction=String(input||'').trim().slice(0,5000);
+  const rawInstruction=String(input||'').trim().slice(0,5000);
+  const worldwideEligibility=/;\s*eligibility:\s*worldwide sponsorship, remote from Canada, or B2B/i.test(rawInstruction);
+  const instruction=rawInstruction.split(';').filter(clause=>!/^\s*eligibility:|^\s*Canada B2B only\s*$/i.test(clause)).join(';').trim();
   if(!instruction)throw Error('Describe the roles you want');
   const lower=instruction.toLowerCase(),locationClause=instruction.split(';').slice(1).join(', ').trim();
   const countryOnly=new Set(['canada','usa','united states','uk','united kingdom','worldwide','anywhere','global']);
@@ -64,7 +68,7 @@ export function parseIntent(input){
   const titleSuffix=/\b(engineer|administrator|manager|operator|specialist|analyst|nurse|accountant)$/;
   roles=roles.map((role,index)=>role.split(/\s+/).length===1&&titleSuffix.test(roles[index+1]||'')?role+' '+roles[index+1].match(titleSuffix)[1]:role);
   if(!roles.length)throw Error('Include a role, for example: DevOps engineer; remote; Canada');
-  return {roles:roles.slice(0,80),remote:locationOrder?false:remote,places:locationOrder?[]:places,localPlaces:locationOrder?[]:localPlaces,remotePlaces:locationOrder?[]:remotePlaces,remoteAny:locationOrder?false:remoteAny,locationOrder};
+  return {worldwideEligibility,roles:roles.slice(0,80),remote:locationOrder||worldwideEligibility?false:remote,places:locationOrder||worldwideEligibility?[]:places,localPlaces:locationOrder||worldwideEligibility?[]:localPlaces,remotePlaces:locationOrder||worldwideEligibility?[]:remotePlaces,remoteAny:locationOrder||worldwideEligibility?false:remoteAny,locationOrder};
 }
 
 export function profileSearchInstruction(applicant,resumeRoles=[]){
@@ -128,17 +132,17 @@ async function broadListings(intent){
 async function listBoard(board){
   const u=new URL(board),token=decodeURIComponent(u.pathname.slice(1));
   if(u.hostname.includes('greenhouse.io')){
-    const data=await cachedJSON(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs`);
-    return (data.jobs||[]).map(j=>({title:j.title,company:token,location:j.location?.name,url:j.absolute_url}));
+    const data=await cachedJSON(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs?content=true`);
+    return (data.jobs||[]).map(j=>({title:j.title,company:token,location:j.location?.name,description:j.content,url:j.absolute_url}));
   }
   if(u.hostname==='jobs.ashbyhq.com'){
     const data=await cachedJSON(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(token)}`);
-    return (data.jobs||[]).map(j=>({title:j.title,company:token,location:j.location,remote:j.isRemote===true||j.workplaceType==='Remote',url:j.applyUrl||j.jobUrl}));
+    return (data.jobs||[]).map(j=>({title:j.title,company:token,location:j.location,description:j.descriptionPlain||j.descriptionHtml,employmentType:j.employmentType,remote:j.isRemote===true||j.workplaceType==='Remote',url:j.applyUrl||j.jobUrl}));
   }
   const api=u.hostname==='jobs.eu.lever.co'?'https://api.eu.lever.co':'https://api.lever.co';
   const data=await readJSON(`${api}/v0/postings/${encodeURIComponent(token)}?mode=json&limit=500`);
   if(!Array.isArray(data))throw Error('Job board response is invalid');
-  return data.map(j=>({title:j.text,company:token,location:j.categories?.location||j.categories?.allLocations?.join(', '),remote:j.workplaceType==='remote',url:j.applyUrl||j.hostedUrl}));
+  return data.map(j=>({title:j.text,company:token,location:j.categories?.location||j.categories?.allLocations?.join(', '),description:[j.descriptionPlain,...(j.lists||[]).map(x=>x.text+' '+x.content),j.additionalPlain].join(' '),employmentType:j.categories?.commitment,remote:j.workplaceType==='remote',url:j.applyUrl||j.hostedUrl}));
 }
 
 const defaultBoards=['braze','cloudflare','canonical','gitlab','datadog','grafanalabs'].map(x=>'https://boards.greenhouse.io/'+x).concat('https://jobs.lever.co/newton');
@@ -165,7 +169,7 @@ async function executeSearch(id,userId){
   const resolved=searchIntentForApplicant(search,applicant),intent=resolved.intent,requestedBoards=[...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')],boards=[...new Set([...defaultBoards,...curatedBoards(intent,applicant.focus),...requestedBoards])],requestedBoardSet=new Set(requestedBoards);
   if(search.auto_generated&&resolved.instruction!==search.instruction){search.instruction=resolved.instruction;db.prepare('UPDATE searches SET instruction=? WHERE id=?').run(search.instruction,id);}
   db.prepare('UPDATE searches SET last_run=?,last_error=NULL WHERE id=?').run(now(),id);
-  let scanned=0,matched=0,strongMatches=0,added=0,queued=0,errors=[];
+  let scanned=0,matched=0,strongMatches=0,added=0,queued=0,duplicatesSkipped=0,errors=[];
   const sources=[];
   for(let i=0;i<boards.length;i+=4){
     const group=boards.slice(i,i+4),results=await Promise.allSettled(group.map(listBoard));
@@ -182,15 +186,20 @@ async function executeSearch(id,userId){
       for(const job of jobs){
         if(added>=250)break;
         const assessment=matchAssessment(job,intent,applicant.focus);if(!assessment.matched)continue;
+        const eligibility=intent.worldwideEligibility?workEligibility(job):null;if(eligibility&&!eligibility.eligible)continue;
         let url;try{url=normalizeURL(job.url)}catch{continue}
         const direct=directDiscoveryLink(url);
         if(!direct)continue;
+        const ck=companyKey(job.company),tk=historyKey(job.title);
+        const imported=db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,ck,tk);
+        const prior=db.prepare("SELECT 1 FROM jobs WHERE user_id=? AND history_company(company)=? AND history_title(title)=? AND (status IN ('submitted','interview','offer','rejected','duplicate','archived','running','local_browser','queued') OR local_attempt_at IS NOT NULL)").get(userId,ck,tk);
+        if(imported||prior){duplicatesSkipped++;continue;}
         matched++;
         if(assessment.strong)strongMatches++;
         const canQueue=!!(direct&&assessment.strong&&search.auto_queue&&applicant.consent&&applicant.email&&applicant.resume_path);
         const id=randomUUID(),date=now();
         const result=db.prepare('INSERT OR IGNORE INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-          .run(id,userId,applicant.id,String(job.title).slice(0,200),String(job.company).slice(0,200),url,url,canQueue?'queued':'saved',`Source: ${source}${job.location?' · '+String(job.location).slice(0,100):''} · ${assessment.strong?'Strong':'Comparable'} profile match`,date,date);
+          .run(id,userId,applicant.id,String(job.title).slice(0,200),String(job.company).slice(0,200),url,url,canQueue?'queued':'saved',`Source: ${source}${job.location?' · '+String(job.location).slice(0,100):''} · ${assessment.strong?'Strong':'Comparable'} profile match${eligibility?' · '+eligibility.reason:''}`,date,date);
         if(result.changes){db.prepare('UPDATE jobs SET discovery_priority=? WHERE id=?').run(intent.locationOrder?locationPriority(job):5,id);added++;if(canQueue)queued++;event(id,canQueue?'queued':'saved',`Found by search: ${search.instruction}`)}
         else if(canQueue){
           const existing=db.prepare("SELECT id FROM jobs WHERE applicant_id=? AND normalized_url=? AND status='saved' AND challenge IS NULL").get(applicant.id,url);
@@ -200,7 +209,7 @@ async function executeSearch(id,userId){
     }catch(e){errors.push(`${source}: ${String(e.message).slice(0,150)}`)}
   }
   db.prepare('UPDATE searches SET last_error=? WHERE id=?').run(errors.join('; ').slice(0,600)||null,id);
-  const result={scanned,matched,strongMatches,added,queued,errors,sources:sources.map(s=>({source:s.source,count:s.jobs.length}))};
+  const result={scanned,matched,strongMatches,added,queued,duplicatesSkipped,errors,sources:sources.map(s=>({source:s.source,count:s.jobs.length}))};
   db.prepare('UPDATE searches SET last_result_json=? WHERE id=?').run(JSON.stringify(result),id);
   return result;
 }

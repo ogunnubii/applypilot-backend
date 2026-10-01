@@ -5,7 +5,7 @@ function saveSession(value,remember){sessionStorage.setItem('applypilot-token',v
 function clearSession(){sessionStorage.removeItem('applypilot-token');localStorage.removeItem('applypilot-remembered-token');localStorage.setItem('applypilot-signout',String(Date.now()));}
 window.addEventListener('storage',e=>{if(e.key==='applypilot-signout'){sessionStorage.removeItem('applypilot-token');location.reload();}});
 function rememberOption(form){const label=document.createElement('label'),box=document.createElement('input');box.type='checkbox';box.name='remember';box.style.cssText='width:auto;display:inline;margin-right:8px';label.style.cssText='display:block;margin:12px 0';label.append(box,document.createTextNode('Keep me signed in on this computer for up to 30 days'));form.insertBefore(label,form.querySelector('button'));return box;}
-const $=s=>document.querySelector(s);let token=restoreSession(),busy=false,lastSignature='',pendingHandoff=null;
+const $=s=>document.querySelector(s);let token=restoreSession(),busy=false,lastSignature='',pendingHandoff=null,externalRecords=[],overviewSignature='';
 const el=(tag,text)=>{const e=document.createElement(tag);if(text)e.textContent=text;return e};
 async function api(path,method='GET',data){const r=await fetch(((location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pages.dev'))?'https://marvelous-vitality-production-c2d8.up.railway.app':'')+'/api'+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d}
 function field(form,label){const l=el('label',label),i=el('textarea');i.required=true;i.maxLength=4000;l.append(i);form.append(l);return i}
@@ -48,11 +48,15 @@ async function notificationSettings(){
 }
 async function refresh(force=false){
  if(busy||activeHandoff)return;
- const [{jobs},health]=await Promise.all([api('/jobs'),api('/status')]);
+ const [{jobs},health,history]=await Promise.all([api('/jobs'),api('/status'),api('/application-history')]);
+ externalRecords=history.records;
  $('#login').hidden=true;$('#workspace').hidden=false;$('#logout').hidden=false;
  notificationSettings();
  updateDiscovery();
  const current=jobs.filter(j=>j.status!=='duplicate');
+ const interviews=interviewRecords(externalRecords,current);
+ renderHistoryOverview(externalRecords,current);
+ const externalInterviews=interviews.filter(r=>!current.some(j=>j.status==='interview'&&interviewIdentity(j)===interviewIdentity(r)));
  if(pendingHandoff){
   const target=current.find(j=>j.id===pendingHandoff.id);
   if(target?.handoff_available){pendingHandoff=null;document.querySelector('#preparing-browser')?.remove();await openHandoff(target);return;}
@@ -61,24 +65,26 @@ async function refresh(force=false){
    pendingHandoff=null;document.querySelector('#preparing-browser')?.remove();$('#notice').textContent=message;force=true;
   }else if(Date.now()-pendingHandoff.started>180000){pendingHandoff=null;const banner=$('#preparing-browser');if(banner)banner.textContent='The live browser is taking longer than expected. Check the application below or try again when the worker is available.';force=true;}
  }
- renderMissingAnswers(current);renderLibraryLauncher();renderFocusControl();renderArchiveControl(current);if($('#career-overview'))$('#workspace').prepend($('#career-overview'));
+ renderBrowserReadiness(current);renderMissingAnswers(current);renderLibraryLauncher();renderFocusControl();renderArchiveControl(current);if($('#career-overview'))$('#workspace').prepend($('#career-overview'));
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  $('#needs-count').textContent=current.filter(j=>['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
  $('#applying-count').textContent=current.filter(j=>['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase!=='blocked').length;
  $('#local-count').textContent=current.filter(j=>j.status==='local_browser').length;
- const totals=Object.fromEntries(['saved','submitted','interview','offer','rejected'].map(state=>[state,current.filter(j=>j.status===state).length]));
+ const totals=Object.fromEntries(['saved','submitted','interview','offer','rejected'].map(state=>[state,(state==='interview'?interviews.length:current.filter(j=>j.status===state).length)]));
  for(const [state,value] of Object.entries(totals)){const target=$('#'+(state==='saved'?'found':state)+'-count');if(target)target.textContent=value;}
  const decided=totals.interview+totals.offer+totals.rejected;
  const success=$('#success-rate');if(success)success.textContent=decided?Math.round((totals.interview+totals.offer)*100/decided)+'%':'—';
  $('#worker-state').textContent=health.workerOnline?'● Worker connected · Progress updates automatically':'○ Worker offline · Saved information is retained';
- const signature=JSON.stringify(current);
+ const signature=JSON.stringify([current,externalRecords]);
  if(!force&&(signature===lastSignature||$('#jobs').contains(document.activeElement)||$('#jobs').querySelector('[data-dirty="true"],details[open]')))return;
  lastSignature=signature;$('#jobs').replaceChildren();
  const blocked=j=>['needs_review','paused'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked';
  const rank=j=>blocked(j)?0:1+['local_browser','running','queued','saved','submitted','interview','rejected','offer'].indexOf(j.status);
  const updated=j=>Number.isFinite(Date.parse(j.updated_at))?Date.parse(j.updated_at):0;
  current.sort((a,b)=>rank(a)-rank(b)||updated(b)-updated(a)||String(a.id).localeCompare(String(b.id)));
+ for(const r of externalInterviews)$('#jobs').append(interviewCard(r));
  for(const job of current){
+  if(job.status==='interview'){const r=interviews.find(r=>interviewIdentity(r)===interviewIdentity(job));$('#jobs').append(interviewCard(r));continue;}
   const card=el('article');card.className='job';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');card.dataset.state=job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');names.append(el('h2',job.title),el('small',job.company));const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.local_phase==='blocked'?(/^Ready for your review/.test(job.last_message||'')?'Ready for your review':'Needs your input'):job.local_attempt_at?'Applying · verifying':'Applying · local',submitted:'Submitted',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
   const updated=Date.parse(job.updated_at),stamp=el('p');stamp.className='last-updated';stamp.style.cssText='font-size:13px;color:#626c65;margin:8px 0';
   if(Number.isFinite(updated)){const time=el('time',new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(updated)));time.dateTime=new Date(updated).toISOString();stamp.append(document.createTextNode('Last updated: '),time);}else stamp.textContent='Last updated: unavailable';card.append(stamp);
@@ -95,8 +101,8 @@ async function refresh(force=false){
    const local=job.execution_mode==='local';
    const p=el('p',local?'This profile uses your Windows browser. Open the extension to start this application.':'ApplyPilot can fill and submit routine steps using your saved profile. It will stop for verification, unknown facts and sensitive statements.');
    card.append(p);
-   if(local){const a=el('a','Browser setup');a.href=(location.hostname.endsWith('.pages.dev')?location.origin:'https://applypilot-jobs.netlify.app')+'/local-browser.html';card.append(a);}
-   else{const start=el('button','Apply automatically'),message=el('p');message.setAttribute('role','status');start.onclick=async()=>{start.disabled=true;try{await api('/jobs/'+job.id+'/queue','POST',{});await refresh(true);$('#notice').textContent='Application queued. You can close this page; the hosted worker will continue.';}catch(e){message.textContent=e.message;start.disabled=false;}};card.append(start,message);}
+   if(local){const a=el('a','Browser setup');a.href='https://marvelous-vitality-production-c2d8.up.railway.app/local-browser.html';card.append(a);}
+   {const start=el('button',local?'Queue for my browser':'Apply automatically'),message=el('p');message.setAttribute('role','status');start.onclick=async()=>{start.disabled=true;try{await api('/jobs/'+job.id+'/queue','POST',{});await refresh(true);$('#notice').textContent=local?'Application queued. Keep your updated browser helper and signed-in dashboard open.':'Application queued. You can close this page; the hosted worker will continue.';}catch(e){message.textContent=e.message;start.disabled=false;}};card.append(start,message);}
    $('#jobs').append(card);continue;
   }
   if(['running','queued'].includes(job.status)){card.append(el('p',job.status==='running'?'Applying with your saved answers…':'Waiting for the worker. No action needed.'));$('#jobs').append(card);continue}
@@ -323,7 +329,7 @@ function focusLocalApplication(jobId){
 function renderLibraryLauncher(){
  if(document.querySelector('#answer-library'))return;
  const box=el('section');box.id='answer-library';box.style.cssText='padding:20px;margin:16px 0;border:1px solid #74ad91;border-radius:12px';
- box.append(el('h2','Answer library'),el('p','Save filled employer forms with the extension’s Save form answers to library button. Confirmed ordinary answers can fill matching questions automatically. Approve other reusable answers here; conflicts and application-specific answers need review. Matching dropdowns fill with extension 0.5.0. You make the final submission.'));
+ box.append(el('h2','Answer library'),el('p','Save filled employer forms with the extension’s Save form answers to library button. Confirmed ordinary answers can fill matching questions automatically. Approve other reusable answers here; conflicts and application-specific answers need review. Matching dropdowns fill automatically. With extension 0.6.0, approved queued applications can submit routine forms and record employer receipts.'));
  const load=el('button','Open / refresh answer library'),list=el('div');box.append(load,list);$('#workspace').prepend(box);
  load.onclick=async()=>{load.disabled=true;try{const {answers}=await api('/answer-library');list.replaceChildren();if(!answers.length)list.append(el('p','No captured answers yet. Save a filled form from its employer tab.'));
  for(const entry of answers){const form=el('form');form.style.cssText='padding:12px 0;border-top:1px solid #ddd';const input=field(form,entry.question);input.value=entry.answer;form.append(el('small',entry.company+' · '+(entry.confirmed?'Employer receipt recorded':'Captured draft — not proof of submission')));
@@ -362,27 +368,54 @@ function renderArchiveControl(jobs){
  $('#review-archive').textContent='Review '+box.archiveCandidates.length+' attention-needed applications for archive';
 }
 
-function renderHistoryOverview(records){
- let box=$('#career-overview');if(!box){box=el('section');box.id='career-overview';box.style.cssText='padding:24px;margin:16px 0;background:#e9f5ee;border:2px solid #39765c;border-radius:16px';$('#workspace').prepend(box);}
- box.replaceChildren(el('h2','Your interviews'));
- const interviews=records.filter(r=>r.status==='interview');
- if(!interviews.length)box.append(el('p','No interviews recorded yet.'));
- for(const r of interviews){const card=el('article');card.style.cssText='background:white;padding:16px;margin:10px 0;border-radius:10px';card.append(el('h3',r.company+' — '+r.title),el('strong',r.interview_at||'Date to be confirmed'),el('p',r.notes),el('small','Source: '+r.source));box.append(card);}
- const details=el('details');details.append(el('summary','Add interview from another source'));
+function interviewIdentity(r){
+ const norm=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+ const company=norm(String(r.company||'').toLowerCase().replace(/\b(incorporated|inc|corporation|corp|limited|ltd|llc)\.?\s*$/,'').trim());
+ return (({clutchtechnologies:'clutch',arhsdevelopments:'arhs',pricewaterhousecoopers:'pwc'})[company]||company)+'|'+norm(r.title);
+}
+function interviewRecords(records,jobs=[]){
+ const map=new Map();for(const j of jobs.filter(j=>j.status==='interview'))map.set(interviewIdentity(j),{...j,source:'ApplyPilot',native:true});
+ for(const r of records.filter(r=>r.status==='interview')){const key=interviewIdentity(r);map.set(key,{...map.get(key),...r});}
+ return [...map.values()].sort((a,b)=>Number(a.interview_stage==='completed')-Number(b.interview_stage==='completed')||String(a.company).localeCompare(String(b.company)));
+}
+function interviewCard(r){
+ const card=el('article');card.className='job interview-record';card.dataset.state='interview';card.dataset.local='false';card.dataset.search=(r.title+' '+r.company+' '+r.notes).toLowerCase();
+ const label=r.interview_stage==='completed'?'Completed interview':r.interview_stage==='needs_scheduling'?'Interview · needs scheduling':'Interview';
+ card.append(el('h3',r.company+' — '+r.title),el('strong',label),el('p',r.interview_at||'Date to be confirmed'),el('p',r.notes||''),el('small','Source: '+r.source));
+ const edit=el('details');edit.append(el('summary','Update interview'));
+ edit.append(interviewForm(r));card.append(edit);return card;
+}
+function interviewForm(record={}){
  const form=el('form'),fields={};
- for(const [key,label] of [['company','Company'],['title','Job title'],['source','Interview source'],['interview_at','Interview date, time and timezone'],['notes','Interview details / meeting location'],['work_mode','Work arrangement (remote, hybrid, on-site or unknown)'],['country','Job country']]){
- const labelEl=el('label',label),input=el('input');input.setAttribute('aria-label',label);input.required=['company','title','source'].includes(key);labelEl.append(input);form.append(labelEl);fields[key]=input;}
- fields.work_mode.value='unknown';
- const save=el('button','Save interview'),feedback=el('p');save.type='submit';feedback.setAttribute('role','status');form.append(save,feedback);details.append(form);box.append(details);
- form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{const row=Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,v.value.trim()]));row.status='interview';await api('/application-history','POST',{rows:[row]});const d=await api('/application-history');renderHistoryOverview(d.records);}catch(e){feedback.textContent=e.message;save.disabled=false;}};
+ for(const [key,label] of [['company','Company'],['title','Job title'],['source','Interview source'],['interview_at','Interview date, time and timezone'],['notes','Interview details / feedback'],['work_mode','Work arrangement (remote, hybrid, on-site or unknown)'],['country','Job country']]){
+  const l=el('label',label),input=el(key==='notes'?'textarea':'input');input.setAttribute('aria-label',label);input.required=['company','title','source'].includes(key);input.value=record[key]|| (key==='work_mode'?'unknown':'');if(record.company&&['company','title'].includes(key))input.readOnly=true;l.append(input);form.append(l);fields[key]=input;
+ }
+ const l=el('label','Interview stage'),stage=el('select');stage.setAttribute('aria-label','Interview stage');
+ for(const [value,label] of [['scheduled','Scheduled'],['completed','Completed'],['needs_scheduling','Needs scheduling']]){const o=el('option',label);o.value=value;stage.append(o);}stage.value=record.interview_stage||'scheduled';l.append(stage);form.append(l);fields.interview_stage=stage;
+ const save=el('button','Save interview'),feedback=el('p');save.type='submit';feedback.setAttribute('role','status');form.append(save,feedback);
+ form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{const row=Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,v.value.trim()]));row.status='interview';await api('/application-history','POST',{rows:[row]});form.closest('details').open=false;overviewSignature='';await refresh(true);$('#notice').textContent='Interview saved.';}catch(e){feedback.textContent=e.message;save.disabled=false;}};
+ return form;
+}
+function renderHistoryOverview(records,jobs=[]){
+ let box=$('#career-overview');if(!box){box=el('section');box.id='career-overview';box.style.cssText='padding:24px;margin:16px 0;background:#e9f5ee;border:2px solid #39765c;border-radius:16px';$('#workspace').prepend(box);}
+ const signature=JSON.stringify([records,jobs.filter(j=>['submitted','interview','rejected','offer'].includes(j.status))]);
+ if(signature===overviewSignature||box.contains(document.activeElement)||box.querySelector('details[open]'))return;
+ overviewSignature=signature;box.replaceChildren(el('h2','Your interviews'));
+ const interviews=interviewRecords(records,jobs),pending=interviews.filter(r=>r.interview_stage!=='completed'),completed=interviews.filter(r=>r.interview_stage==='completed');
+ const open=el('button','Open Interview section ('+interviews.length+')');open.onclick=()=>document.querySelector('[data-filter="interview"]')?.click();box.append(open);
+ if(!interviews.length)box.append(el('p','No interviews recorded yet.'));
+ if(pending.length){box.append(el('h3','Upcoming and awaiting scheduling'));for(const r of pending)box.append(interviewCard(r));}
+ if(completed.length){box.append(el('h3','Completed interviews'));for(const r of completed)box.append(interviewCard(r));}
+ const details=el('details');details.append(el('summary','Add interview from another source'),interviewForm());box.append(details);
  box.append(el('h2','Submissions by work arrangement and country'));
  const stats=el('div');box.append(stats);
  const count=rows=>{const modes={},countries={};for(const r of rows){const mode=r.work_mode||'unknown',country=r.country||'Unknown';modes[mode]=(modes[mode]||0)+1;countries[country]=(countries[country]||0)+1;}return {modes,countries};};
- // External history is kept separate from verified employer receipts; do not relabel it as confirmation.
  const render=(rows,label)=>{stats.append(el('h3',label+' ('+rows.length+')'));const {modes,countries}=count(rows);stats.append(el('p','Work arrangement: '+['remote','hybrid','on-site','unknown'].map(k=>k+': '+(modes[k]||0)).join(' · ')));stats.append(el('p','Countries: '+Object.entries(countries).sort((a,b)=>b[1]-a[1]).map(([k,n])=>k+': '+n).join(' · ')));};
  render(records,'Imported application history');
- stats.append(el('small','Imported records are applicant-reported applications, not newly verified employer receipts. Unknown means the source did not specify the work arrangement or country. Add details using the import fields; matching records are merged.'));
- api('/jobs').then(({jobs})=>{const submitted=jobs.filter(j=>['submitted','interview','rejected','offer'].includes(j.status));render(submitted.map(j=>({work_mode:/\bremote\b/i.test(j.title)?'remote':/\bhybrid\b/i.test(j.title)?'hybrid':/\bon-site\b/i.test(j.title)?'on-site':'unknown',country:/\bCanada\b|Toronto area/i.test(j.title)?'Canada':/\bUnited States\b|Columbus OHIO/i.test(j.title)?'United States':''})),'ApplyPilot submission records');stats.append(el('small','ApplyPilot totals retain the dashboard’s recorded statuses; external records are not added to that total.'));}).catch(()=>{});
+ stats.append(el('small','Imported records are applicant-reported applications, not newly verified employer receipts. Unknown means the source did not specify the work arrangement or country.'));
+ const submitted=jobs.filter(j=>['submitted','interview','rejected','offer'].includes(j.status));
+ render(submitted.map(j=>({work_mode:/\bremote\b/i.test(j.title)?'remote':/\bhybrid\b/i.test(j.title)?'hybrid':/\bon-site\b/i.test(j.title)?'on-site':'unknown',country:/\bCanada\b|Toronto area/i.test(j.title)?'Canada':/\bUnited States\b|Columbus OHIO/i.test(j.title)?'United States':''})),'ApplyPilot submission records');
+ stats.append(el('small','ApplyPilot totals retain recorded statuses; external records are not added to that total.'));
 }
 
 function mountExternalHistory(){
@@ -397,7 +430,7 @@ function mountExternalHistory(){
  const status=el('p');status.setAttribute('role','status');const list=el('div');
  form.append(label,submit);section.append(form,refresh,status,list);host.prepend(section);
  async function show(){const d=await api('/application-history');list.replaceChildren(el('p',d.records.length+' records stored in the background for duplicate protection'));
- renderHistoryOverview(d.records);}
+ externalRecords=d.records;overviewSignature='';await refresh(true);}
 
  refresh.onclick=()=>show().catch(e=>status.textContent=e.message);
  form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{
@@ -410,3 +443,21 @@ function mountExternalHistory(){
 mountExternalHistory();
 
 for(const a of document.querySelectorAll('a'))if(a.textContent.trim().includes('Home'))a.href='/';
+
+function renderBrowserReadiness(jobs){
+ if(!jobs.some(j=>j.execution_mode==='local')||$('#browser-readiness'))return;
+ const box=el('section');box.id='browser-readiness';box.style.cssText='padding:16px;border:1px solid #74ad91;border-radius:12px;margin:16px 0';
+ box.append(el('h2','Automatic applications in your browser'));
+ const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.0)');
+ setup.href='https://marvelous-vitality-production-c2d8.up.railway.app/local-browser.html';setup.style.marginLeft='12px';status.setAttribute('role','status');
+ box.append(status,check,setup);$('#workspace').prepend(box);
+ check.onclick=()=>{
+  check.disabled=true;const requestId=crypto.randomUUID();
+  const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);check.disabled=false;
+   status.textContent=error|| (data.version!=='0.6.0'?'Browser helper '+data.version+' is connected. Update to 0.6.0 for automatic submission and queue fixes.':data.enabled?'Browser helper 0.6.0 connected. New queued applications run automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine applications.')+(data?.error?' '+data.error:'');
+  };
+  const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-browser-status-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
+  const timer=setTimeout(()=>finish('Browser helper not detected here. Open this dashboard in the Chrome or Edge profile with ApplyPilot Local 0.6.0 enabled.'),3500);
+  window.addEventListener('message',receive);window.postMessage({type:'applypilot-browser-status',requestId},location.origin);
+ };check.onclick();
+}

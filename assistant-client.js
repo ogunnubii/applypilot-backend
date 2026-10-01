@@ -209,6 +209,8 @@ function renderMissingAnswers(jobs){
 async function updateDiscovery(){
  let section=$('#discovery-status');if(!section){section=el('section');section.id='discovery-status';section.style.cssText='padding:16px;border:1px solid #dce6df;border-radius:12px;margin-bottom:20px';$('#workspace').prepend(section);}
  try{const data=await api('/searches'),searches=(data.searches||[]).filter(s=>s.enabled);section.replaceChildren(el('strong','Automatic job discovery'));
+ const controls=el('details');controls.append(el('summary','Manage saved searches'));
+ for(const saved of data.searches||[]){const row=el('div'),toggle=el('button',saved.enabled?'Pause search':'Enable search');row.append(el('p',saved.instruction),toggle);toggle.onclick=async()=>{toggle.disabled=true;try{await api('/searches/'+saved.id+'/toggle','POST');await updateDiscovery();}catch(e){$('#notice').textContent=e.message;toggle.disabled=false;}};controls.append(row);}section.append(controls);
  if(!searches.length){section.append(el('p','No searches enabled. Add a saved search in profile setup.'));return;}
  const latest=searches.filter(s=>s.last_run).sort((a,b)=>b.last_run.localeCompare(a.last_run))[0],result=latest?.last_result;
  section.append(el('p',`${searches.length} enabled search${searches.length===1?'':'es'} · Checks every ${data.intervalHours||1} hour(s). New matches appear automatically; duplicates are skipped.`));

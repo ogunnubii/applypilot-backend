@@ -1,6 +1,6 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';import {spawn} from 'node:child_process';
-const dir=mkdtempSync(join(tmpdir(),'applypilot-'));process.env.DATABASE_PATH=join(dir,'test.sqlite');process.env.SESSION_SECRET='test-only-secret-'.repeat(3);process.env.REGISTRATION_CODE='test-registration-'.repeat(2);
-const {matches}=await import('./matching.js');const {parseIntent,runSearch}=await import('./discovery.js');const {db,now}=await import('./db.js');const {issueToken}=await import('./auth.js');
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';import {spawn} from 'node:child_process';
+const testRoot=process.env.APPLYPILOT_TEST_TMP||tmpdir();mkdirSync(testRoot,{recursive:true});const dir=mkdtempSync(join(testRoot,'applypilot-'));process.env.DATABASE_PATH=join(dir,'test.sqlite');process.env.SESSION_SECRET='test-only-secret-'.repeat(3);process.env.REGISTRATION_CODE='test-registration-'.repeat(2);
+const {matches,matchAssessment}=await import('./matching.js');const {parseBoards,parseIntent,profileSearchInstruction,mergeProfileRoles,searchIntentForApplicant,runSearch,directDiscoveryLink}=await import('./discovery.js');const {db,now}=await import('./db.js');const {issueToken}=await import('./auth.js');
 test('Role variants and Canadian cities match without accepting US-only remote',()=>{
  const intent=parseIntent('Find DevOps Engineer and Cloud Engineer; remote; Canada');
  for(const title of ['Senior SRE','Platform Engineer','Site Reliability Engineer II','DevOps Specialist'])assert(matches({title,location:'Toronto',remote:true},intent));
@@ -20,6 +20,17 @@ test('Discovery queues only eligible direct matches and deduplicates repeated ru
  const original=global.fetch;global.fetch=async url=>({ok:true,headers:new Headers(),text:async()=>JSON.stringify(String(url).includes('api.lever.co')?[{text:'Site Reliability Engineer',categories:{location:'Toronto'},applyUrl:'https://jobs.lever.co/example/abc/apply'}]:String(url).includes('jobicy')?{jobs:[{jobTitle:'DevOps Engineer',companyName:'Aggregator fixture',jobGeo:'Canada',url:'https://jobicy.com/jobs/123-fixture'}]}:{data:[]})});
  try{const first=await runSearch('s','u');assert.equal(first.queued,1);assert.equal(first.added,1);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE company=?').get('Aggregator fixture').n,0);assert.equal((await runSearch('s','u')).added,0);db.prepare("UPDATE jobs SET status='saved' WHERE applicant_id='a'").run();assert.equal((await runSearch('s','u')).queued,1);assert.equal(JSON.parse(db.prepare("SELECT last_result_json FROM searches WHERE id='s'").get().last_result_json).queued,1);}finally{global.fetch=original}
 });
+test('Ashby discovery saves comparable roles but queues only strong profile matches',async()=>{
+ db.prepare('INSERT INTO users VALUES(?,?,?,?)').run('u2','second@example.com','unused',now());
+ db.prepare('INSERT INTO applicants(id,user_id,name,email,location,focus,resume_path,consent,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run('a2','u2','Second','second@example.com','Toronto, Ontario','DevOps Engineer, Cloud Support Engineer','/fake.pdf',1,now());
+ db.prepare('INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,created_at) VALUES(?,?,?,?,?,?,?)').run('s2','u2','a2','DevOps Engineer; Toronto, remote Canada','["https://jobs.ashbyhq.com/fixture"]',1,now());
+ const original=global.fetch;global.fetch=async url=>({ok:true,headers:new Headers(),text:async()=>JSON.stringify(String(url).includes('/job-board/fixture')?{jobs:[
+  {title:'Cloud Support Engineer',location:'Toronto, Ontario',jobUrl:'https://jobs.ashbyhq.com/fixture/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'},
+  {title:'Senior Cloud Support Engineer',location:'Toronto, Ontario',jobUrl:'https://jobs.ashbyhq.com/fixture/bbbbbbbb-cccc-dddd-eeee-ffffffffffff'},
+  {title:'Cloud Support Engineer',location:'Remote - United States only',isRemote:true,jobUrl:'https://jobs.ashbyhq.com/fixture/cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa'}
+ ]}:String(url).includes('api.lever.co')?[]:String(url).includes('jobicy')?{jobs:[]}:String(url).includes('arbeitnow')?{data:[]}:{jobs:[]})});
+ try{const result=await runSearch('s2','u2');assert.equal(result.added,2);assert.equal(result.strongMatches,1);assert.equal(result.queued,1);assert.deepEqual(db.prepare("SELECT status FROM jobs WHERE applicant_id='a2' ORDER BY title").all().map(row=>row.status),['queued','saved']);}finally{global.fetch=original}
+});
 test('Expanded roles preserve CI/CD and the requested location priority',async()=>{
  const {locationPriority}=await import('./matching.js');
  const roles=['Application Support Engineer','Technical Support Engineer','Cloud Support Engineer','Production Support Engineer','Systems Administrator','Infrastructure Engineer','DevOps Engineer','Platform Engineer','NOC Engineer','CI/CD Engineer','Head of Infrastructure','Build and Release Engineer'];
@@ -28,6 +39,111 @@ test('Expanded roles preserve CI/CD and the requested location priority',async()
  for(const title of roles)assert(matches({title,location:'Berlin'},intent));
  assert.deepEqual([{location:'Markham, Ontario'},{location:'North York, Toronto'},{location:'Mississauga'},{location:'Remote - Canada'},{location:'Vancouver, Canada'},{location:'Berlin'}].map(locationPriority),[0,1,2,3,4,5]);
  assert(!matches({title:'Accountant',location:'Markham'},intent));
+});
+test('Comparable infrastructure titles are discovered but only strong, location-compatible roles auto-queue',()=>{
+ const intent=parseIntent('DevOps Engineer; priority: York Region > Toronto > GTA > remote > Canada > worldwide');
+ assert.equal(matchAssessment({title:'Cloud Operations Engineer',location:'Toronto'},intent,'DevOps Engineer, Cloud Engineer').strong,true);
+ assert.equal(matchAssessment({title:'DevOps Manager',location:'Toronto'},intent,'DevOps Engineer').strong,false);
+ assert.equal(matchAssessment({title:'Senior DevOps Engineer',location:'Toronto'},intent,'Operations Manager, DevOps Engineer').strong,false);
+ assert.equal(matchAssessment({title:'DevOps Engineer',location:'Remote - United States only',remote:true},intent,'DevOps Engineer').strong,false);
+ assert.equal(matchAssessment({title:'DevOps Engineer',location:'Berlin'},intent,'DevOps Engineer').strong,false);
+ assert.equal(matchAssessment({title:'DevOps Engineer',location:'Worldwide'},intent,'DevOps Engineer').strong,true);
+ assert.equal(matches({title:'Senior Software Engineer, Infrastructure Security',location:'Toronto'},intent),false);
+});
+test('Conflicting occupation and function titles are never strong auto-queue matches',()=>{
+ const location='Toronto, Ontario';
+ for(const [wanted,title] of [
+  ['Senior DevOps Engineer','Senior Manager, DevOps'],
+  ['DevOps Engineer','DevOps Sales Specialist'],
+  ['Registered Nurse','Nurse Aide'],
+  ['Registered Nurse','Nurse Educator'],
+  ['Systems Administrator','Business Systems Engineer']
+ ]){
+  const assessment=matchAssessment({title,location},parseIntent(`${wanted}; Toronto`),wanted);
+  assert.equal(assessment.strong,false,`${wanted} should not auto-queue ${title}`);
+ }
+ assert.equal(matchAssessment({title:'Senior Site Reliability Engineer',location},parseIntent('Senior DevOps Engineer; Toronto')).strong,true);
+ assert.equal(matchAssessment({title:'Site Reliability Engineer',location},parseIntent('Senior DevOps Engineer; Toronto')).strong,false);
+ assert.equal(matchAssessment({title:'DevOps Specialist',location},parseIntent('DevOps Engineer; Toronto')).strong,true);
+ for(const otherRole of ['Head of Infrastructure','Operations Manager','Senior SRE']){
+  const mixed=parseIntent(`DevOps Engineer, ${otherRole}; Toronto`);
+  assert.equal(matchAssessment({title:'DevOps Engineer',location},mixed).strong,true,`${otherRole} must not contaminate the DevOps role`);
+ }
+});
+test('Shared role suffixes and local-plus-remote location lists stay specific',()=>{
+ const intent=parseIntent('DevOps or Infrastructure Engineer; York Region, Toronto, remote Canada');
+ assert.deepEqual(intent.roles,['devops engineer','infrastructure engineer']);assert.equal(intent.remote,false);
+ assert.deepEqual(intent.localPlaces,['york region','toronto']);assert.deepEqual(intent.remotePlaces,['canada']);
+ assert(matches({title:'DevOps Engineer',location:'Markham, Ontario'},intent));
+ assert(matches({title:'Infrastructure Engineer',location:'Remote - Canada',remote:true},intent));
+ assert(!matches({title:'DevOps Engineer',location:'Vancouver, Canada',remote:false},intent));
+ assert(!matches({title:'DevOps Engineer',location:'Calgary, Alberta',remote:false},intent));
+ assert.equal(matchAssessment({title:'DevOps Manager',location:'Toronto'},intent).strong,false);
+ const reversed=parseIntent('DevOps or Infrastructure Engineer; remote Canada, Toronto, York Region');
+ assert.deepEqual(reversed.localPlaces,['toronto','york region']);assert.deepEqual(reversed.remotePlaces,['canada']);assert.equal(reversed.remote,false);
+ assert(matches({title:'DevOps Engineer',location:'Toronto, Ontario',remote:false},reversed));
+ assert(matches({title:'DevOps Engineer',location:'Remote - Canada',remote:true},reversed));
+ assert.equal(matchAssessment({title:'DevOps Engineer',location:'Vancouver, Canada',remote:false},reversed).strong,false);
+ assert.equal(matchAssessment({title:'DevOps Engineer',location:'Calgary, Alberta',remote:false},reversed).strong,false);
+});
+test('Mixed local and remote-country constraints are order-independent',()=>{
+ for(const instruction of ['DevOps Engineer; Toronto, remote Canada','DevOps Engineer; remote Canada, Toronto']){
+  const intent=parseIntent(instruction);
+  assert.deepEqual(intent.localPlaces,['toronto']);assert.deepEqual(intent.remotePlaces,['canada']);assert.deepEqual(intent.places,['toronto']);assert.equal(intent.remote,false);
+  assert.equal(matchAssessment({title:'DevOps Engineer',location:'Toronto, Ontario',remote:false},intent).strong,true);
+  assert.equal(matchAssessment({title:'DevOps Engineer',location:'Remote - Canada',remote:true},intent).strong,true);
+  assert.equal(matchAssessment({title:'DevOps Engineer',location:'Vancouver, Canada',remote:false},intent).strong,false);
+  assert.equal(matchAssessment({title:'DevOps Engineer',location:'Calgary, Alberta',remote:false},intent).strong,false);
+ }
+});
+test('Remote-country and free-text city clauses never fall open to worldwide matches',()=>{
+ const remoteCanada=parseIntent('DevOps Engineer; remote Canada');assert.equal(remoteCanada.remote,true);
+ assert(matches({title:'DevOps Engineer',location:'Remote - Canada',remote:true},remoteCanada));
+ assert(!matches({title:'DevOps Engineer',location:'Toronto',remote:false},remoteCanada));
+ assert(!matches({title:'DevOps Engineer',location:'Remote - United States only',remote:true},remoteCanada));
+ for(const instruction of ['DevOps Engineer; remote; Canada','DevOps Engineer; Canada remote']){
+  const intent=parseIntent(instruction);assert.equal(intent.remote,true);assert.deepEqual(intent.places,[]);assert.deepEqual(intent.remotePlaces,['canada']);
+  assert(matches({title:'DevOps Engineer',location:'Remote - Canada',remote:true},intent));
+  assert(!matches({title:'DevOps Engineer',location:'Toronto',remote:false},intent));
+ }
+ const berlin=parseIntent('DevOps Engineer; Berlin');assert.deepEqual(berlin.places,['berlin']);
+ assert(matches({title:'DevOps Engineer',location:'Berlin, Germany'},berlin));
+ assert(!matches({title:'DevOps Engineer',location:'Toronto'},berlin));
+ assert(!matches({title:'DevOps Engineer',location:'Remote - Canada',remote:true},berlin));
+ const newYork=parseIntent('DevOps Engineer; New York, NY');assert.deepEqual(newYork.places,['new york ny']);
+ assert(matches({title:'DevOps Engineer',location:'New York, NY'},newYork));
+ assert(!matches({title:'DevOps Engineer',location:'Toronto'},newYork));
+});
+test('Resume discovery prefers explicit profile roles and carries the saved Canadian location',()=>{
+ const instruction=profileSearchInstruction({focus:'Infrastructure Engineer, Cloud Support Engineer',location:'Toronto, Ontario'},['Software Engineer','Project Manager']);
+ assert.equal(instruction,'infrastructure engineer, cloud support engineer; Toronto, Ontario, remote Canada');
+ const intent=parseIntent(instruction);assert.deepEqual(intent.roles,['infrastructure engineer','cloud support engineer']);
+ assert(matches({title:'Cloud Support Engineer',location:'Remote - Canada',remote:true},intent));
+ assert(!matches({title:'Project Manager',location:'Toronto'},intent));
+});
+test('Saved profile roles expand discovery without weakening level or location checks',()=>{
+ const intent=mergeProfileRoles(parseIntent('DevOps Engineer; Toronto, remote Canada'),'Infrastructure Engineer, Cloud Support Engineer');
+ assert(intent.roles.includes('cloud support engineer'));
+ assert.equal(matchAssessment({title:'Cloud Support Engineer',location:'Toronto'},intent).strong,true);
+ assert.equal(matchAssessment({title:'Senior Cloud Support Engineer',location:'Toronto'},intent).strong,false);
+ assert.equal(matches({title:'Cloud Support Engineer',location:'Remote - United States only',remote:true},intent),false);
+});
+test('Old auto-generated searches refresh location from the current profile on every run',()=>{
+ const applicant={focus:'DevOps Engineer',location:'Toronto, Ontario'};
+ const refreshed=searchIntentForApplicant({instruction:'DevOps Engineer',auto_generated:1},applicant);
+ assert.equal(refreshed.instruction,'devops engineer; Toronto, Ontario, remote Canada');
+ assert(matches({title:'DevOps Engineer',location:'Toronto'},refreshed.intent));
+ assert(matches({title:'DevOps Engineer',location:'Remote - Canada',remote:true},refreshed.intent));
+ assert(!matches({title:'DevOps Engineer',location:'Berlin'},refreshed.intent));
+ assert(!matches({title:'DevOps Engineer',location:'Remote - United States only',remote:true},refreshed.intent));
+ const manual=searchIntentForApplicant({instruction:'DevOps Engineer; priority: York Region > Toronto > GTA > remote > Canada > worldwide',auto_generated:0},applicant);
+ assert.equal(manual.instruction,'DevOps Engineer; priority: York Region > Toronto > GTA > remote > Canada > worldwide');
+});
+test('Ashby employer boards and direct application links are accepted without broadening arbitrary hosts',()=>{
+ assert.deepEqual(parseBoards('https://jobs.ashbyhq.com/Blackpoint%20Cyber'),['https://jobs.ashbyhq.com/Blackpoint%20Cyber']);
+ assert.deepEqual(parseBoards('https://jobs.ashbyhq.com/marble.ai'),['https://jobs.ashbyhq.com/marble.ai']);
+ assert(directDiscoveryLink('https://jobs.ashbyhq.com/hopper/d0d53b33-ed77-49b5-9d17-624bc946be4b'));
+ assert(!directDiscoveryLink('https://example.com/hopper/d0d53b33-ed77-49b5-9d17-624bc946be4b'));
 });
 test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',async()=>{
  const duplicateId='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
@@ -48,7 +164,7 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers,body:'{}'})).status,409);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/handoff/open',{method:'POST',headers,body:'{}'})).status,409);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/handoff/view',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
-  const save=await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers,body:JSON.stringify({question:'Why this role?',answer:'I enjoy infrastructure operations.',remember:true})});assert.equal(save.status,200);assert.equal(JSON.parse(db.prepare('SELECT answers_json FROM applicants WHERE id=?').get('a').answers_json)['Why this role?'],'I enjoy infrastructure operations.');
+  const save=await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers,body:JSON.stringify({question:'Why this role?',answer:'I enjoy infrastructure operations.',remember:true})});assert.equal(save.status,200);assert.equal(JSON.parse(db.prepare('SELECT answers_json FROM applicants WHERE id=?').get('a').answers_json)['Why this role?'],undefined);
   assert.equal((await (await fetch(base+'/api/jobs/'+id+'/answers',{headers})).json()).answers['Why this role?'],'I enjoy infrastructure operations.');
   assert.equal((await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers,body:JSON.stringify({answers:{Question:'Answer'}})})).status,409);
@@ -98,6 +214,7 @@ test('Canonical URLs collapse Lever apply aliases; upload selection rejects ambi
  const {canonicalJobURL,pickResumeField}=await import('./form-policy.js');
  assert.equal(canonicalJobURL('https://jobs.lever.co/newton/abc/apply?source=feed'),canonicalJobURL('https://jobs.lever.co/newton/abc'));
  assert.notEqual(canonicalJobURL('https://jobs.lever.co/newton/abc'),canonicalJobURL('https://jobs.lever.co/newton/def'));
+ assert.equal(canonicalJobURL('https://jobs.ashbyhq.com/hopper/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/application?utm_source=test'),canonicalJobURL('https://jobs.ashbyhq.com/hopper/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
  assert.equal(pickResumeField([{id:'resume'},{id:'cover letter'}]),0);
  assert.equal(pickResumeField([{label:'Resume'},{label:'Alternative resume'}]),-1);
  assert.equal(pickResumeField([{label:'Cover letter'}]),-1);

@@ -40,10 +40,15 @@ function extractDocx(bytes){
   throw Error('Resume document text was not found');
 }
 
-export async function resumeRoles(path,kind){
+export async function resumeText(path,kind){
   let text;
   if(kind==='.pdf')({stdout:text}=await run('pdftotext',['-layout',path,'-'],{timeout:10000,maxBuffer:1_000_000}));
   else text=extractDocx(await readFile(path));
+  return text;
+}
+
+export async function resumeRoles(path,kind){
+  const text=await resumeText(path,kind);
   const lines=text.split(/\n/).map(x=>x.trim()).filter(Boolean),head=lines.slice(0,65).join('\n').slice(0,6500);
   const found=roles.map(([pattern,label])=>({label,position:head.search(pattern)})).filter(x=>x.position>=0).sort((a,b)=>a.position-b.position);
   return [...new Set(found.map(x=>x.label))].slice(0,4);

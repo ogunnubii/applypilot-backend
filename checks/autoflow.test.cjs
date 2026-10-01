@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
-const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
+const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
 test("routine submissions and receipt safety",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const wait=()=>new Promise(r=>setTimeout(r,35));
@@ -371,4 +371,34 @@ test('discovery updates existing pay without resetting attempts and queues only 
  const previous=db.prepare("SELECT * FROM jobs WHERE id='old'").get();assert.equal(previous.status,'local_browser');assert.equal(previous.attempts,2);assert.equal(previous.local_attempt_at,'2026-01-01');assert.equal(previous.notes,'Do not overwrite');assert(JSON.parse(previous.job_metadata_json).pay.length);
  const rows=db.prepare("SELECT title,status FROM jobs WHERE id!='old' ORDER BY title").all();assert.deepEqual(rows.map(r=>[r.title,r.status]),[[best.title,'queued'],[lower.title,'saved']]);
  assert(!db.prepare('SELECT 1 FROM jobs WHERE title=?').get(excluded.title));assert.equal(db.prepare("SELECT source_cursor FROM searches WHERE id='s'").get().source_cursor,4);db.close();
+});
+
+test('Gemini browser handoff uses public questions only, preserves user answers and never bypasses continuation checks',async()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite');
+ const googleCode=sources['google-research.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
+ const {canResearchQuestion,markResearchDraftUsed}=new Function(googleCode+';return {canResearchQuestion,markResearchDraftUsed};')();
+ const source=sources['public-answer-fill.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
+ const publicFill=new Function('canResearchQuestion','researchForJob','markResearchDraftUsed','requestContinuation','researchConsentWithdrawn',source+';return {installPublicFill,fillPublicQuestions,publicFillStatus};')(canResearchQuestion,()=>{},()=>true,()=>{},()=>false);
+ const db=new DatabaseSync(':memory:');
+ db.exec("CREATE TABLE applicants(id TEXT,user_id TEXT,name TEXT,consent INTEGER,google_research_consent INTEGER,ai_consent INTEGER,answers_json TEXT);CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,company TEXT,title TEXT,status TEXT,local_phase TEXT,local_attempt_at TEXT,handoff_available INTEGER,required_fields_json TEXT,answers_json TEXT,updated_at TEXT);CREATE TABLE events(job_id TEXT,at TEXT,type TEXT,message TEXT);");
+ db.prepare('INSERT INTO applicants VALUES(?,?,?,?,?,?,?)').run('p','u','Tester',1,1,0,'{}');
+ const q='What products does this company offer?',personal='Tell us about your experience',legal='Do you consent to a criminal background check?';
+ db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('j','u','p','Example','Engineer','local_browser','blocked',null,0,JSON.stringify([q,personal,legal]),'{}',new Date().toISOString());
+ publicFill.installPublicFill(db);let calls=0,continuations=0;
+ let result=await publicFill.fillPublicQuestions(db,'j',{env:{GEMINI_API_KEY:'fixture'},research:async(_db,uid,id,question)=>{calls++;assert.equal(question,q);assert.equal(uid,'u');return {answer:'Public-page answer',citations:[{url:'https://example.test/job'}]};},continueJob:()=>{continuations++;throw Error('A declaration needs the user');}});
+ assert.equal(calls,1);assert.equal(result.filled,1);assert.equal(continuations,1);
+ assert.deepEqual(JSON.parse(db.prepare("SELECT answers_json FROM jobs WHERE id='j'").get().answers_json),{[q]:'Public-page answer'});
+ assert.equal(db.prepare("SELECT local_phase FROM jobs WHERE id='j'").get().local_phase,'blocked');
+ await publicFill.fillPublicQuestions(db,'j',{env:{GEMINI_API_KEY:'fixture'},research:async()=>{throw Error('Should not request a saved question');}});assert.equal(calls,1);
+ db.prepare("UPDATE jobs SET answers_json='{}',local_attempt_at='attempted' WHERE id='j'").run();
+ assert.equal((await publicFill.fillPublicQuestions(db,'j',{env:{GEMINI_API_KEY:'fixture'},research:async()=>{calls++;}})).filled,0);assert.equal(calls,1);
+ db.prepare("UPDATE jobs SET local_attempt_at=NULL WHERE id='j'").run();db.exec('DELETE FROM public_fill_attempts');
+ result=await publicFill.fillPublicQuestions(db,'j',{env:{GEMINI_API_KEY:'fixture'},research:async()=>{db.prepare("UPDATE jobs SET answers_json=? WHERE id='j'").run(JSON.stringify({[q]:'My own answer'}));return {answer:'Late draft'};}});
+ assert.equal(result.filled,0);assert.equal(JSON.parse(db.prepare("SELECT answers_json FROM jobs WHERE id='j'").get().answers_json)[q],'My own answer');
+ db.prepare("UPDATE jobs SET answers_json='{}' WHERE id='j'").run();db.exec('DELETE FROM public_fill_attempts');
+ await publicFill.fillPublicQuestions(db,'j',{env:{GEMINI_API_KEY:'fixture'},research:async()=>{throw Error('Google research returned HTTP 429.');}});
+ const status=publicFill.publicFillStatus(db,'u',{GEMINI_API_KEY:'secret-fixture'});assert(status.googleConfigured);assert.equal(status.attempts[0].message,'Google research returned HTTP 429.');assert(!JSON.stringify(status).includes('secret-fixture'));
+ assert.equal(publicFill.publicFillStatus(db,'other',{}).attempts.length,0);
+ let retries=0;await publicFill.fillPublicQuestions(db,'j',{env:{GEMINI_API_KEY:'fixture'},research:async()=>{retries++;}});assert.equal(retries,0,'provider errors back off for one hour');
+ db.close();
 });

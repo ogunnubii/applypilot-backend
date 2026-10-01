@@ -1,3 +1,4 @@
+import {installArchive,archiveApplications,restoreApplication} from './application-archive.js';
 import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse,reusableAnswers} from './answer-library.js';
 import {installDrafts,draftForJob} from './answer-drafts.js';
 import {hasResearchDraftForQuestion,installResearch,isResearchDraft,markResearchDraftUsed,researchForJob} from './google-research.js';
@@ -12,6 +13,7 @@ import {createServer} from 'node:http';import {randomUUID} from 'node:crypto';im
 import {parseBoards,parseIntent,profileSearchInstruction,runSearch} from './discovery.js';
 import {resumeRoles} from './resume.js';
 installNotifications(db);installLibrary(db);installDrafts(db);installResearch(db);db.exec('CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT)');
+installArchive(db);
 let emailBusy=false;
 const emailTimer=setInterval(async()=>{if(emailBusy)return;emailBusy=true;try{await sendBlockerEmails(db)}catch{console.error('Blocker notification delivery failed')}finally{emailBusy=false}},60000);emailTimer.unref();
 const origin=process.env.PUBLIC_ORIGIN;if(!origin)throw Error('Set PUBLIC_ORIGIN');if(!process.env.REGISTRATION_CODE||process.env.REGISTRATION_CODE.length<24)throw Error('Set REGISTRATION_CODE to a random value of at least 24 characters');const attempts=new Map();const uploadDir=resolve(process.env.UPLOAD_DIR||'./data/resumes');const limit=6*1024*1024;
@@ -38,6 +40,12 @@ if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-01-profile
 if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(req));if(input.registration_code!==process.env.REGISTRATION_CODE)return send(res,403,{error:'Registration code required'});let email=text(input.email,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return send(res,400,{error:'Valid email required'});let id=randomUUID(),hash=hashPassword(input.password);try{db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(id,email,hash,now())}catch{return send(res,409,{error:'Account already exists'})}return send(res,201,{token:issueToken(id,input.remember===true)})}
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id,input.remember===true)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
+
+if(path==='/api/application-archive'&&req.method==='GET')return send(res,200,{jobs:db.prepare("SELECT j.id,j.title,j.company,j.url,a.archived_at FROM jobs j JOIN application_archive a ON a.job_id=j.id WHERE j.user_id=? AND j.status='archived' ORDER BY a.archived_at DESC").all(uid)});
+if(path==='/api/application-archive'&&req.method==='POST'){try{const x=JSON.parse(await body(req));return send(res,200,archiveApplications(db,uid,x.ids));}catch(e){return send(res,400,{error:e.message});}}
+const restoreArchiveRoute=path.match(/^\/api\/application-archive\/([a-f0-9-]+)\/restore$/);
+if(restoreArchiveRoute&&req.method==='POST'){try{return send(res,200,restoreApplication(db,uid,restoreArchiveRoute[1]));}catch(e){return send(res,409,{error:e.message});}}
+
 const deleteRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)$/);
 if(deleteRoute&&req.method==='DELETE'){const x=JSON.parse(await body(req));if(x.confirm!==deleteRoute[1])return send(res,400,{error:'Confirm permanent deletion of this application'});try{return send(res,200,deleteApplication(db,uid,deleteRoute[1]));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/notifications'&&['GET','PUT'].includes(req.method)){

@@ -1,5 +1,7 @@
 
 
+
+
 // Persist only an explicitly remembered session, never the password.
 function restoreSession(){const remembered=localStorage.getItem('applypilot-remembered-token');if(remembered)sessionStorage.setItem('applypilot-token',remembered);return remembered||sessionStorage.getItem('applypilot-token')||'';}
 function saveSession(value,remember){sessionStorage.setItem('applypilot-token',value);if(remember)localStorage.setItem('applypilot-remembered-token',value);else localStorage.removeItem('applypilot-remembered-token');}
@@ -19,5 +21,11 @@ for(const name of ['job','search'])if($('#'+name))$('#'+name).onsubmit=async e=>
 if(token)load().catch(err=>notice(err.message));
 
 
+
+
 if((location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pages.dev')))document.querySelector('#open-dashboard').href='/automate.html';
 
+
+
+
+for (const choice of document.querySelectorAll('[name="source-choice"]')) choice.addEventListener('change',()=>{const direct=choice.value==='job';if($('#job'))$('#job').hidden=!direct;if($('#search'))$('#search').hidden=direct;});

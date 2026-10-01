@@ -533,3 +533,12 @@ test("Gemini duplicate retrieval records are accepted only for the same verified
  records=[];await assert.rejects(researchAnswer(options),/did not retrieve/);
  records=[{url,status:'success'}];isError=true;await assert.rejects(researchAnswer(options),/did not retrieve/);
 });
+
+test("expanded explicit work eligibility remains conservative",async()=>{
+ const assert=require('node:assert/strict'),{workEligibility:f}=await import('data:text/javascript;base64,'+Buffer.from(sources['work-eligibility.js']).toString('base64'));
+ for(const description of ['Visa sponsorship and relocation assistance for people moving to Sydney.','Visa Sponsorship & relocation support.','Visa sponsorship: Available'])assert.equal(f({location:'Sydney',description}).eligible,true,description);
+ for(const description of ['Contract type: B2B','This role is offered on a B2B/contractor basis.'])assert.equal(f({location:'Remote International',description}).eligible,true,description);
+ for(const description of ['B2B contract. US citizenship is required.','B2B contract. Must be based in Europe.','Visa Sponsorship Available: No','No visa sponsorship and relocation assistance.'])assert.equal(f({location:'Remote - US',description}).eligible,false,description);
+ assert.equal(f({location:'Toronto',description:'Permanent employment. Visa sponsorship and relocation support.'}).eligible,false);
+ assert.equal(f({location:'Canada',description:'B2B SaaS product company.'}).eligible,false);
+});

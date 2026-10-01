@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
-const sources=Object.fromEntries(["application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
+const sources=Object.fromEntries(["application-pipeline.js","application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
 test("routine submissions and receipt safety",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const wait=()=>new Promise(r=>setTimeout(r,35));
@@ -110,7 +110,7 @@ test('progress counts are based on evidence and do not recount outcomes',async()
  insert.run('captured','local_browser',null,null,'blocked');
  insert.run('archive','archived','Thank you for applying',null,null);
  db.exec("INSERT INTO events VALUES('receipt','submitted','Receipt'),('placeholder','manual_confirmation','Manual'),('archive','submitted','Receipt'),('zero','filled','Filled 0 standard fields'),('filled','filled','Filled 3 standard fields'); INSERT INTO answer_history VALUES('captured');");
- const snapshot=operationSnapshot(db,'owner');assert.deepEqual(snapshot.totals,{confirmed:1,worked:4,awaiting:1,active:1,stalled:0,blocked:2,unverifiedOutcome:1});
+ const snapshot=operationSnapshot(db,'owner');assert.deepEqual(snapshot.totals,{confirmed:1,worked:4,awaiting:1,active:1,stalled:0,blocked:2,unverifiedOutcome:1,automatic:0,assisted:0,unknown:1});
  assert.equal(operationSnapshot(db,'another-user').applications.length,0);
  db.prepare("UPDATE jobs SET status='offer' WHERE id='receipt'").run();assert.equal(operationSnapshot(db,'owner').totals.confirmed,1);db.close();
 });
@@ -301,7 +301,7 @@ test('hosted worker stops an HTTP 503 before inspecting or submitting a form and
 
 function pureModule(file,bindings={}){
  const code=sources[file].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const|let|class)/g,'');
- return new Function(...Object.keys(bindings),code+';return {sameApplication:typeof sameApplication==="function"?sameApplication:null,priorApplication:typeof priorApplication==="function"?priorApplication:null,installRepeatGuard:typeof installRepeatGuard==="function"?installRepeatGuard:null,compensation:typeof compensation==="function"?compensation:null,jobIntelligence:typeof jobIntelligence==="function"?jobIntelligence:null,nextApplication:typeof nextApplication==="function"?nextApplication:null,nextApplicationEligible:typeof nextApplicationEligible==="function"?nextApplicationEligible:null,sourceBatch:typeof sourceBatch==="function"?sourceBatch:null,cachedJSON:typeof cachedJSON==="function"?cachedJSON:null,runSearch:typeof runSearch==="function"?runSearch:null};')(...Object.values(bindings));
+ return new Function(...Object.keys(bindings),code+';return {installPipeline:typeof installPipeline==="function"?installPipeline:null,pipelineEnabled:typeof pipelineEnabled==="function"?pipelineEnabled:null,queueFoundApplications:typeof queueFoundApplications==="function"?queueFoundApplications:null,setPipeline:typeof setPipeline==="function"?setPipeline:null,pipelineStatus:typeof pipelineStatus==="function"?pipelineStatus:null,sameApplication:typeof sameApplication==="function"?sameApplication:null,priorApplication:typeof priorApplication==="function"?priorApplication:null,installRepeatGuard:typeof installRepeatGuard==="function"?installRepeatGuard:null,compensation:typeof compensation==="function"?compensation:null,jobIntelligence:typeof jobIntelligence==="function"?jobIntelligence:null,nextApplication:typeof nextApplication==="function"?nextApplication:null,nextApplicationEligible:typeof nextApplicationEligible==="function"?nextApplicationEligible:null,sourceBatch:typeof sourceBatch==="function"?sourceBatch:null,cachedJSON:typeof cachedJSON==="function"?cachedJSON:null,runSearch:typeof runSearch==="function"?runSearch:null};')(...Object.values(bindings));
 }
 test('posted pay preserves currency, period, pay tiers and conservative unknowns',()=>{
  const assert=require('node:assert/strict'),{compensation}=pureModule('job-intelligence.js');
@@ -354,7 +354,7 @@ test('ranked salary card is prominent and annual estimates remain explicit',asyn
  assert(w.document.querySelector('#next-match').textContent.includes('Apply to this match next'));w.close();
 });
 
-test('discovery updates existing pay without resetting attempts and queues only the best new eligible job',async()=>{
+test('discovery updates existing pay without resetting attempts and queues every verified new eligible job',async()=>{
  const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),{randomUUID}=require('node:crypto'),db=new DatabaseSync(':memory:');
  db.exec("CREATE TABLE applicants(id TEXT PRIMARY KEY,user_id TEXT,focus TEXT,email TEXT,resume_path TEXT,consent INTEGER);CREATE TABLE searches(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,instruction TEXT,boards_json TEXT,auto_queue INTEGER,auto_generated INTEGER,enabled INTEGER,source_cursor INTEGER DEFAULT 0,last_run TEXT,last_error TEXT,last_result_json TEXT,created_at TEXT);CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,title TEXT,company TEXT,url TEXT,normalized_url TEXT,status TEXT,notes TEXT,created_at TEXT,updated_at TEXT,attempts INTEGER DEFAULT 0,local_attempt_at TEXT,handoff_available INTEGER DEFAULT 0,challenge TEXT,job_metadata_json TEXT DEFAULT '{}',match_score INTEGER DEFAULT 0,discovery_priority INTEGER DEFAULT 5,metadata_attempt_at TEXT,UNIQUE(applicant_id,normalized_url));CREATE TABLE external_application_history(user_id TEXT,company_key TEXT,title_key TEXT);");
  const now=()=>new Date().toISOString(),key=v=>String(v).toLowerCase();db.function('history_company',key);db.function('history_title',key);
@@ -367,10 +367,10 @@ test('discovery updates existing pay without resetting attempts and queues only 
  const intelligence=pureModule('job-intelligence.js',{matchAssessment,workEligibility});
  const fetch=async url=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify(String(url).includes('/job-board/example')?{jobs:[old,best,lower,excluded]}:String(url).includes('arbeitnow')?{data:[],links:{}}:{jobs:[]})});
  const {priorApplication}=pureModule('application-dedup.js',{companyKey:key});
- const discovery=pureModule('discovery.js',{db,event:()=>{},now,normalizeURL:v=>v,randomUUID,companyKey:key,historyKey:key,matchAssessment,locationPriority:()=>5,workEligibility,...intelligence,priorApplication,fetch});
- const [one,two]=await Promise.all([discovery.runSearch('s','u'),discovery.runSearch('s','u')]);assert.equal(one,two);assert.equal(one.added,2);assert.equal(one.queued,1);
+ const discovery=pureModule('discovery.js',{db,event:()=>{},now,normalizeURL:v=>v,randomUUID,companyKey:key,historyKey:key,matchAssessment,locationPriority:()=>5,workEligibility,...intelligence,priorApplication,pipelineEnabled:()=>false,fetch});
+ const [one,two]=await Promise.all([discovery.runSearch('s','u'),discovery.runSearch('s','u')]);assert.equal(one,two);assert.equal(one.added,2);assert.equal(one.queued,2);
  const previous=db.prepare("SELECT * FROM jobs WHERE id='old'").get();assert.equal(previous.status,'local_browser');assert.equal(previous.attempts,2);assert.equal(previous.local_attempt_at,'2026-01-01');assert.equal(previous.notes,'Do not overwrite');assert(JSON.parse(previous.job_metadata_json).pay.length);
- const rows=db.prepare("SELECT title,status FROM jobs WHERE id!='old' ORDER BY title").all();assert.deepEqual(rows.map(r=>[r.title,r.status]),[[best.title,'queued'],[lower.title,'saved']]);
+ const rows=db.prepare("SELECT title,status FROM jobs WHERE id!='old' ORDER BY title").all();assert.deepEqual(rows.map(r=>[r.title,r.status]),[[best.title,'queued'],[lower.title,'queued']]);
  assert(!db.prepare('SELECT 1 FROM jobs WHERE title=?').get(excluded.title));assert.equal(db.prepare("SELECT source_cursor FROM searches WHERE id='s'").get().source_cursor,4);db.close();
 });
 
@@ -485,7 +485,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.3'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.4'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{
@@ -562,4 +562,72 @@ test('repeat guards recognise board aliases and annotated titles without losing 
  add('new-duplicate','u',repost,'saved');assert.equal(db.prepare("SELECT status FROM jobs WHERE id='new-duplicate'").get().status,'duplicate');
  add('new-role','u',{...repost,title:'Site Reliability Engineer, Production'},'saved');assert.equal(priorApplication(db,'u',db.prepare("SELECT * FROM jobs WHERE id='new-role'").get()),null);
  db.prepare("UPDATE jobs SET status='queued' WHERE id='new-role'").run();db.close();
+});
+
+test('full found pipeline is ranked, scoped, durable, idempotent and protects prior work',()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(':memory:');
+ db.exec("CREATE TABLE applicants(id TEXT PRIMARY KEY,user_id TEXT,consent INTEGER,email TEXT,resume_path TEXT); CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,status TEXT,company TEXT,title TEXT,url TEXT,challenge TEXT,local_attempt_at TEXT,attempts INTEGER DEFAULT 0,handoff_available INTEGER DEFAULT 0,match_score INTEGER DEFAULT 0,created_at TEXT,updated_at TEXT,job_metadata_json TEXT DEFAULT '{}'); CREATE TABLE events(id INTEGER PRIMARY KEY,job_id TEXT,at TEXT,type TEXT,message TEXT); CREATE TABLE external_application_history(user_id TEXT,company_key TEXT,title_key TEXT); CREATE TABLE work_focus(user_id TEXT,enabled INTEGER,job_id TEXT);");
+ const key=v=>String(v).toLowerCase().replace(/[^a-z0-9]/g,''),{priorApplication,installRepeatGuard}=pureModule('application-dedup.js',{companyKey:key});
+ const pipeline=pureModule('application-pipeline.js',{priorApplication,companyKey:key,historyKey:key,supported:v=>v.startsWith('https://jobs.ashbyhq.com/'),metadataFor:j=>JSON.parse(j.job_metadata_json),researchConsentWithdrawn:()=>false});
+ pipeline.installPipeline(db);installRepeatGuard(db);
+ db.exec("INSERT INTO applicants VALUES('p','u',1,'fixture@example.test','fixture.pdf'),('q','other',1,'other@example.test','fixture.pdf'),('missing','u',0,'','');INSERT INTO work_focus VALUES('u',1,'top')");
+ const add=(id,{user='u',profile='p',status='saved',score=1,attempt=null,attempts=0,handoff=0,challenge=null,meta={},title=id,url='https://jobs.ashbyhq.com/company/'+id}={})=>db.prepare("INSERT INTO jobs(id,user_id,applicant_id,status,company,title,url,match_score,local_attempt_at,attempts,handoff_available,challenge,job_metadata_json,created_at) VALUES(?,?,?,?,'Company',?,?,?,?,?,?,?,?,?)").run(id,user,profile,status,title,url,score,attempt,attempts,handoff,challenge,JSON.stringify(meta),'2026-10-01');
+ add('top',{score:99});add('related',{score:30,meta:{strong:false,checkedAt:'2020-01-01'}});add('unscored');add('closed',{meta:{available:false}});add('unsupported',{url:'https://example.com/job'});add('attempted',{attempt:'2026-01-01'});add('worked',{attempts:1});add('held',{handoff:1});add('missing',{profile:'missing'});add('imported');db.exec("INSERT INTO external_application_history VALUES('u','company','imported')");add('outside',{user:'other',profile:'q'});add('done',{status:'submitted'});add('blocked',{status:'needs_review'});
+ assert.equal(pipeline.pipelineEnabled(db,'u'),false);const outcome=pipeline.setPipeline(db,'u',true);
+ assert.equal(outcome.result.queued,3);assert.equal(outcome.result.held,6);assert.equal(outcome.result.duplicates,1);
+ assert.deepEqual(outcome.result.applications.filter(j=>j.status==='queued').map(j=>j.id),['top','related','unscored']);
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE user_id='u' AND status='saved'").get().n,0);
+ assert.equal(db.prepare("SELECT status FROM jobs WHERE id='outside'").get().status,'saved');
+ assert.equal(db.prepare("SELECT status FROM jobs WHERE id='done'").get().status,'submitted');
+ assert.equal(db.prepare("SELECT local_attempt_at FROM jobs WHERE id='attempted'").get().local_attempt_at,'2026-01-01');
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM work_focus").get().n,0);
+ assert.equal(pipeline.queueFoundApplications(db,'u').queued,0);
+ add('newlater');assert.equal(pipeline.queueFoundApplications(db,'u').queued,1);
+ pipeline.setPipeline(db,'u',false);assert.equal(pipeline.pipelineEnabled(db,'u'),false);assert.equal(db.prepare("SELECT status FROM jobs WHERE id='top'").get().status,'queued');
+ db.close();
+});
+test('completion methods require receipts and complete tracking; human help wins without recounting outcomes',async()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite');
+ const policy='data:text/javascript;base64,'+Buffer.from(sources['extension/policy.js']+'\nexport const receipt=globalThis.ApplyPilotPolicy.receipt;').toString('base64');
+ const {operationSnapshot}=await import('data:text/javascript;base64,'+Buffer.from(sources['operation-evidence.js'].replace("'./local-policy.js'",JSON.stringify(policy))).toString('base64'));
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE jobs(id TEXT,user_id TEXT,company TEXT,title TEXT,url TEXT,status TEXT,confirmation TEXT,local_phase TEXT,local_attempt_at TEXT,updated_at TEXT); CREATE TABLE events(id INTEGER PRIMARY KEY,job_id TEXT,type TEXT,message TEXT); CREATE TABLE answer_history(job_id TEXT);');
+ const add=(id,events,{status='submitted',confirmation='Thank you for applying',user='owner'}={})=>{db.prepare("INSERT INTO jobs(id,user_id,status,confirmation) VALUES(?,?,?,?)").run(id,user,status,confirmation);for(const [type,message=''] of events)db.prepare('INSERT INTO events(job_id,type,message) VALUES(?,?,?)').run(id,type,message);};
+ add('auto',[['completion_tracking'],['automatic_submission'],['submitted']]);
+ add('help',[['completion_tracking'],['answer_saved'],['automatic_submission'],['submitted']]);
+ add('manual',[['manual_submission'],['submitted']]);
+ add('recorded',[['manual_confirmation']]);
+ add('old',[['submitted']]);
+ add('untracked-auto',[['automatic_submission'],['submitted']]);
+ add('review',[['completion_tracking'],['assistance_boundary'],['automatic_submission'],['submitted']]);
+ add('placeholder',[['completion_tracking'],['automatic_submission'],['submitted']],{confirmation:'Placeholder: Thank you for applying'});
+ add('attempt',[['completion_tracking'],['automatic_submission'],['submission_started']],{status:'local_browser',confirmation:null});
+ add('other',[['completion_tracking'],['automatic_submission'],['submitted']],{user:'someone-else'});
+ // A later edit or employer outcome cannot change historical completion attribution.
+ db.exec("INSERT INTO events(job_id,type,message) VALUES('auto','answer_saved','After receipt'); UPDATE jobs SET status='interview' WHERE id='auto';");
+ const r=operationSnapshot(db,'owner');assert.equal(r.totals.confirmed,7);assert.equal(r.totals.automatic,1);assert.equal(r.totals.assisted,3);assert.equal(r.totals.unknown,3);assert.equal(r.totals.confirmed,r.totals.automatic+r.totals.assisted+r.totals.unknown);
+ assert.equal(r.applications.find(j=>j.id==='placeholder').completion,null);assert.equal(r.applications.find(j=>j.id==='attempt').completion,null);
+ db.close();
+});
+test('dashboard shows completion groups, filters them and enables all-found queueing via an authenticated mutation',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);w.HTMLElement.prototype.scrollIntoView=()=>{};
+ const jobs=[{id:'auto',company:'A',title:'Cloud Engineer'},{id:'help',company:'B',title:'SRE'},{id:'old',company:'C',title:'Platform Engineer'}],snapshot={totals:{confirmed:3,automatic:1,assisted:1,unknown:1},applications:[{id:'auto',completion:'automatic'},{id:'help',completion:'assisted'},{id:'old',completion:'unknown'}],checkedAt:new Date().toISOString()};
+ w.eval('renderOperations('+JSON.stringify(snapshot)+',{events:[]},'+JSON.stringify(jobs)+')');
+ assert.equal(w.document.querySelectorAll('#completion-breakdown [data-completion]').length,3);assert.equal(w.document.querySelectorAll('#completion-breakdown li').length,3);
+ const cards=w.document.querySelector('#jobs');for(const j of snapshot.applications){const card=w.document.createElement('article');card.dataset.completion=j.completion;card.dataset.search=j.id;cards.append(card);}
+ w.document.querySelector('[data-completion=assisted]').click();assert.deepEqual([...cards.children].map(c=>c.hidden),[true,false,true]);
+ const calls=[];w.pipelineCalls=calls;w.eval("api=async(path,method,input)=>{pipelineCalls.push({path,method,input});return {result:{queued:7,held:1,duplicates:2}}};refresh=async()=>{};renderPipeline({enabled:false,found:10});");
+ w.document.querySelector('#application-pipeline .primary').click();await new Promise(r=>setTimeout(r,10));
+ assert.equal(calls[0].path,'/pipeline');assert.equal(calls[0].method,'PUT');assert.equal(calls[0].input.enabled,true);assert(w.document.querySelector('#notice').textContent.includes('7 queued'));
+ w.close();
+});
+
+test('completion groups preserve a ranked browser pipeline including already queued jobs',async()=>{
+ const assert=require('node:assert/strict'),vm=require('node:vm');
+ const state={records:{},queue:['low'],enabled:true},opened=[];
+ const jobs=[{id:'low',match_score:10,status:'queued',execution_mode:'local',url:'https://jobs.lever.co/x/low'},{id:'high',match_score:90,status:'queued',execution_mode:'local',url:'https://jobs.lever.co/x/high'}];
+ const noop={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v)}},tabs:{onRemoved:noop},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop},alarms:{onAlarm:noop}};
+ const context={chrome,URL,console,Date,importScripts(){},ApplyPilotPolicy:{supported:()=>true},fixtureJobs:jobs,opened};
+ vm.runInNewContext(sources['extension/background.js']+';api=async()=>({jobs:fixtureJobs});openJob=async(id)=>opened.push(id);globalThis.testTick=tick;',context);
+ await context.testTick();assert.deepEqual(opened,['high']);assert.deepEqual(Array.from(state.queue),['low']);
 });

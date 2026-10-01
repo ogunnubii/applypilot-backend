@@ -2,7 +2,9 @@
 const P=globalThis.ApplyPilotPolicy;
 if(globalThis.__applypilotAgentLoaded)return;globalThis.__applypilotAgentLoaded=true;
 let packet,bar,note,started=false,initialReceipt=false,attempted=false,timer,busy=false,stopped=false,lastStep='',stepAt=0,submitAt=0;
-const norm=P.normalize;
+let assistanceSent=false;
+ async function recordAssistance(){if(!started||assistanceSent)return;try{await send('assistance');assistanceSent=true;}catch{/* The boundary remains unknown if tracking cannot sync. */}}
+ const norm=P.normalize;
 const visible=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).display!=='none';
 const labelText=e=>{if(!e)return '';const c=e.cloneNode(true);c.querySelectorAll('input,select,textarea,button').forEach(n=>n.remove());return c.textContent};
 const label=e=>{const ids=(e.getAttribute('aria-labelledby')||'').split(' ').filter(Boolean).map(id=>document.getElementById(id)?.textContent||'').join(' ');return ((e.type==='radio'?e.closest('fieldset')?.querySelector('legend')?.textContent:'')||labelText(e.labels?.[0])||ids||e.getAttribute('aria-label')||e.closest('.application-question')?.querySelector('.application-label')?.textContent||e.placeholder||e.name||e.id||'Required field').trim().slice(0,240)};
@@ -72,14 +74,14 @@ function mount(){
  document.getElementById('applypilot-local-controls')?.remove();
  bar=document.createElement('aside');bar.id='applypilot-local-controls';bar.style.cssText='position:fixed;bottom:16px;right:16px;max-width:360px;z-index:2147483647;background:#12253b;color:white;padding:16px;border-radius:12px;box-shadow:0 3px 18px #0008;font:14px system-ui';
  const heading=document.createElement('strong');heading.textContent='ApplyPilot · '+packet.job.title;note=document.createElement('p');note.setAttribute('role','status');
- const refill=document.createElement('button');refill.textContent='Fill saved answers';refill.onclick=async()=>{try{packet=null;attemptedCustom=new WeakMap();await fill();await advance();}catch(e){note.textContent=e.message;}};
+ const refill=document.createElement('button');refill.textContent='Fill saved answers';refill.onclick=async()=>{try{await recordAssistance();packet=null;attemptedCustom=new WeakMap();await fill();await advance();}catch(e){note.textContent=e.message;}};
  const save=document.createElement('button');save.textContent='Remember an answer';save.onclick=async()=>{
-  const question=prompt('Exact question to remember for this applicant:');if(!question)return;
+  await recordAssistance();const question=prompt('Exact question to remember for this applicant:');if(!question)return;
   if(P.sensitive(question)){note.textContent='Complete sensitive statements directly with the employer.';return;}
   const value=prompt('Your truthful answer (reused only for this exact question):');if(value===null||!value.trim())return;
   try{await send('remember',{question,answer:value});packet=null;await fill();note.textContent='Answer saved for this applicant.';}catch(e){note.textContent=e.message;}
  };
- const capture=document.createElement('button');capture.textContent='Save form answers to library';capture.onclick=async()=>{capture.disabled=true;try{const r=await send('capture',{fields:formAnswers()});note.textContent=r.saved+' answers saved. Review them in the dashboard Answer library. Nothing was submitted.';}catch(e){note.textContent='Could not save answers: '+e.message;}finally{capture.disabled=false;}};
+ const capture=document.createElement('button');capture.textContent='Save form answers to library';capture.onclick=async()=>{capture.disabled=true;try{await recordAssistance();const r=await send('capture',{fields:formAnswers()});note.textContent=r.saved+' answers saved. Review them in the dashboard Answer library. Nothing was submitted.';}catch(e){note.textContent='Could not save answers: '+e.message;}finally{capture.disabled=false;}};
  bar.append(heading,note,refill,save,capture);document.body.append(bar);updateAttentionPosition();
 }
 function controls(){return [...document.querySelectorAll('input,select,textarea,[role=combobox],[role=checkbox],[role=radio]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&!e.readOnly);}
@@ -178,8 +180,10 @@ async function advance(){
 }
 async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted)await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
 async function begin(){try{packet=await send('packet');attempted=!!packet.job.attempted||(await send('state')).attempted;initialReceipt=!!receipt()&&!attempted;started=true;await fill();await advance();if(!stopped)timer=setInterval(monitor,2500);}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched. */}}
+for(const type of ['input','change'])document.addEventListener(type,e=>{if(started&&e.isTrusted&&!bar?.contains(e.target)&&e.target.matches?.('input,select,textarea,[contenteditable=true],[role=combobox],[role=checkbox],[role=radio]'))recordAssistance();},true);
 document.addEventListener('click',e=>{
  const b=e.target.closest('button,input[type=submit],[role=button]');if(!started||!e.isTrusted||!b||bar?.contains(b))return;
+ recordAssistance();
  if(/^(submit(?: application)?|send application|send my application)$/i.test(buttonName(b))&&!attempted){attempted=true;submitAt=Date.now();stopped=false;clearInterval(timer);timer=setInterval(monitor,2500);send('capture',{fields:formAnswers()}).catch(()=>{}).then(()=>send('attempt',{before:bodyText(),human:true})).catch(err=>{note.textContent='Sync unavailable: '+err.message+'. Record the employer receipt in the dashboard.';});}
 },true);
 document.addEventListener('submit',e=>{if(started&&e.isTrusted&&!attempted&&buttons().some(b=>/^(submit(?: application)?|send application)$/i.test(buttonName(b)))){attempted=true;submitAt=Date.now();send('attempt',{before:bodyText(),human:true}).catch(()=>{});}},true);

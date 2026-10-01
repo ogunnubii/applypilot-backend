@@ -1,3 +1,4 @@
+import {pipelineStatus,setPipeline,queueFoundApplications,queueEnabledPipelines} from './application-pipeline.js';
 import {priorApplication} from './application-dedup.js';
 import {installResumeEditor,prepareResumeEdit,saveResumeEdit,previousResumePath} from './resume-editor.js';
 import {installPublicFill,fillPendingPublicQuestions,publicFillStatus,testPublicDrafting} from './public-answer-fill.js';
@@ -22,6 +23,7 @@ import {parseBoards,parseIntent,profileSearchInstruction,runSearch,SEARCH_INTERV
 import {resumeRoles,resumeText} from './resume.js';
 installNotifications(db);installLibrary(db);installDrafts(db);installResearch(db);db.exec('CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT)');
 installArchive(db);installContinuations(db);installPublicFill(db);installResumeEditor(db);
+const pipelineTimer=setInterval(()=>{try{queueEnabledPipelines(db);}catch(error){console.error('Application pipeline:',error.message);}},60000);pipelineTimer.unref();
 let publicFillBusy=false;
 async function publicFillTick(){if(publicFillBusy)return;publicFillBusy=true;try{await fillPendingPublicQuestions(db);}catch(error){console.error('Public answer drafting:',error.message);}finally{publicFillBusy=false;}}
 const publicFillTimer=setInterval(publicFillTick,60000);publicFillTimer.unref();setTimeout(publicFillTick,1500).unref();
@@ -48,9 +50,9 @@ if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-typ
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
-if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.3.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
+if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.4.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-01-ranked-discovery-gemini-handoff',extensionVersion:'0.6.3',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-01-full-pipeline-completion-breakdown',extensionVersion:'0.6.4',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(req));if(input.registration_code!==process.env.REGISTRATION_CODE)return send(res,403,{error:'Registration code required'});let email=text(input.email,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return send(res,400,{error:'Valid email required'});let id=randomUUID(),hash=hashPassword(input.password);try{db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(id,email,hash,now())}catch{return send(res,409,{error:'Account already exists'})}return send(res,201,{token:issueToken(id,input.remember===true)})}
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id,input.remember===true)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
@@ -99,6 +101,10 @@ if(continuationRoute){
  if(req.method==='PUT'){const x=JSON.parse(await body(req));return send(res,200,settleContinuation(db,uid,continuationRoute[1],x.claimId,x.result));}
 }
 
+if(path==='/api/pipeline'&&req.method==='GET')return send(res,200,pipelineStatus(db,uid));
+if(path==='/api/pipeline'&&req.method==='PUT'){const x=JSON.parse(await body(req));try{return send(res,200,setPipeline(db,uid,x.enabled));}catch(error){return send(res,400,{error:error.message});}}
+if(path==='/api/pipeline/queue-found'&&req.method==='POST')return send(res,200,queueFoundApplications(db,uid));
+
 if(path==='/api/operations'&&req.method==='GET')return send(res,200,operationSnapshot(db,uid));
 if(path==='/api/activity'&&req.method==='GET')return send(res,200,{events:db.prepare('SELECT e.at,e.type,e.message,j.id AS job_id,j.title,j.company,j.applicant_id FROM events e JOIN jobs j ON j.id=e.job_id WHERE j.user_id=? AND j.status NOT IN (\'archived\',\'duplicate\') ORDER BY e.id DESC LIMIT 100').all(uid)});
 if(path==='/api/me')return send(res,200,{email:db.prepare('SELECT email FROM users WHERE id=?').get(uid)?.email});
@@ -145,10 +151,10 @@ if(m&&req.method==='GET'){
  return send(res,200,{name:'resume'+ext,applicant:p.name,mime:ext==='.pdf'?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document',bytes:bytes.length,base64:bytes.toString('base64'),text:extracted,hasPrevious:!!previousResumePath(db,uid,m[1]),previewNotice});
 }
 if(m&&req.method==='POST'){let p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(m[1],uid);if(!p)return send(res,404,{error:'Applicant not found'});let kind=req.headers['content-type'],ext=kind==='application/pdf'?'.pdf':kind==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'?'.docx':null;if(!ext)return send(res,415,{error:'Use PDF or DOCX'});let bytes=await body(req,limit);if(bytes.length<100)return send(res,400,{error:'Resume appears empty'});if(ext==='.pdf'&&!bytes.subarray(0,5).equals(Buffer.from('%PDF-')))return send(res,400,{error:'Invalid PDF'});if(ext==='.docx'&&!bytes.subarray(0,2).equals(Buffer.from('PK')))return send(res,400,{error:'Invalid DOCX'});await mkdir(uploadDir,{recursive:true,mode:0o700});let file=join(uploadDir,randomUUID()+ext);await writeFile(file,bytes,{mode:0o600});db.prepare('UPDATE applicants SET resume_path=? WHERE id=?').run(file,p.id);if(p.resume_path)await unlink(p.resume_path).catch(()=>{});let roles=[],instruction='',resumeNotice='';try{roles=await resumeRoles(file,ext);if(roles.length)instruction=createResumeSearch(uid,p,roles);else resumeNotice='No clear role titles found in the resume. Add a search manually.'}catch(e){console.error('Resume parsing:',e.message);resumeNotice='Resume saved, but its text could not be read. Add a search manually.'}return send(res,200,{ok:true,roles,instruction,resumeNotice})}
-if(path==='/api/jobs'&&req.method==='GET')return send(res,200,{jobs:db.prepare(`SELECT id,applicant_id,title,company,url,status,notes,confirmation,challenge,created_at,updated_at,required_fields_json,answers_json,handoff_available,local_phase,local_attempt_at,attempts,match_score,job_metadata_json,metadata_attempt_at,(SELECT execution_mode FROM applicants WHERE id=jobs.applicant_id) AS execution_mode,(SELECT message FROM events WHERE job_id=jobs.id AND type IN ('paused','needs_review') ORDER BY id DESC LIMIT 1) AS blocker_message,(SELECT message FROM events WHERE job_id=jobs.id ORDER BY id DESC LIMIT 1) AS last_message FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived') AND (NOT EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1) OR id=(SELECT job_id FROM work_focus f WHERE f.user_id=jobs.user_id) OR status IN ('submitted','interview','rejected','offer')) ORDER BY discovery_priority,created_at DESC`).all(uid).map(job=>{let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}return {...job,metadata:metadataFor(job),application_only_questions:[...new Set(questions.filter(question=>typeof question==='string'&&!canReuse(question)))]};})});
+if(path==='/api/jobs'&&req.method==='GET')return send(res,200,{jobs:db.prepare(`SELECT id,applicant_id,title,company,url,status,notes,confirmation,challenge,created_at,updated_at,required_fields_json,answers_json,handoff_available,local_phase,local_attempt_at,attempts,match_score,job_metadata_json,metadata_attempt_at,(SELECT execution_mode FROM applicants WHERE id=jobs.applicant_id) AS execution_mode,(SELECT message FROM events WHERE job_id=jobs.id AND type IN ('paused','needs_review') ORDER BY id DESC LIMIT 1) AS blocker_message,(SELECT message FROM events WHERE job_id=jobs.id ORDER BY id DESC LIMIT 1) AS last_message FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived') AND (NOT EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1) OR id=(SELECT job_id FROM work_focus f WHERE f.user_id=jobs.user_id) OR status IN ('submitted','interview','rejected','offer')) ORDER BY match_score DESC,discovery_priority,created_at DESC`).all(uid).map(job=>{let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}return {...job,metadata:metadataFor(job),application_only_questions:[...new Set(questions.filter(question=>typeof question==='string'&&!canReuse(question)))]};})});
 if(path==='/api/jobs'&&req.method==='POST'){let x=JSON.parse(await body(req)),p=db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(x.applicant_id,uid);if(!p)return send(res,400,{error:'Select your applicant profile'});let url=normalizeURL(x.url),id=randomUUID(),date=now();if(!supported(url))return send(res,400,{error:'Use a supported direct employer application link. Aggregator listings are not accepted.'});try{db.prepare('INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,uid,p.id,text(x.title,200),text(x.company,200),url,url,text(x.notes,2000),date,date)}catch{return send(res,409,{error:'Job already tracked for this applicant'})}event(id,'saved','Job added');return send(res,201,{id})}
 // Local browser mode owns the application until a receipt is recorded.
-let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|research-answer|research-used|step|attempt|submitted|capture)$/);
+let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|research-answer|research-used|step|attempt|submitted|capture|assistance)$/);
 if(localRoute){
  const j=ownJob(uid,localRoute[1]);if(!j)return send(res,404,{error:'Job not found'});
  const focus=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(uid);if(focus&&focus.job_id!==j.id&&['claim','packet'].includes(localRoute[2]))return send(res,409,{error:'This application is parked while you work on one job at a time.'});
@@ -179,7 +185,15 @@ if(localRoute){
  if(j.local_owner!==owner)return send(res,409,{error:'Application belongs to another browser'});
  if(j.status==='submitted'&&action==='submitted')return send(res,200,{ok:true});
  if(j.status!=='local_browser')return send(res,409,{error:'This application is not active in your browser'});
- if(action==='capture'&&req.method==='POST'){const x=JSON.parse(await body(req)),fields=Array.isArray(x.fields)?x.fields.filter(f=>typeof f?.question==='string'&&!hasResearchDraftForQuestion(db,j.id,f.question.trim())):x.fields;return send(res,200,{saved:captureAnswers(db,j,fields)});}
+ if(action==='assistance'&&req.method==='POST'){
+   const x=JSON.parse(await body(req));
+   if(!['human','tracking','partial'].includes(x.kind))return send(res,400,{error:'Unknown assistance record'});
+   if(x.kind==='human'&&!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='human_assistance'").get(j.id))event(j.id,'human_assistance','Applicant interacted with the employer form.');
+   if(x.kind==='tracking'&&!j.local_attempt_at&&!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('completion_tracking','assistance_boundary','filled','human_assistance')").get(j.id))event(j.id,'completion_tracking','Form assistance tracking started before a fresh employer page.');
+   if(x.kind==='partial'&&!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('completion_tracking','assistance_boundary')").get(j.id))event(j.id,'assistance_boundary','An existing employer page was reused; earlier assistance is unknown.');
+   return send(res,200,{ok:true});
+  }
+  if(action==='capture'&&req.method==='POST'){const x=JSON.parse(await body(req)),fields=Array.isArray(x.fields)?x.fields.filter(f=>typeof f?.question==='string'&&!hasResearchDraftForQuestion(db,j.id,f.question.trim())):x.fields;return send(res,200,{saved:captureAnswers(db,j,fields)});}
  if(action==='packet'&&req.method==='GET'){
   const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
   if(!p?.consent)return send(res,403,{error:'Applicant consent required'});
@@ -223,11 +237,14 @@ if(localRoute){
   if(j.local_attempt_at)return send(res,409,{error:'Submission may already have occurred. Check the employer receipt.'});
   const result=db.prepare("UPDATE jobs SET local_attempt_at=?,local_phase='verifying',challenge='Submission in progress',updated_at=? WHERE id=? AND local_attempt_at IS NULL AND status='local_browser'").run(now(),now(),j.id);
   if(!result.changes)return send(res,409,{error:'Submission already started'});
-  event(j.id,'submission_started','Local submission intent saved before clicking; automatic retry disabled.');return send(res,200,{ok:true});
+  if(x.humanAssisted===true&&!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='human_assistance'").get(j.id))event(j.id,'human_assistance','Applicant assisted with the employer form before submission.');
+   event(j.id,x.human===true?'manual_submission':'automatic_submission',x.human===true?'Applicant clicked the employer submit control.':'ApplyPilot clicked the routine employer submit control.');
+   event(j.id,'submission_started','Local submission intent saved before clicking; automatic retry disabled.');return send(res,200,{ok:true});
  }
  if(action==='progress'&&req.method==='POST'){
   const x=JSON.parse(await body(req)),fields=Array.isArray(x.fields)?x.fields.filter(v=>typeof v==='string').slice(0,100).map(v=>text(v,240)):[];
   const message=text(x.message,500)||'Continue in your employer tab';
+   if(x.blocked===true&&!j.local_attempt_at&&!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='assistance_boundary'").get(j.id))event(j.id,'assistance_boundary','The employer form paused for review; completion may need applicant assistance.');
   const previous=db.prepare("SELECT message FROM events WHERE job_id=? AND type='local_browser' ORDER BY id DESC LIMIT 1").get(j.id)?.message;
   db.prepare('UPDATE jobs SET required_fields_json=?,local_phase=?,updated_at=? WHERE id=?').run(JSON.stringify(fields),j.local_attempt_at?(x.blocked===true?'uncertain':'verifying'):x.blocked===true?'blocked':'ready',now(),j.id);
   if(message!==previous){event(j.id,'local_browser',message);if(Number.isInteger(x.filled)&&x.filled>0&&x.filled<=150)event(j.id,'filled','Filled '+x.filled+' saved fields in the employer browser');}return send(res,200,{ok:true});
@@ -257,7 +274,7 @@ if(handoffRoute&&req.method==='POST'){
  }
  if(!j.handoff_available)return send(res,409,{error:'The live browser has expired or restarted. Reopen the application to prepare another.'});
  const input=await body(req,action==='upload'?9000000:20000);
- try{const response=await fetch('http://127.0.0.1:8081/'+j.id+'/'+action,{method:'POST',headers:{authorization:req.headers.authorization,'content-type':'application/json'},body:input.length?input:'{}',signal:AbortSignal.timeout(20000)});return send(res,response.status,await response.json());}
+ try{const response=await fetch('http://127.0.0.1:8081/'+j.id+'/'+action,{method:'POST',headers:{authorization:req.headers.authorization,'content-type':'application/json'},body:input.length?input:'{}',signal:AbortSignal.timeout(20000)});const result=await response.json();if(response.ok&&['click','drag','upload','text','key'].includes(action)&&!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='human_assistance'").get(j.id))event(j.id,'human_assistance','Applicant interacted with the live employer form.');return send(res,response.status,result);}
  catch{return send(res,503,{error:'The live browser is unavailable. Check the worker status and try again.'})}
 }
 let continueRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/continue$/);

@@ -83,7 +83,7 @@ async function notificationSettings(){
 }
 async function refresh(force=false){
  if(busy||activeHandoff)return;
- const [{jobs},health,history,operations,activity,continuations]=await Promise.all([api('/jobs'),api('/status'),api('/application-history'),api('/operations').catch(()=>null),api('/activity').catch(()=>null),api('/continuations').catch(()=>null)]);
+ const [{jobs},health,history,operations,activity,continuations,pipeline]=await Promise.all([api('/jobs'),api('/status'),api('/application-history'),api('/operations').catch(()=>null),api('/activity').catch(()=>null),api('/continuations').catch(()=>null),api('/pipeline').catch(()=>null)]);
  const waiting=new Map((continuations?.requests||[]).map(r=>[r.job_id,r]));
  for(const job of jobs)job.continuation=waiting.get(job.id);
  const evidence=new Map((operations?.applications||[]).map(j=>[j.id,j]));
@@ -104,7 +104,7 @@ async function refresh(force=false){
    pendingHandoff=null;document.querySelector('#preparing-browser')?.remove();$('#notice').textContent=message;force=true;
   }else if(Date.now()-pendingHandoff.started>180000){pendingHandoff=null;const banner=$('#preparing-browser');if(banner)banner.textContent='The live browser is taking longer than expected. Check the application below or try again when the worker is available.';force=true;}
  }
- renderBrowserReadiness(current);renderMissingAnswers(current);renderContinuationQueue(continuations);drainContinuations(continuations);renderLibraryLauncher();renderFocusControl();renderArchiveControl(current);if($('#career-overview'))$('#workspace').prepend($('#career-overview'));renderOperations(operations,activity);renderNextMatch(current);
+ renderBrowserReadiness(current);renderMissingAnswers(current);renderContinuationQueue(continuations);drainContinuations(continuations);renderLibraryLauncher();renderFocusControl();renderArchiveControl(current);if($('#career-overview'))$('#workspace').prepend($('#career-overview'));renderOperations(operations,activity,current);renderNextMatch(current);renderPipeline(pipeline);
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  $('#needs-count').textContent=current.filter(j=>j.evidence?j.evidence.blocked||j.evidence.stalled:['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
  $('#applying-count').textContent=current.filter(j=>j.evidence?j.evidence.active:!j.local_attempt_at&&(['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='ready')).length;
@@ -125,8 +125,8 @@ async function refresh(force=false){
  current.sort((a,b)=>rank(a)-rank(b)||(attentionPositions.has(a.id)&&attentionPositions.has(b.id)?attentionPositions.get(a.id)-attentionPositions.get(b.id):0)||(['saved','queued'].includes(a.status)&&a.status===b.status?(Number(b.match_score)||0)-(Number(a.match_score)||0):0)||updated(b)-updated(a)||String(a.id).localeCompare(String(b.id)));
  for(const r of externalInterviews){const card=interviewCard(r);card.id='external-'+r.id;$('#jobs').append(card);}
  for(const job of current){
-  if(job.status==='interview'){const r=interviews.find(r=>interviewIdentity(r)===interviewIdentity(job));const card=interviewCard(r);card.id='job-'+job.id;$('#jobs').append(card);continue;}
-  const card=el('article');card.id='job-'+job.id;card.className='job';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');for(const key of ['active','blocked','stalled','worked','confirmed'])card.dataset[key]=String(!!job.evidence?.[key]);card.dataset.state=job.evidence?.awaiting||job.local_attempt_at&&!job.evidence?.confirmed&&job.status==='local_browser'?'awaiting':job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');if(attentionPositions.has(job.id)){const counter=el('span',attentionPositions.get(job.id)+'/'+attention.length+' · Needs your input');counter.className='attention-position';counter.style.cssText='display:inline-block;font-size:14px;font-weight:750;color:#245a3c;background:#e9f4ec;border-radius:8px;padding:4px 9px;margin-bottom:7px';counter.setAttribute('aria-label','Application '+attentionPositions.get(job.id)+' of '+attention.length+' needing your input');names.append(counter);}names.append(el('h2',job.title),paySummary(job),el('small',job.company));if(job.metadata?.checkedAt){names.append(el('small',(job.match_score||0)+'/100 role and eligibility score · '+(job.metadata.location||'Location not listed')+(job.metadata.eligibility?.eligible?'':' · Eligibility needs confirmation')));}const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.evidence?.stalled?'Browser check needed':job.local_phase==='blocked'?(/^Ready for your review/.test(job.last_message||'')?'Ready for your review':'Needs your input'):job.local_attempt_at?'Awaiting receipt':'Applying · local',submitted:job.evidence?.confirmed?'Receipt recorded':'Submission needs evidence',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
+  if(job.status==='interview'){const r=interviews.find(r=>interviewIdentity(r)===interviewIdentity(job));const card=interviewCard(r);card.id='job-'+job.id;card.dataset.completion=job.evidence?.completion||'';card.dataset.confirmed=String(!!job.evidence?.confirmed);card.dataset.worked=String(!!job.evidence?.worked);$('#jobs').append(card);continue;}
+  const card=el('article');card.id='job-'+job.id;card.className='job';card.dataset.completion=job.evidence?.completion||'';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');for(const key of ['active','blocked','stalled','worked','confirmed'])card.dataset[key]=String(!!job.evidence?.[key]);card.dataset.state=job.evidence?.awaiting||job.local_attempt_at&&!job.evidence?.confirmed&&job.status==='local_browser'?'awaiting':job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');if(attentionPositions.has(job.id)){const counter=el('span',attentionPositions.get(job.id)+'/'+attention.length+' · Needs your input');counter.className='attention-position';counter.style.cssText='display:inline-block;font-size:14px;font-weight:750;color:#245a3c;background:#e9f4ec;border-radius:8px;padding:4px 9px;margin-bottom:7px';counter.setAttribute('aria-label','Application '+attentionPositions.get(job.id)+' of '+attention.length+' needing your input');names.append(counter);}names.append(el('h2',job.title),paySummary(job),el('small',job.company));if(job.metadata?.checkedAt){names.append(el('small',(job.match_score||0)+'/100 role and eligibility score · '+(job.metadata.location||'Location not listed')+(job.metadata.eligibility?.eligible?'':' · Eligibility needs confirmation')));}const badge=el('span',({saved:'Found',running:'Applying',queued:'Applying · queued',paused:'Blocked',needs_review:'Blocked',local_browser:job.evidence?.stalled?'Browser check needed':job.local_phase==='blocked'?(/^Ready for your review/.test(job.last_message||'')?'Ready for your review':'Needs your input'):job.local_attempt_at?'Awaiting receipt':'Applying · local',submitted:job.evidence?.confirmed?'Receipt recorded':'Submission needs evidence',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);heading.append(mark,names,badge);card.append(heading);
   if(job.evidence?.stalled)card.append(el('p','No recent browser activity has been received. Check the helper and employer tab; this form is not counted as actively filling.'));
   const updated=Date.parse(job.updated_at),stamp=el('p');stamp.className='last-updated';stamp.style.cssText='font-size:13px;color:#626c65;margin:8px 0';
   if(Number.isFinite(updated)){const time=el('time',new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(updated)));time.dateTime=new Date(updated).toISOString();stamp.append(document.createTextNode('Last updated: '),time);}else stamp.textContent='Last updated: unavailable';card.append(stamp);
@@ -273,7 +273,7 @@ async function updateDiscovery(force=false){
  const latest=searches.filter(s=>s.last_run).sort((a,b)=>b.last_run.localeCompare(a.last_run))[0],result=latest?.last_result;
  section.append(el('p',`${searches.length} enabled search${searches.length===1?'':'es'} · Checks every ${Math.round((data.intervalSeconds||60)/60)} minute(s), rotating employer boards. Newly found matches appear automatically; duplicates are skipped.`));
  section.append(el('p',latest?`Last check: ${new Date(latest.last_run).toLocaleString()}${result?` · ${result.scanned} postings checked · ${result.added} new matches · ${result.queued} queued`: ' · Results pending'}`:'First check is pending.'));
- section.append(el('p','A check can find zero suitable new jobs. Posted pay and match details also refresh in the background. '+(searches.some(s=>s.auto_queue)?'Automatic applications: the highest-ranked eligible new match is queued each cycle.':'Automatic applications are off for these searches.')));
+ section.append(el('p','A check can find zero suitable new jobs. Posted pay and match details also refresh in the background. '+(searches.some(s=>s.auto_queue)?'Automatic searches queue all verified matches. The pipeline setting can also queue every found job.':'Automatic applications are off for these searches.')));
   if(latest?.last_error)section.append(el('p','Some sources could not be checked: '+latest.last_error));
  if(searches.some(s=>s.instruction.includes('priority: York Region')))section.append(el('p','Priority: York Region → Toronto → GTA → remote → Canada → worldwide. Matches are based on your role preferences; eligibility may still need your input.'));
  }catch{section.textContent='Search activity could not be loaded. Refresh to try again.';}
@@ -283,7 +283,7 @@ $('#auth').onsubmit=async e=>{e.preventDefault();try{token=(await api('/login','
 $('#logout').onclick=()=>{clearSession();location.reload()};
 for(const a of document.querySelectorAll('[data-profile-link]'))a.href=(location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pages.dev'))?'/setup.html':'/setup';
 let activeHandoff=null,remoteBusy=false,remoteTimer=null,currentFilter='all';
-function applyFilters(){const q=$('#job-search').value.toLowerCase().trim();let shown=0;for(const card of $('#jobs').children){const state=card.dataset.state;const match=currentFilter==='active'&&!['submitted','interview','rejected','offer'].includes(state)||currentFilter==='all'||currentFilter===state||currentFilter==='needs'&&(card.dataset.blocked==='true'||card.dataset.stalled==='true'||['paused','needs_review'].includes(state))||currentFilter==='applying'&&card.dataset.active==='true'||currentFilter==='blocked'&&card.dataset.blocked==='true'||currentFilter==='stalled'&&card.dataset.stalled==='true'||currentFilter==='receipt'&&card.dataset.confirmed==='true'||currentFilter==='worked'&&card.dataset.worked==='true'||currentFilter==='local'&&card.dataset.local==='true';card.hidden=!(match&&card.dataset.search.includes(q));if(!card.hidden)shown++;}$('#empty-state').hidden=shown>0;}
+function applyFilters(){const q=$('#job-search').value.toLowerCase().trim();let shown=0;for(const card of $('#jobs').children){const state=card.dataset.state;const match=currentFilter==='active'&&!['submitted','interview','rejected','offer'].includes(state)||currentFilter==='all'||currentFilter===state||currentFilter==='needs'&&(card.dataset.blocked==='true'||card.dataset.stalled==='true'||['paused','needs_review'].includes(state))||currentFilter==='applying'&&card.dataset.active==='true'||currentFilter==='blocked'&&card.dataset.blocked==='true'||currentFilter==='stalled'&&card.dataset.stalled==='true'||currentFilter==='receipt'&&card.dataset.confirmed==='true'||currentFilter==='worked'&&card.dataset.worked==='true'||currentFilter==='local'&&card.dataset.local==='true'||currentFilter.startsWith('completion-')&&card.dataset.completion===currentFilter.slice(11);card.hidden=!(match&&card.dataset.search.includes(q));if(!card.hidden)shown++;}$('#empty-state').hidden=shown>0;}
 $('#job-search').oninput=applyFilters;
 for(const b of document.querySelectorAll('[data-filter]'))b.onclick=()=>{currentFilter=b.dataset.filter;for(const other of document.querySelectorAll('[data-filter]'))other.setAttribute('aria-pressed',String(other===b));applyFilters()};
 $('#refresh-jobs').onclick=async()=>{const b=$('#refresh-jobs');b.disabled=true;try{await refresh(true)}catch(e){$('#notice').textContent=e.message}finally{b.disabled=false}};
@@ -382,7 +382,7 @@ function focusLocalApplication(jobId){
 function renderLibraryLauncher(){
  if(document.querySelector('#answer-library'))return;
  const box=el('section');box.id='answer-library';box.style.cssText='padding:20px;margin:16px 0;border:1px solid #74ad91;border-radius:12px';
- box.append(el('h2','Answer library'),el('p','Save filled employer forms with the extension’s Save form answers to library button. Confirmed ordinary answers can fill matching questions automatically. Approve other reusable answers here; conflicts and application-specific answers need review. Matching dropdowns fill automatically. With extension 0.6.3, approved queued applications can submit routine forms and record employer receipts.'));
+ box.append(el('h2','Answer library'),el('p','Save filled employer forms with the extension’s Save form answers to library button. Confirmed ordinary answers can fill matching questions automatically. Approve other reusable answers here; conflicts and application-specific answers need review. Matching dropdowns fill automatically. With extension 0.6.4, approved queued applications can submit routine forms and record employer receipts.'));
  const load=el('button','Open / refresh answer library'),list=el('div');box.append(load,list);$('#workspace').prepend(box);
  load.onclick=async()=>{load.disabled=true;try{const {answers}=await api('/answer-library');list.replaceChildren();if(!answers.length)list.append(el('p','No captured answers yet. Save a filled form from its employer tab.'));
  for(const entry of answers){const form=el('form');form.style.cssText='padding:12px 0;border-top:1px solid #ddd';const input=field(form,entry.question);input.value=entry.answer;form.append(el('small',entry.company+' · '+(entry.confirmed?'Employer receipt recorded':'Captured draft — not proof of submission')));
@@ -504,14 +504,14 @@ function renderBrowserReadiness(jobs){
  if(box){if(Date.now()-Number(box.dataset.checkedAt||0)>30000)box.querySelector('button').click();return;}
  box=el('section');box.id='browser-readiness';box.style.cssText='padding:16px;border:1px solid #74ad91;border-radius:12px;margin:16px 0';
  box.append(el('h2','Automatic applications in your browser'));
- const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.3)');
+ const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.4)');
  setup.href='/local-browser.html';setup.style.marginLeft='12px';status.setAttribute('role','status');
  box.append(status,check,setup);$('#workspace').prepend(box);
  check.onclick=()=>{
   if(check.disabled)return;check.disabled=true;box.dataset.checkedAt=String(Date.now());const requestId=crypto.randomUUID();
   const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);check.disabled=false;
    browserHelperStatus=error?null:{...data,checkedAt:Date.now()};
-   status.textContent=error|| (data?.version!=='0.6.3'?'Browser helper '+data?.version+' is connected. Update to 0.6.3 to recognize employer outages and safely retry new empty pages once.':data?.enabled?'Browser helper 0.6.3 connected. New queued applications run automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine applications.')+(data?.error?' '+data.error:'');
+   status.textContent=error|| (data?.version!=='0.6.4'?'Browser helper '+data?.version+' is connected. Update to 0.6.4 for complete automatic-versus-assisted completion tracking.':data?.enabled?'Browser helper 0.6.4 connected. New queued applications run automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine applications.')+(data?.error?' '+data.error:'');
   };
   const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-browser-status-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
   const timer=setTimeout(()=>finish('Browser helper not detected here. Open this dashboard in the Chrome or Edge profile with ApplyPilot Local enabled.'),3500);
@@ -529,12 +529,12 @@ function resumeLocalApplication(jobId){
   window.addEventListener('message',receive);window.postMessage({type:'applypilot-resume-application',requestId,jobId},location.origin);
  });
 }
-function renderOperations(snapshot,activity){
+function renderOperations(snapshot,activity,jobs=[]){
  if(!snapshot?.totals)snapshot=null;
  let box=$('#operations');
  if(!box){box=el('section');box.id='operations';box.className='operations';$('#workspace').prepend(box);}
  $('#workspace').prepend(box);
- const signature=JSON.stringify([snapshot?.totals,activity?.events]);
+ const signature=JSON.stringify([snapshot?.totals,snapshot?.applications,activity?.events]);
  if(box.dataset.signature===signature)return;box.dataset.signature=signature;
  box.replaceChildren();
  const header=el('div');header.className='operations-heading';
@@ -554,6 +554,23 @@ function renderOperations(snapshot,activity){
  }
  box.append(metrics,el('p','Filled forms and submission attempts are not successful submissions. Imported history, placeholders and outcome changes do not add receipts.'));
  if(snapshot.totals.unverifiedOutcome)box.append(el('p',snapshot.totals.unverifiedOutcome+' recorded outcomes have no qualifying receipt text and are excluded from the receipt total.'));
+ const completed=el('section');completed.id='completion-breakdown';completed.setAttribute('aria-label','Confirmed completions by assistance');
+ completed.append(el('h3','Who completed your applications?'),el('p','Only applications with employer receipt evidence count. Preparing your reusable profile does not count as help on each application.'));
+ const counts=el('div');counts.className='operation-metrics';
+ const groups=[['automatic','Completed automatically','ApplyPilot completed the tracked form without a recorded human step.'],['assisted','Completed with your help','You supplied an application answer, interacted with the form, or recorded its receipt.'],['unknown','Completion method unknown','The receipt is recorded, but the available history cannot establish how the form was completed.']];
+ for(const [key,label,detail] of groups){
+  const metric=el('button');metric.type='button';metric.className='operation-metric';metric.dataset.completion=key;metric.append(el('span',label),el('strong',String(snapshot.totals[key]||0)),el('small',detail));
+  metric.onclick=()=>{currentFilter='completion-'+key;for(const b of document.querySelectorAll('[data-filter]'))b.setAttribute('aria-pressed','false');applyFilters();$('#jobs').closest('.list-panel').scrollIntoView({behavior:'smooth',block:'start'});};counts.append(metric);
+ }
+ completed.append(counts);
+ const grouped=el('details');grouped.append(el('summary','See completed applications in each group'));
+ const byId=new Map(jobs.map(j=>[j.id,j]));
+ for(const [key,label] of groups){
+  const list=el('ul');grouped.append(el('h4',label));
+  for(const entry of snapshot.applications||[]){if(entry.completion!==key)continue;const job=byId.get(entry.id);if(!job)continue;const item=el('li'),link=el('a',job.company+' — '+job.title);link.href='#job-'+job.id;link.onclick=()=>{currentFilter='all';$('#job-search').value='';applyFilters();};item.append(link);list.append(item);}
+  if(!list.children.length)grouped.append(el('p','No confirmed applications in this group.'));else grouped.append(list);
+ }
+ completed.append(grouped);box.append(completed);
  const feed=el('div');feed.className='activity-feed';feed.append(el('h3','Latest activity'));
  if(!activity)feed.append(el('p','Activity could not be refreshed.'));
  const events=(activity?.events||[]).filter(e=>e.job_id).slice(0,6);
@@ -584,7 +601,7 @@ function renderContinuationQueue(data){
 }
 async function drainContinuations(data){
  if(continuationBusy||busy||activeHandoff||Date.now()<nextContinuationCheck||!data?.requests?.some(r=>r.state==='queued'))return;
- if(!browserHelperStatus?.enabled||!['0.6.1','0.6.2','0.6.3'].includes(browserHelperStatus.version)||Date.now()-browserHelperStatus.checkedAt>45000)return;
+ if(!browserHelperStatus?.enabled||!['0.6.1','0.6.2','0.6.3','0.6.4'].includes(browserHelperStatus.version)||Date.now()-browserHelperStatus.checkedAt>45000)return;
  continuationBusy=true;nextContinuationCheck=Date.now()+20000;
  try{
   const {request}=await api('/continuations/claim','POST',{});if(!request)return;
@@ -624,4 +641,21 @@ async function updateAIStatus(){
   };
   const setup=el('a','View resume and profile facts →');setup.href='https://marvelous-vitality-production-c2d8.up.railway.app/setup';box.append(setup);
  }catch{box.replaceChildren(el('h2','AI form assistance'),el('p','AI status could not be verified. Your saved answers remain available.'));}
+}
+
+function renderPipeline(data){
+ let section=$('#application-pipeline');
+ if(!section){section=el('section');section.id='application-pipeline';section.className='operations';$('#workspace').prepend(section);}
+ if(!data){section.replaceChildren(el('h2','Application pipeline'),el('p','Pipeline status could not be refreshed.'));return;}
+ if(section.dataset.busy==='true')return;
+ const signature=JSON.stringify(data);if(section.dataset.signature===signature)return;section.dataset.signature=signature;
+ section.replaceChildren(el('h2','Application pipeline'),el('p',data.enabled?'Automatic queueing is on. Every found job enters the ranked pipeline; higher-ranked jobs are processed first.':'Automatic queueing of all found jobs is off.'),el('p',data.found+' found jobs waiting to enter the pipeline.'));
+ const status=el('p');status.setAttribute('role','status');
+ const primary=el('button',data.enabled?'Queue found jobs now':'Queue all found and enable automatic queueing');primary.className='primary';primary.type='button';
+ const report=r=>r.queued+' queued · '+r.held+' need attention · '+r.duplicates+' duplicates excluded.';
+ primary.onclick=async()=>{primary.disabled=true;section.dataset.busy='true';try{const response=await api(data.enabled?'/pipeline/queue-found':'/pipeline',data.enabled?'POST':'PUT',data.enabled?{}:{enabled:true});const result=response.result||response;$('#notice').textContent=report(result);section.dataset.signature='';section.dataset.busy='false';await refresh(true);}catch(e){status.textContent=e.message;}finally{primary.disabled=false;section.dataset.busy='false';}};
+ section.append(primary);
+ if(data.enabled){const pause=el('button','Pause automatic queueing');pause.type='button';pause.onclick=async()=>{pause.disabled=true;try{await api('/pipeline','PUT',{enabled:false});section.dataset.signature='';await refresh(true);}catch(e){status.textContent=e.message;pause.disabled=false;}};section.append(pause);}
+ section.append(status,el('small','Previously attempted or duplicated applications are never started again automatically. Closed postings and missing details appear under Needs you. Pause affects new queue entries; use the browser helper to stop work already in progress.'));
+ $('#workspace').insertBefore(section,$('#operations')?.nextSibling||$('#workspace').firstChild);
 }

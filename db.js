@@ -1,3 +1,4 @@
+import {installPipeline} from './application-pipeline.js';
 import {installRepeatGuard} from './application-dedup.js';
 import {installHistory} from './application-history.js';
 import {canonicalJobURL} from './form-policy.js';
@@ -65,3 +66,5 @@ for(const [table,name,type] of [['jobs','job_metadata_json',"TEXT NOT NULL DEFAU
 }
 
 installRepeatGuard(db);
+
+installPipeline(db);

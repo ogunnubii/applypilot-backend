@@ -61,7 +61,7 @@ export class Handoffs {
    // Input acknowledgements do not wait for image capture. The next view checks receipts.
    if(data.render===false&&['click','drag','text','key','scroll'].includes(action))return {accepted:true};
    let content='';if(s.attempted&&!s.initialReceipt)for(const frame of p.frames())if(supported(frame.url()))content+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
-   if(s.attempted&&!s.initialReceipt&&receipt.test(content)){this.onSubmitted(s.job);this.sessions.delete(id);await s.context.close();return {submitted:true}}
+   if(s.attempted&&!s.initialReceipt&&receipt.test(content)){const match=content.match(receipt);this.onSubmitted(s.job,content.slice(Math.max(0,match.index-40),match.index+250).trim());this.sessions.delete(id);await s.context.close();return {submitted:true}}
    const image=await p.screenshot({type:'jpeg',quality:60,timeout:10000});
    const frameId=createHash('sha256').update(image).digest('hex');
    const url=new URL(p.url());return {image:data.frameId===frameId?undefined:image.toString('base64'),frameId,width:1100,height:800,host:url.hostname,uploadRequested:!!s.chooser,expiresAt:Math.min(s.touched+15*60*1000,s.created+45*60*1000)};

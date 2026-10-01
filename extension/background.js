@@ -26,7 +26,7 @@ async function openJob(id,auto=true){
  const matches=tabs.filter(t=>P.sameApplication(t.url,packet.job.url));
  let tab=matches.find(t=>record?.tabId===t.id)||(matches.length===1?matches[0]:null);
  if(matches.length>1&&!tab)throw Error('Several copies of this application are open. Close duplicates first.');
- record={...record,id,url:packet.job.url,attempted:!!(record?.attempted||claim.attempted||packet.job.attempted),auto,phase:'ready',touched:Date.now()};
+ record={safeInitialLoad:!record&&!tab,...record,id,url:packet.job.url,attempted:!!(record?.attempted||claim.attempted||packet.job.attempted),auto,phase:'ready',touched:Date.now()};
  if(record.attempted){record.phase='verifying';record.auto=false;}
  await saveRecord(record);
  if(!tab){tab=await chrome.tabs.create({url:'about:blank',active:!auto});record.tabId=tab.id;await saveRecord(record);let url=packet.job.url;if(/^jobs(\.eu)?\.lever\.co$/.test(new URL(url).hostname)&&!url.endsWith('/apply'))url=url.replace(/\/$/,'')+'/apply';await chrome.tabs.update(tab.id,{url});}
@@ -36,7 +36,7 @@ async function openJob(id,auto=true){
 function eligible(j,s){
  const r=s.records[j.id];
  return j.execution_mode==='local'&&P.supported(j.url)&&!j.local_attempt_at&&!r?.attempted&&!['Unconfirmed submission','Submission in progress','Sensitive action'].includes(j.challenge)&&
- (j.status==='queued'&&!r);
+ (j.status==='queued'&&!r)&&!Object.values(s.records).some(other=>other.siteCooldownUntil>Date.now()&&new URL(other.url).hostname===new URL(j.url).hostname);
 }
 async function tick(){
  const s=await read();if(!s.enabled)return;
@@ -46,6 +46,24 @@ async function tick(){
   if(tab&&P.sameApplication(tab.url,active.url)&&Date.now()-active.touched<90000)return;
   active.phase='blocked';active.auto=false;await saveRecord(active);
   await api('/jobs/'+active.id+'/local/progress','POST',{blocked:true,fields:[],message:active.attempted?'Submission uncertain; check employer receipt.':'Browser stopped responding. Reopen from extension.'}).catch(()=>{});
+ }
+ const waiting=Object.values(s.records).find(r=>r.siteRetryAt&&r.siteRetryAt<=Date.now());
+ if(waiting){
+  // The one allowed retry is a fresh GET of a new, empty landing page. Never replay form navigation.
+  const tab=Number.isInteger(waiting.tabId)?await chrome.tabs.get(waiting.tabId).catch(()=>null):null;
+  waiting.siteRetryAt=0;await saveRecord(waiting);
+  if(!waiting.attempted&&waiting.safeInitialLoad&&!waiting.formTouched&&!waiting.steps&&tab&&P.sameApplication(tab.url,waiting.url)){
+   try{
+    const packet=await api('/jobs/'+waiting.id+'/local/packet');
+    if(!packet.job.attempted){
+     waiting.phase='ready';waiting.auto=true;waiting.touched=Date.now();await saveRecord(waiting);
+     await api('/jobs/'+waiting.id+'/local/progress','POST',{blocked:false,fields:[],message:'Checking the employer page once after its temporary outage.'});
+     await chrome.tabs.update(tab.id,{url:waiting.url});return;
+    }
+    waiting.attempted=true;
+   }catch(e){await chrome.storage.local.set({error:'Employer page retry paused: '+e.message});}
+  }
+  waiting.auto=false;waiting.phase='blocked';await saveRecord(waiting);
  }
  const fresh=await read();let jobs;try{({jobs}=await api('/jobs'));}catch(e){await chrome.storage.local.set({error:e.message});return;}const candidates=jobs.filter(j=>eligible(j,fresh));const queue=[...new Set([...fresh.queue,...candidates.map(j=>j.id)])].filter(id=>candidates.some(j=>j.id===id));await chrome.storage.local.set({queue,error:''});const id=queue[0];if(!id)return;
  try{await openJob(id,true);await chrome.storage.local.set({queue:queue.slice(1),error:''});}
@@ -83,7 +101,7 @@ async function handle(m,sender){
   if(m.action==='open')return openJob(m.id,m.auto!==false);
   if(m.action==='dashboard'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard});}
   if(m.action==='environment'){if(!environments[m.value])throw Error('Unknown environment');const s=await read();if(Object.keys(s.records).length)throw Error('Use a separate browser profile for another server while applications are tracked');await chrome.storage.local.set({environment:m.value,enabled:false,queue:[]});return {};}
-  if(m.action==='stop'){const s=await read();for(const r of Object.values(s.records))r.auto=false;await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});return {};}
+  if(m.action==='stop'){const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;}await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});return {};}
   if(m.action==='start'){
    const {jobs}=await api('/jobs'),s=await read();const ids=jobs.filter(j=>eligible(j,s)).map(j=>j.id);
    await chrome.storage.local.set({queue:[...new Set([...s.queue,...ids])],enabled:true,userPaused:false,error:''});await tick();return {count:ids.length};
@@ -107,7 +125,22 @@ async function handle(m,sender){
   try{await api('/jobs/'+b.id+'/local/attempt','POST',{url:sender.url,before:m.before,human:m.human===true,automatic});}catch(e){b.auto=false;b.phase='blocked';await saveRecord(b);throw e;}return {};
  }
  if(m.action==='step'){if(!b.auto)throw Error('Automation was stopped');if((b.steps||0)>=15)throw Error('Step limit reached. Continue manually.');await api('/jobs/'+b.id+'/local/step','POST',{});b.steps=(b.steps||0)+1;await saveRecord(b);return {};}
+ if(m.action==='form-opened'){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;await saveRecord(b);return {};}
+ if(m.action==='site-error'){
+  const issue=P.employerPageIssue({status:m.code});if(!issue)throw Error('Unrecognized employer page error.');
+  const canRetry=issue.retryable&&s.enabled&&b.auto&&!b.attempted&&b.safeInitialLoad&&!b.formTouched&&!b.steps&&m.empty===true&&m.initial===true&&!(b.siteRetries>0);
+  let message=issue.message;
+  b.siteCooldownUntil=issue.retryable||issue.code===429?Date.now()+(issue.code===429?300000:60000):0;
+  b.siteRetryAt=canRetry?Date.now()+60000:0;
+  if(canRetry){b.siteRetries=(b.siteRetries||0)+1;message+=' Will check this empty page once in about a minute; other employer sites can continue.';}
+  else if(b.attempted)message+=' A submission may already have occurred. Check for an employer receipt; automatic retry is disabled.';
+  else message+=' Automatic retry is paused. Refresh the employer page later when it is available.';
+  b.phase='blocked';b.auto=false;b.touched=Date.now();await saveRecord(b);
+  await api('/jobs/'+b.id+'/local/progress','POST',{blocked:true,fields:[],message});
+  await tick();return {message};
+ }
  if(m.action==='progress'){
+  if(Number(m.filled)>0){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;}
   b.touched=Date.now();if(m.blocked){b.phase='blocked';b.auto=false;}await saveRecord(b);
   const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,filled:m.filled});if(m.blocked)await tick();return result;
  }
@@ -125,6 +158,6 @@ let chain=Promise.resolve();
 function serial(fn){const result=chain.then(fn);chain=result.catch(()=>{});return result;}
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{serial(()=>handle(m,sender)).then(data=>reply({ok:true,data})).catch(e=>reply({ok:false,error:e.message}));return true;});
 chrome.alarms.onAlarm.addListener(a=>{if(a.name==='queue')serial(tick).catch(()=>{});});
-chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.auto=false;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:!s.userPaused,error:'Browser restarted. Existing unfinished applications remain paused; new eligible jobs continue automatically.'});}));
+chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:!s.userPaused,error:'Browser restarted. Existing unfinished applications remain paused; new eligible jobs continue automatically.'});}));
 chrome.runtime.onInstalled.addListener(()=>serial(initialize));
-chrome.tabs.onRemoved.addListener(id=>serial(async()=>{const s=await read();for(const r of Object.values(s.records))if(r.tabId===id){r.tabId=null;r.auto=false;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records});await tick();}).catch(()=>{}));
+chrome.tabs.onRemoved.addListener(id=>serial(async()=>{const s=await read();for(const r of Object.values(s.records))if(r.tabId===id){r.tabId=null;r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records});await tick();}).catch(()=>{}));

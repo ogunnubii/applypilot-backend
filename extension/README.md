@@ -20,3 +20,6 @@ Version 0.6.1 fixes missing-tab queue stalls and resumes routine submissions aft
 
 
 0.6.1 opens associated dropdown menus before matching exact saved answers, verifies the displayed selection, reports filled-field progress, and supports guarded dashboard resume. Attempts are never automatically retried. Arbitration and waiver statements require applicant review.
+
+
+Version 0.6.2 recognizes employer HTTP 500/502/503/504, rate limits, denied access and missing pages. It does not treat them as application forms or confirmations. Newly opened automatic jobs may retry an empty landing page once after a one-minute cooldown, using a fresh GET. Other employer hosts continue during the wait. Existing records, edited/populated forms, form steps, and any possible submission remain paused. Stop automation and browser restart cancel pending retries. No access checks are bypassed. Update by extracting the ZIP over this same directory and reloading the same extension; keep its records.

@@ -8,6 +8,7 @@ const labelText=e=>{if(!e)return '';const c=e.cloneNode(true);c.querySelectorAll
 const label=e=>{const ids=(e.getAttribute('aria-labelledby')||'').split(' ').filter(Boolean).map(id=>document.getElementById(id)?.textContent||'').join(' ');return ((e.type==='radio'?e.closest('fieldset')?.querySelector('legend')?.textContent:'')||labelText(e.labels?.[0])||ids||e.getAttribute('aria-label')||e.closest('.application-question')?.querySelector('.application-label')?.textContent||e.placeholder||e.name||e.id||'Required field').trim().slice(0,240)};
 async function send(action,data={}){const r=await chrome.runtime.sendMessage({action,...data});if(!r?.ok)throw Error(r?.error||'ApplyPilot connection unavailable');return r.data;}
 function bodyText(){return [...document.body.childNodes].filter(e=>e.nodeType===3||e.nodeType===1&&e!==bar&&!e.matches('script,style,noscript,template')&&visible(e)).map(e=>e.nodeType===3?e.textContent:e.innerText||'').join('\n');}
+function siteIssue(){return P.employerPageIssue({title:document.title,text:bodyText(),hasForm:controls().length>0||!!document.querySelector('form')});}
 function receipt(){return P.receipt(bodyText());}
 function setValue(e,value){const proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(e,value);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}
 function answer(e){
@@ -103,8 +104,9 @@ function review(){
  return {fields:[...new Set(missing)],reason:fieldErrors.length?'Could not fill: '+fieldErrors.join('; '):captcha?'CAPTCHA requires you':login?'Sign-in or MFA requires you':sensitive?'Sensitive statement, payment or legal attestation requires you':custom?'Custom form control requires review':embedded?'Embedded form requires review':missing.length?'Needs your input: '+[...new Set(missing)].join('; '):errors.length?'Employer validation needs review':''};
 }
 async function fill(){
- if(!packet)packet=await send('packet');if(!bar)mount();let count=0;fieldErrors=[];
+ if(!packet)packet=await send('packet');if(!bar)mount();let count=0;fieldErrors=[];if(siteIssue())return 0;
  const fields=controls();
+ if(fields.length||document.querySelector('form'))await send('form-opened');
  for(const e of fields){
   try{
   if(e.getAttribute('role')==='combobox'){const a=answer(e);if(a!==null&&await fillCustom(e,a))count++;continue;}
@@ -131,6 +133,12 @@ function buttons(){return [...document.querySelectorAll('button,input[type=submi
 const buttonName=e=>(e.innerText||e.value||e.getAttribute('aria-label')||'').trim();
 async function advance(){
  const state=await send('state');attempted=attempted||state.attempted;
+ const issue=siteIssue();
+ if(issue){
+  stopped=true;clearInterval(timer);
+  const result=await send('site-error',{code:issue.code,empty:controls().length===0&&!document.querySelector('form'),initial:lastStep===''});
+  note.textContent=result.message;return;
+ }
  const text=receipt();
  if(text&&!initialReceipt&&attempted){await send('receipt',{receipt:text});note.textContent='Employer receipt verified. Application submitted.';stopped=true;clearInterval(timer);return;}
  if(attempted){if(!submitAt)submitAt=Date.now();if(Date.now()-submitAt>30000)await report('Submission uncertain. Check the employer receipt before retrying.');return;}
@@ -163,7 +171,7 @@ async function advance(){
  await report('Application action is unfamiliar or ambiguous. Continue manually.');
 }
 async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted)await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
-async function begin(){try{packet=await send('packet');attempted=!!packet.job.attempted||(await send('state')).attempted;initialReceipt=!!receipt()&&!attempted;started=true;await fill();await advance();timer=setInterval(monitor,2500);}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched. */}}
+async function begin(){try{packet=await send('packet');attempted=!!packet.job.attempted||(await send('state')).attempted;initialReceipt=!!receipt()&&!attempted;started=true;await fill();await advance();if(!stopped)timer=setInterval(monitor,2500);}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched. */}}
 document.addEventListener('click',e=>{
  const b=e.target.closest('button,input[type=submit],[role=button]');if(!started||!e.isTrusted||!b||bar?.contains(b))return;
  if(/^(submit(?: application)?|send application|send my application)$/i.test(buttonName(b))&&!attempted){attempted=true;submitAt=Date.now();stopped=false;clearInterval(timer);timer=setInterval(monitor,2500);send('capture',{fields:formAnswers()}).catch(()=>{}).then(()=>send('attempt',{before:bodyText(),human:true})).catch(err=>{note.textContent='Sync unavailable: '+err.message+'. Record the employer receipt in the dashboard.';});}

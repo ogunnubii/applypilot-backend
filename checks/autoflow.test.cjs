@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
-const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
+const sources=Object.fromEntries(["assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
 test("routine submissions and receipt safety",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const wait=()=>new Promise(r=>setTimeout(r,35));
@@ -228,4 +228,73 @@ test('stalled browser sessions are separated from filling and receipt filters ex
  [...w.document.querySelectorAll('#operations button')].find(b=>b.textContent.includes('Browser check needed')).click();assert(!w.document.querySelector('#job-stale').hidden);assert(w.document.querySelector('#job-receipt').hidden);
  [...w.document.querySelectorAll('#operations button')].find(b=>b.textContent.includes('Needs a step')).click();assert(w.document.querySelector('#job-stale').hidden,'stalled forms have a separate metric');
  w.close();
+});
+
+test('employer error pages are classified without mistaking job descriptions for errors',async()=>{
+ const assert=require('node:assert/strict'),vm=require('node:vm'),ctx={URL};vm.runInNewContext(sources['extension/policy.js'],ctx);
+ const f=ctx.ApplyPilotPolicy.employerPageIssue;
+ assert.equal(f({title:'Greenhouse',text:"Error 503\nService Unavailable\nWe're a little lost in the weeds right now."}).code,503);
+ for(const status of [500,502,503,504])assert.equal(f({status}).retryable,true);
+ for(const status of [403,404,410,429])assert.equal(f({status}).retryable,false);
+ assert.equal(f({text:'We are looking for an engineer who troubleshoots Error 503 Service Unavailable'}),null);
+ assert.equal(f({text:'Error 503 Service Unavailable',hasForm:true}),null);
+ assert.equal(f({text:'Thank you for applying'}),null);
+ assert.equal(f({text:'Service Unavailable'}).code,503);
+ assert.equal(f({title:'Careers',text:'Error 503\nService Unavailable'}).code,503);
+});
+
+test('content agent reports an employer outage without filling, capturing, submitting or falsely confirming',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ for(const attempted of [false,true]){
+  const dom=new JSDOM('<title>Greenhouse</title><main><h1>Error 503</h1>\n<h2>Service Unavailable</h2>\n<p>We are a little lost in the weeds right now.</p></main>',{runScripts:'outside-only',url:'https://job-boards.greenhouse.io/example/jobs/42'}),w=dom.window,messages=[];
+  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});
+  w.HTMLElement.prototype.getClientRects=()=>[{}];w.setInterval=()=>{throw Error('An error page must stop its monitor');};w.clearInterval=()=>{};
+  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Fixture',attempted},profile:{},answers:{}}};if(m.action==='state')return {ok:true,data:{attempted,automatic:!attempted}};return {ok:true,data:{message:'Employer site temporarily unavailable (HTTP 503).'}};}}};
+  w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);await new Promise(r=>setTimeout(r,35));
+  assert.equal(messages.filter(m=>m.action==='site-error').length,1);
+  assert(!messages.some(m=>['attempt','capture','receipt','form-opened','progress'].includes(m.action)));
+  assert(w.document.querySelector('[role=status]').textContent.includes('HTTP 503'));w.close();
+ }
+});
+
+test('employer retry uses one delayed GET only for a new empty page, and honours all attempt and stop guards',async()=>{
+ const assert=require('node:assert/strict'),vm=require('node:vm');
+ function scenario(changes={},enabled=true){
+  let clock=1000000;class Clock extends Date{static now(){return clock;}}
+  const url='https://job-boards.greenhouse.io/example/jobs/42',state={records:{j:{id:'j',url,tabId:3,auto:true,phase:'ready',touched:clock,safeInitialLoad:true,...changes}},enabled,automaticDefault:true,device:'fixture',queue:[]},updates=[],requests=[];
+  const noop={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop,getURL:p=>'chrome-extension://fixture/'+p},alarms:{get:async()=>({}),onAlarm:noop},tabs:{get:async()=>({id:3,url}),update:async(id,options)=>{updates.push({id,...options});},query:async()=>[{id:1}],onRemoved:noop},scripting:{executeScript:async({args})=>{requests.push(args);return [{result:{data:args[1]==='/jobs'?{jobs:[]}:args[1].endsWith('/packet')?{job:{attempted:!!state.serverAttempted}}:{ok:true}}}];}}};
+  const ctx={chrome,URL,console,Date:Clock,crypto:require('node:crypto').webcrypto,importScripts(){}};
+  vm.runInNewContext(sources['extension/policy.js'],ctx);vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;globalThis.testTick=tick;globalThis.testEligible=eligible;',ctx);
+  const sender={tab:{id:3},url,frameId:0};
+  return {state,updates,requests,ctx,send:(m={})=>ctx.testHandle({action:'site-error',code:503,empty:true,initial:true,...m},sender),advance:async()=>{clock+=61000;await ctx.testTick();},url};
+ }
+ let f=scenario();let result=await f.send();assert(result.message.includes('once'));assert.equal(f.updates.length,0);
+ const candidate={id:'another',url:f.url.replace('42','43'),status:'queued',execution_mode:'local'};
+ assert.equal(f.ctx.testEligible(candidate,f.state),false,'same employer host waits during its cooldown');
+ assert.equal(f.ctx.testEligible({...candidate,url:'https://jobs.lever.co/example/other'},f.state),true,'other sites can continue');
+ await f.advance();assert.equal(f.updates.length,1);assert.equal(f.updates[0].url,f.url,'fresh GET of original job URL');
+ await f.send();await f.advance();assert.equal(f.updates.length,1,'repeated 503 never creates a retry loop');
+ for(const changes of [{attempted:true},{safeInitialLoad:false},{safeInitialLoad:undefined},{formTouched:true},{steps:1},{auto:false},{siteRetries:1}]){
+  f=scenario(changes);await f.send();await f.advance();assert.equal(f.updates.length,0,JSON.stringify(changes));
+ }
+ for(const message of [{code:429},{code:403},{code:404},{code:410},{empty:false},{initial:false}]){
+  f=scenario();await f.send(message);await f.advance();assert.equal(f.updates.length,0,JSON.stringify(message));
+ }
+ f=scenario({},false);await f.send();await f.advance();assert.equal(f.updates.length,0,'paused helper never retries');
+ f=scenario();await f.send();f.state.serverAttempted=true;await f.advance();assert.equal(f.updates.length,0,'fresh server attempt guard');
+ f=scenario();await f.send();await f.ctx.testHandle({action:'stop'},{url:'chrome-extension://fixture/popup.html'});await f.advance();assert.equal(f.updates.length,0);assert.equal(f.state.records.j.siteRetryAt,0);
+ f=scenario();await f.ctx.testHandle({action:'form-opened'},{tab:{id:3},url:f.url,frameId:0});await f.send();await f.advance();assert.equal(f.updates.length,0,'even an unfilled rendered form disables automatic reload');
+});
+
+test('hosted worker stops an HTTP 503 before inspecting or submitting a form and releases its browser',async()=>{
+ const assert=require('node:assert/strict'),vm=require('node:vm'),ctx={URL};vm.runInNewContext(sources['extension/policy.js'],ctx);
+ let status='running',challenge=null,closed=false,gotoCount=0;const events=[];
+ const db={prepare(sql){return {get(){if(sql.includes('FROM applicants'))return {id:'p',user_id:'u',consent:1,email:'applicant@example.test',resume_path:'fixture.pdf',answers_json:'{}'};return {status,challenge};},run(...values){if(sql.startsWith('UPDATE jobs SET status=')){status=values[0];challenge=values[1];}}};}};
+ const page={setDefaultTimeout(){},goto:async()=>{gotoCount++;return {status:()=>503};},waitForTimeout:async()=>{},locator(selector){if(selector==='body')return {innerText:async()=>'Error 503\nService Unavailable'};if(selector==='form,input:visible,textarea:visible,select:visible')return {count:async()=>0};throw Error('Must not inspect/fill an error page: '+selector);},isClosed:()=>false};
+ const context={newPage:async()=>page,close:async()=>{closed=true;}};const browser={newContext:async()=>context};
+ const code=sources['worker.js'].replace(/import\s+[^;]+;/g,'').replace(/main\(\)\.catch[\s\S]*$/,'');
+ const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,ctx.ApplyPilotPolicy.employerPageIssue);
+ await run({id:'j',user_id:'u',applicant_id:'p',url:'https://job-boards.greenhouse.io/example/jobs/42'},browser);
+ assert.equal(gotoCount,1);assert.equal(status,'needs_review');assert.equal(challenge,'Employer site unavailable');assert(closed);
+ assert(events.some(e=>e.message.includes('HTTP 503')));assert(!events.some(e=>['filled','submitted'].includes(e.type)));
 });

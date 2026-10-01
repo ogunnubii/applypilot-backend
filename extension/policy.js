@@ -54,5 +54,24 @@
    }
    return false;
   }
-  globalThis.ApplyPilotPolicy = Object.freeze({domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
+
+  function employerPageIssue({status=0,title='',text='',hasForm=false}={}){
+   let code=Number(status)||0;
+   // Text recognition is restricted to an error page's opening, never job prose or a real form.
+   if(![403,404,410,429,500,502,503,504].includes(code)&&!hasForm){
+    for(const value of [title,String(text).slice(0,1200)]){
+    const opening=normalize(value);
+    const match=opening.match(/^(?:(?:greenhouse|error|http|http error|service unavailable|bad gateway|gateway timeout)\s*[:\-–]?\s*){0,3}(403|404|410|429|500|502|503|504)\b/);
+    if(match){code=Number(match[1]);break;}
+    else if(/^(?:greenhouse\s+)?service unavailable\b/.test(opening)){code=503;break;}
+    }
+   }
+   if([500,502,503,504].includes(code))return {code,retryable:true,message:'Employer site temporarily unavailable (HTTP '+code+'). This is not an application confirmation.'};
+   if(code===429)return {code,retryable:false,message:'Employer site rate limit (HTTP 429). Wait before opening more applications on this site.'};
+   if(code===404||code===410)return {code,retryable:false,message:'Employer application page is unavailable (HTTP '+code+'). Check whether the posting has closed or moved.'};
+   if(code===403)return {code,retryable:false,message:'Employer site denied access (HTTP 403). Open the employer page to review its access requirements.'};
+   return null;
+  }
+
+  globalThis.ApplyPilotPolicy = Object.freeze({employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
 })();

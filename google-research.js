@@ -174,13 +174,17 @@ export async function researchAnswer({question,job={},fetchImpl=fetch,env=proces
  if(!Array.isArray(resultSteps[0].result))throw Error('Google URL Context returned an unrecognized result format.');
 
  if(resultSteps[0].is_error===true||!resultSteps[0].result.length)throw Error('Google did not retrieve the public job page.');
+
  const retrievals=resultSteps[0].result;
  for(const retrieval of retrievals){
   const url=exactPublicJobUrl(retrieval?.url);
   if(!url||!sameCanonicalPage(publicJobUrl,url))throw Error('Google retrieved a different page than the requested public job page.');
-  if(retrieval?.status!=='success'){const status=['unsafe','paywall','error'].includes(retrieval?.status)?retrieval.status:null;throw Error(status?`Google could not read this public job page (${status}).`:'Google did not verify the public job page.');}
+  if(['unsafe','paywall'].includes(retrieval?.status))throw Error(`Google could not read this public job page (${retrieval.status}).`);
+  if(!['success','error'].includes(retrieval?.status))throw Error('Google did not verify the public job page.');
  }
- const retrievedUrl=exactPublicJobUrl(retrievals[0].url);
+ const successfulRetrieval= retrievals.find(retrieval=>retrieval.status==='success');
+ if(!successfulRetrieval)throw Error('Google could not read this public job page (all retrieval attempts failed).');
+ const retrievedUrl=exactPublicJobUrl(successfulRetrieval.url);
  const blocks=data.steps.filter(step=>step?.type==='model_output'&&Array.isArray(step.content)).flatMap(step=>step.content).filter(block=>block?.type==='text'&&typeof block.text==='string'&&block.text.trim());
  const answer=blocks.map(block=>typeof block.text==='string'?block.text.trim():'').filter(Boolean).join('\n').trim();
  if(!answer||answer.length>4000)throw Error('Google research returned an invalid answer.');

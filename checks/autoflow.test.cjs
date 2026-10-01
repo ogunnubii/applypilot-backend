@@ -525,6 +525,8 @@ test("Gemini duplicate retrieval records are accepted only for the same verified
   return{ok:true,json:async()=>({status:'completed',steps:[{type:'url_context_call',id:'call-1',arguments:{urls:[url]}},{type:'url_context_result',call_id:'call-1',is_error:isError,result:records},{type:'model_output',content:[{type:'text',text:answer,annotations:[{type:'url_citation',url,title:'Job',start_index:0,end_index:Buffer.byteLength(answer)}]}]}]})};
  }};
  const result=await researchAnswer(options);assert.equal(result.answer,answer);assert.equal(result.citations.length,1);
+ records=[{url,status:'error'},{url:canonical,status:'success'}];assert.equal((await researchAnswer(options)).answer,answer);
+ records=[{url,status:'error'}];await assert.rejects(researchAnswer(options),/all retrieval attempts failed/);
  records=[{url,status:'success'},{url:'https://other.example/jobs/1234',status:'success'}];await assert.rejects(researchAnswer(options),/different page/);
  records=[{url,status:'success'},{url,status:'unsafe'}];await assert.rejects(researchAnswer(options),/unsafe/);
  records=[];await assert.rejects(researchAnswer(options),/did not retrieve/);

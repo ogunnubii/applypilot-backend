@@ -63,7 +63,9 @@ export async function testPublicDrafting(db,uid,{research=researchForJob,env=pro
  const job=db.prepare("SELECT j.id,j.company,j.title FROM jobs j JOIN applicants p ON p.id=j.applicant_id AND p.user_id=j.user_id WHERE j.user_id=? AND p.google_research_consent=1 AND j.status!='archived' ORDER BY CASE WHEN j.url LIKE '%greenhouse.io/%' THEN 0 ELSE 1 END,j.updated_at DESC LIMIT 1").get(uid);
  if(!job)throw Error('Enable Google public-page drafting for a profile with a saved job, then test again.');
  diagnosticRuns.set(uid,time);
- const result=await research(db,uid,job.id,'What are the responsibilities of this role?',{env});
+ let result;
+ try{result=await research(db,uid,job.id,'What are the responsibilities of this role?',{env});}
+ catch(error){throw Error(job.company+' · '+job.title+': '+error.message);}
  if(!result.answer?.trim())throw Error(result.reason||'Gemini responded, but this public job page does not contain enough information for a verified draft.');
  return {ok:true,model:String(env.GEMINI_MODEL||'').trim()||'gemini-3.5-flash-lite',checkedAt:new Date(clock()).toISOString(),company:job.company,title:job.title,answer:result.answer,citations:result.citations};
 }

@@ -132,8 +132,8 @@ async function broadListings(intent){
 async function listBoard(board){
   const u=new URL(board),token=decodeURIComponent(u.pathname.slice(1));
   if(u.hostname.includes('greenhouse.io')){
-    const data=await cachedJSON(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs?content=true`);
-    return (data.jobs||[]).map(j=>({title:j.title,company:token,location:j.location?.name,description:j.content,url:j.absolute_url}));
+    const data=await cachedJSON(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs`);
+    return (data.jobs||[]).map(j=>({title:j.title,company:token,location:j.location?.name,description:j.content,descriptionURL:Number.isInteger(j.id)?`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs/${j.id}`:null,url:j.absolute_url}));
   }
   if(u.hostname==='jobs.ashbyhq.com'){
     const data=await cachedJSON(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(token)}`);
@@ -186,6 +186,7 @@ async function executeSearch(id,userId){
       for(const job of jobs){
         if(added>=250)break;
         const assessment=matchAssessment(job,intent,applicant.focus);if(!assessment.matched)continue;
+        if(intent.worldwideEligibility&&job.descriptionURL&&!job.description){try{const detail=await cachedJSON(job.descriptionURL);job.description=detail.content||'';}catch(e){errors.push('Could not verify '+job.company+' / '+job.title+': '+String(e.message).slice(0,100));continue;}}
         const eligibility=intent.worldwideEligibility?workEligibility(job):null;if(eligibility&&!eligibility.eligible)continue;
         let url;try{url=normalizeURL(job.url)}catch{continue}
         const direct=directDiscoveryLink(url);

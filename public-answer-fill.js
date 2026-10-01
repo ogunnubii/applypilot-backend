@@ -53,3 +53,17 @@ export function publicFillStatus(db,uid,env=process.env){
  const attempts=db.prepare('SELECT f.question,f.state,f.message,f.attempted_at,j.company,j.title FROM public_fill_attempts f JOIN jobs j ON j.id=f.job_id WHERE j.user_id=? ORDER BY f.attempted_at DESC LIMIT 5').all(uid);
  return {googleConfigured:!!env.GEMINI_API_KEY,personalDraftsConfigured:!!(env.OPENAI_API_KEY&&env.OPENAI_MODEL),profiles,attempts};
 }
+
+const diagnosticRuns=new Map();
+export async function testPublicDrafting(db,uid,{research=researchForJob,env=process.env,clock=()=>Date.now()}={}){
+ if(!String(env.GEMINI_API_KEY||'').trim())throw Error('Gemini has no server key. Configure GEMINI_API_KEY in Railway and deploy the change.');
+ const time=clock();
+ for(const [user,at] of diagnosticRuns)if(time-at>60000)diagnosticRuns.delete(user);
+ if(diagnosticRuns.has(uid))throw Error('Wait one minute before testing Gemini again.');
+ const job=db.prepare("SELECT j.id,j.company,j.title FROM jobs j JOIN applicants p ON p.id=j.applicant_id AND p.user_id=j.user_id WHERE j.user_id=? AND p.google_research_consent=1 AND j.status!='archived' ORDER BY CASE WHEN j.url LIKE '%greenhouse.io/%' THEN 0 ELSE 1 END,j.updated_at DESC LIMIT 1").get(uid);
+ if(!job)throw Error('Enable Google public-page drafting for a profile with a saved job, then test again.');
+ diagnosticRuns.set(uid,time);
+ const result=await research(db,uid,job.id,'What are the responsibilities of this role?',{env});
+ if(!result.answer?.trim())throw Error(result.reason||'Gemini responded, but this public job page does not contain enough information for a verified draft.');
+ return {ok:true,model:String(env.GEMINI_MODEL||'').trim()||'gemini-2.5-flash',checkedAt:new Date(clock()).toISOString(),company:job.company,title:job.title,answer:result.answer,citations:result.citations};
+}

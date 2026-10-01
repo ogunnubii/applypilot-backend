@@ -486,3 +486,20 @@ test('attention counters share operation evidence while linked employer tabs rec
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
  w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.3'));w.close();
 });
+
+test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{
+ const assert=require('node:assert/strict'),vm=require('node:vm'),context=vm.createContext({process,Date,Map,JSON,String,Error});
+ const deps={'./google-research.js':{canResearchQuestion:()=>true,researchForJob:()=>{},markResearchDraftUsed:()=>{}},'./continuation-queue.js':{requestContinuation:()=>{throw Error('must not continue')}},'./research-consent.js':{researchConsentWithdrawn:()=>false}};
+ const mod=new vm.SourceTextModule(sources['public-answer-fill.js'],{context});
+ await mod.link(async spec=>{const values=deps[spec];return new vm.SyntheticModule(Object.keys(values),function(){for(const [k,v]of Object.entries(values))this.setExport(k,v)},{context});});await mod.evaluate();
+ let queries=[],calls=0,now=100000,selected=true;
+ const db={prepare(sql){queries.push(sql);return{get(uid){assert(sql.includes('j.user_id=?'));assert(sql.includes('p.google_research_consent=1'));assert.equal(uid,'diagnostic-user');return selected?{id:'job-1',company:'Example',title:'Engineer'}:undefined;}}}};
+ const options={env:{GEMINI_API_KEY:'fixture-only',GEMINI_MODEL:'test-model'},clock:()=>now,research:async(d,uid,id,q,o)=>{calls++;assert.equal(d,db);assert.equal(uid,'diagnostic-user');assert.equal(id,'job-1');assert.equal(q,'What are the responsibilities of this role?');assert.equal(o.env.GEMINI_MODEL,'test-model');return{answer:'Maintain systems.',citations:[{url:'https://example.org/jobs/1',title:'Engineer'}]};}};
+ await assert.rejects(mod.namespace.testPublicDrafting(db,'diagnostic-user',{...options,env:{}}),/no server key/);assert.equal(calls,0);
+ const result=await mod.namespace.testPublicDrafting(db,'diagnostic-user',options);assert.equal(result.ok,true);assert.equal(result.model,'test-model');assert.equal(calls,1);assert(!JSON.stringify(result).includes('fixture-only'));
+ await assert.rejects(mod.namespace.testPublicDrafting(db,'diagnostic-user',options),/one minute/);assert.equal(calls,1);
+ now+=60001;selected=false;await assert.rejects(mod.namespace.testPublicDrafting(db,'diagnostic-user',options),/Enable Google/);
+ selected=true;await assert.rejects(mod.namespace.testPublicDrafting(db,'diagnostic-user',{...options,research:async()=>({answer:null,reason:'No source context'})}),/No source context/);
+ assert(queries.every(q=>q.startsWith('SELECT ')));
+ const server=sources['server.js'];assert(server.indexOf("if(path==='/api/ai-test'")>server.indexOf("if(!uid)return send(res,401"));
+});

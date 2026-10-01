@@ -1,5 +1,5 @@
 import {installResumeEditor,prepareResumeEdit,saveResumeEdit,previousResumePath} from './resume-editor.js';
-import {installPublicFill,fillPendingPublicQuestions,publicFillStatus} from './public-answer-fill.js';
+import {installPublicFill,fillPendingPublicQuestions,publicFillStatus,testPublicDrafting} from './public-answer-fill.js';
 import {metadataFor} from './job-intelligence.js';
 import {installContinuations,requestContinuation,listContinuations,claimContinuation,settleContinuation,cancelContinuation} from './continuation-queue.js';
 import {operationSnapshot} from './operation-evidence.js';
@@ -55,6 +55,8 @@ if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddres
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
 
 if(path==='/api/ai-status'&&req.method==='GET')return send(res,200,publicFillStatus(db,uid));
+if(path==='/api/ai-test'&&req.method==='POST'){try{return send(res,200,await testPublicDrafting(db,uid));}catch(e){return send(res,400,{error:e.message});}}
+
 if(path==='/api/application-history'&&req.method==='GET')return send(res,200,{records:db.prepare('SELECT id,company,title,status,source,notes,imported_at,work_mode,country,interview_at,interview_stage FROM external_application_history WHERE user_id=? ORDER BY company,title').all(uid)});
 if(path==='/api/application-history'&&req.method==='POST'){try{const x=JSON.parse(await body(req,1500000));return send(res,200,importHistory(db,uid,x.rows));}catch(e){return send(res,400,{error:e.message});}}
 if(path==='/api/application-archive'&&req.method==='GET')return send(res,200,{jobs:db.prepare("SELECT j.id,j.title,j.company,j.url,a.archived_at FROM jobs j JOIN application_archive a ON a.job_id=j.id WHERE j.user_id=? AND j.status='archived' ORDER BY a.archived_at DESC").all(uid)});

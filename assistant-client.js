@@ -614,6 +614,14 @@ async function updateAIStatus(){
   box.append(el('p','Gemini currently uses the employer’s public job page. Questions about your own experience, desired pay, availability or work authorization need your saved answers. Verification and employer declarations remain in your browser.'));
   for(const p of data.profiles||[])box.append(el('small',p.name+': Google public-page consent '+(p.googleConsent?'enabled':'off')+'. Personal-answer drafting '+(p.personalDraftConsent&&data.personalDraftsConfigured?'enabled':'inactive')+'. Professional background '+(p.hasBackground?'saved':'not yet saved')+'.'));
   for(const attempt of data.attempts||[])box.append(el('p',attempt.company+' · '+attempt.question+' — '+attempt.message));
+  const testRow=el('div'),testButton=el('button','Test Gemini on a public job page'),testResult=el('p');testButton.type='button';testButton.disabled=!data.googleConfigured;testResult.setAttribute('role','status');testRow.append(testButton,testResult);box.append(testRow);
+  testButton.onclick=async()=>{
+   testButton.disabled=true;testResult.textContent='Checking Gemini with one saved public job page…';
+   try{const result=await api('/ai-test',{method:'POST',body:JSON.stringify({})});testResult.replaceChildren(el('strong','Gemini test passed · '+result.model),el('p',result.company+' · '+result.title),el('p',result.answer),el('small','Verified '+new Date(result.checkedAt).toLocaleTimeString()+'. This test did not fill or submit an application.'));
+    for(const cite of result.citations||[]){const link=el('a','Source: '+cite.title);link.href=cite.url;link.target='_blank';link.rel='noopener noreferrer';testResult.append(link);}
+   }catch(error){testResult.textContent='Gemini test failed: '+error.message;}
+   finally{testButton.disabled=false;}
+  };
   const setup=el('a','View resume and profile facts →');setup.href='https://marvelous-vitality-production-c2d8.up.railway.app/setup';box.append(setup);
  }catch{box.replaceChildren(el('h2','AI form assistance'),el('p','AI status could not be verified. Your saved answers remain available.'));}
 }

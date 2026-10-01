@@ -361,3 +361,50 @@ function renderArchiveControl(jobs){
  box.archiveCandidates=jobs.filter(j=>!j.handoff_available&&(['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked'&&!j.local_attempt_at));
  $('#review-archive').textContent='Review '+box.archiveCandidates.length+' attention-needed applications for archive';
 }
+
+function renderHistoryOverview(records){
+ let box=$('#career-overview');if(!box){box=el('section');box.id='career-overview';box.style.cssText='padding:24px;margin:16px 0;background:#e9f5ee;border:2px solid #39765c;border-radius:16px';$('#workspace').prepend(box);}
+ box.replaceChildren(el('h2','Your interviews'));
+ const interviews=records.filter(r=>r.status==='interview');
+ if(!interviews.length)box.append(el('p','No interviews recorded yet.'));
+ for(const r of interviews){const card=el('article');card.style.cssText='background:white;padding:16px;margin:10px 0;border-radius:10px';card.append(el('h3',r.company+' — '+r.title),el('strong',r.interview_at||'Date to be confirmed'),el('p',r.notes),el('small','Source: '+r.source));box.append(card);}
+ const details=el('details');details.append(el('summary','Add interview from another source'));
+ const form=el('form'),fields={};
+ for(const [key,label] of [['company','Company'],['title','Job title'],['source','Interview source'],['interview_at','Interview date, time and timezone'],['notes','Interview details / meeting location'],['work_mode','Work arrangement (remote, hybrid, on-site or unknown)'],['country','Job country']]){
+ const labelEl=el('label',label),input=el('input');input.setAttribute('aria-label',label);input.required=['company','title','source'].includes(key);labelEl.append(input);form.append(labelEl);fields[key]=input;}
+ fields.work_mode.value='unknown';
+ const save=el('button','Save interview'),feedback=el('p');save.type='submit';feedback.setAttribute('role','status');form.append(save,feedback);details.append(form);box.append(details);
+ form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{const row=Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,v.value.trim()]));row.status='interview';await api('/application-history','POST',{rows:[row]});const d=await api('/application-history');renderHistoryOverview(d.records);}catch(e){feedback.textContent=e.message;save.disabled=false;}};
+ box.append(el('h2','Submissions by work arrangement and country'));
+ const stats=el('div');box.append(stats);
+ const count=rows=>{const modes={},countries={};for(const r of rows){const mode=r.work_mode||'unknown',country=r.country||'Unknown';modes[mode]=(modes[mode]||0)+1;countries[country]=(countries[country]||0)+1;}return {modes,countries};};
+ // External history is kept separate from verified employer receipts; do not relabel it as confirmation.
+ const render=(rows,label)=>{stats.append(el('h3',label+' ('+rows.length+')'));const {modes,countries}=count(rows);stats.append(el('p','Work arrangement: '+['remote','hybrid','on-site','unknown'].map(k=>k+': '+(modes[k]||0)).join(' · ')));stats.append(el('p','Countries: '+Object.entries(countries).sort((a,b)=>b[1]-a[1]).map(([k,n])=>k+': '+n).join(' · ')));};
+ render(records,'Imported application history');
+ stats.append(el('small','Imported records are applicant-reported applications, not newly verified employer receipts. Unknown means the source did not specify the work arrangement or country. Add details using the import fields; matching records are merged.'));
+ api('/jobs').then(({jobs})=>{const submitted=jobs.filter(j=>['submitted','interview','rejected','offer'].includes(j.status));render(submitted.map(j=>({work_mode:'unknown',country:''})),'ApplyPilot submission records');stats.append(el('small','ApplyPilot totals retain the dashboard’s recorded statuses; external records are not added to that total.'));}).catch(()=>{});
+}
+
+function mountExternalHistory(){
+ const host=$('#workspace');if(!host||$('#external-history'))return;
+ const section=el('section');section.id='external-history';section.style.cssText='padding:20px;margin:16px 0;border:1px solid #d5ded9;border-radius:12px;background:white';
+ section.append(el('h2','Previously applied jobs'));
+ section.append(el('p','Import Tsenta or other application history to block repeat applications. These records are separate from employer-confirmed submissions. Matching uses the company and job title; changed titles or company names may need review.'));
+ const form=el('form'),label=el('label','Application history — one per line: Company | Job title | Status | Notes | Work mode | Country | Interview date/time');
+ const input=el('textarea');input.setAttribute('aria-label','Application history to import');input.rows=10;input.style.width='100%';input.required=true;input.placeholder='Company | Job title | applied | Optional notes';label.append(input);
+ const submit=el('button','Import previously applied jobs');submit.type='submit';
+ const refresh=el('button','Refresh imported history');refresh.type='button';
+ const status=el('p');status.setAttribute('role','status');const list=el('div');
+ form.append(label,submit);section.append(form,refresh,status,list);host.prepend(section);
+ async function show(){const d=await api('/application-history');list.replaceChildren(el('p',d.records.length+' imported application records · excluded from repeat applications'));
+ renderHistoryOverview(d.records); const table=el('table');table.style.width='100%';const head=el('tr');for(const h of ['Company','Job title','Status','Work mode / country','Source / notes'])head.append(el('th',h));table.append(head);
+ for(const r of d.records){const tr=el('tr');for(const v of [r.company,r.title,r.status,r.work_mode+' / '+(r.country||'Unknown'),r.source+(r.notes?' — '+r.notes:'')])tr.append(el('td',v));table.append(tr);}list.append(table);}
+ refresh.onclick=()=>show().catch(e=>status.textContent=e.message);
+ form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{
+ const lines=input.value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+ const rows=lines.filter(v=>!/^company\s*\|/i.test(v)&&!/^[-| :]+$/.test(v)).map(line=>{const [company,title,status='applied',notes='',work_mode='unknown',country='',interview_at='']=line.split('|').map(v=>v.trim());return {company,title,status:status.toLowerCase()||'applied',notes,work_mode,country,interview_at,source:'Tsenta / email history — applicant supplied'};});
+ const r=await api('/application-history','POST',{rows});status.textContent=r.added+' added, '+r.updated+' existing records merged; '+r.total+' total. '+r.blocked+' pending duplicates blocked.'+(r.active.length?' '+r.active.length+' matching applications are already active and need review.':'');input.value='';await show();
+ }catch(e){status.textContent=e.message;}finally{submit.disabled=false;}};
+ show().catch(e=>status.textContent=e.message);
+}
+mountExternalHistory();

@@ -513,3 +513,20 @@ test("Gemini diagnostic button sends POST and displays the verified response",as
  const button=[...w.document.querySelectorAll('#ai-status button')].find(b=>b.textContent==='Test Gemini on a public job page');assert(button);
  await button.onclick();assert.equal(calls.find(c=>c.url.endsWith('/ai-test')).opts.method,'POST');assert(w.document.querySelector('#ai-status').textContent.includes('Gemini test passed · verified-model'));assert(w.document.querySelector('#ai-status').textContent.includes('This test did not fill or submit an application.'));assert.equal(button.disabled,false);w.close();
 });
+
+test("Gemini duplicate retrieval records are accepted only for the same verified public page",async()=>{
+ const assert=require('node:assert/strict');
+ const source=sources['google-research.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
+ const {researchAnswer}=new Function('isIP','Buffer','AbortSignal',source+';return {researchAnswer};')(require('node:net').isIP,Buffer,AbortSignal);
+ const url='https://boards.greenhouse.io/example/jobs/1234',canonical='https://job-boards.greenhouse.io/example/jobs/1234',answer='Maintain reliable infrastructure.';
+ let records=[{url,status:'success'},{url:canonical,status:'success'}],isError=false;
+ const options={question:'What are the responsibilities of this role?',job:{url},env:{GEMINI_API_KEY:'fixture-only'},fetchImpl:async(endpoint,options)=>{
+  const body=JSON.parse(options.body);assert.equal(body.model,'gemini-3.5-flash-lite');assert.equal(body.store,false);assert.deepEqual(body.tools,[{type:'url_context'}]);
+  return{ok:true,json:async()=>({status:'completed',steps:[{type:'url_context_call',id:'call-1',arguments:{urls:[url]}},{type:'url_context_result',call_id:'call-1',is_error:isError,result:records},{type:'model_output',content:[{type:'text',text:answer,annotations:[{type:'url_citation',url,title:'Job',start_index:0,end_index:Buffer.byteLength(answer)}]}]}]})};
+ }};
+ const result=await researchAnswer(options);assert.equal(result.answer,answer);assert.equal(result.citations.length,1);
+ records=[{url,status:'success'},{url:'https://other.example/jobs/1234',status:'success'}];await assert.rejects(researchAnswer(options),/different page/);
+ records=[{url,status:'success'},{url,status:'unsafe'}];await assert.rejects(researchAnswer(options),/unsafe/);
+ records=[];await assert.rejects(researchAnswer(options),/did not retrieve/);
+ records=[{url,status:'success'}];isError=true;await assert.rejects(researchAnswer(options),/did not retrieve/);
+});

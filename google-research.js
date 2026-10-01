@@ -153,7 +153,7 @@ export async function researchAnswer({question,job={},fetchImpl=fetch,env=proces
  if(!publicJobUrl)throw Error('This application has no safe public job page for Google to read.');
  const apiKey=clean(env?.GEMINI_API_KEY,1000);
  if(!apiKey)throw Error('Google research is not configured. Configure GEMINI_API_KEY on the server.');
- const model=clean(env?.GEMINI_MODEL,200)||'gemini-2.5-flash';
+ const model=clean(env?.GEMINI_MODEL,200)||'gemini-3.5-flash-lite';
  const input={task:'Draft a concise answer using only facts supported by the supplied public job page. If the page does not support an answer, return exactly INSUFFICIENT_PUBLIC_PAGE_CONTEXT.',question:question.trim(),publicJobUrl};
  let response;
  try{
@@ -172,10 +172,15 @@ export async function researchAnswer({question,job={},fetchImpl=fetch,env=proces
  if(resultSteps.length!==1)throw Error(`Google returned ${resultSteps.length} URL Context result steps; exactly one is required.`);
  if(resultSteps[0].call_id!==calls[0].id)throw Error('Google URL Context result did not match the requested tool call.');
  if(!Array.isArray(resultSteps[0].result))throw Error('Google URL Context returned an unrecognized result format.');
- if(resultSteps[0].result.length!==1)throw Error(`Google returned ${resultSteps[0].result.length} page retrieval records; exactly one is required.`);
- const retrieval=resultSteps[0].result[0],retrievedUrl=exactPublicJobUrl(retrieval?.url);
- if(retrieval?.status!=='success'){const status=['unsafe','paywall','error'].includes(retrieval?.status)?retrieval.status:null;throw Error(status?`Google could not read this public job page (${status}).`:'Google did not verify the public job page.');}
- if(!retrievedUrl||!sameCanonicalPage(publicJobUrl,retrievedUrl))throw Error('Google retrieved a different page than the requested public job page.');
+
+ if(resultSteps[0].is_error===true||!resultSteps[0].result.length)throw Error('Google did not retrieve the public job page.');
+ const retrievals=resultSteps[0].result;
+ for(const retrieval of retrievals){
+  const url=exactPublicJobUrl(retrieval?.url);
+  if(!url||!sameCanonicalPage(publicJobUrl,url))throw Error('Google retrieved a different page than the requested public job page.');
+  if(retrieval?.status!=='success'){const status=['unsafe','paywall','error'].includes(retrieval?.status)?retrieval.status:null;throw Error(status?`Google could not read this public job page (${status}).`:'Google did not verify the public job page.');}
+ }
+ const retrievedUrl=exactPublicJobUrl(retrievals[0].url);
  const blocks=data.steps.filter(step=>step?.type==='model_output'&&Array.isArray(step.content)).flatMap(step=>step.content).filter(block=>block?.type==='text'&&typeof block.text==='string'&&block.text.trim());
  const answer=blocks.map(block=>typeof block.text==='string'?block.text.trim():'').filter(Boolean).join('\n').trim();
  if(!answer||answer.length>4000)throw Error('Google research returned an invalid answer.');

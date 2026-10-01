@@ -65,5 +65,5 @@ export async function testPublicDrafting(db,uid,{research=researchForJob,env=pro
  diagnosticRuns.set(uid,time);
  const result=await research(db,uid,job.id,'What are the responsibilities of this role?',{env});
  if(!result.answer?.trim())throw Error(result.reason||'Gemini responded, but this public job page does not contain enough information for a verified draft.');
- return {ok:true,model:String(env.GEMINI_MODEL||'').trim()||'gemini-2.5-flash',checkedAt:new Date(clock()).toISOString(),company:job.company,title:job.title,answer:result.answer,citations:result.citations};
+ return {ok:true,model:String(env.GEMINI_MODEL||'').trim()||'gemini-3.5-flash-lite',checkedAt:new Date(clock()).toISOString(),company:job.company,title:job.title,answer:result.answer,citations:result.citations};
 }

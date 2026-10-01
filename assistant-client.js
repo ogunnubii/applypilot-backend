@@ -387,8 +387,8 @@ function renderHistoryOverview(records){
 
 function mountExternalHistory(){
  const host=$('#workspace');if(!host||$('#external-history'))return;
- const section=el('section');section.id='external-history';section.style.cssText='padding:20px;margin:16px 0;border:1px solid #d5ded9;border-radius:12px;background:white';
- section.append(el('h2','Previously applied jobs'));
+ const section=el('details');section.id='external-history';section.style.cssText='padding:20px;margin:16px 0;border:1px solid #d5ded9;border-radius:12px;background:white';
+ section.append(el('summary','Import past applications for duplicate protection'));
  section.append(el('p','Import Tsenta or other application history to block repeat applications. These records are separate from employer-confirmed submissions. Matching uses the company and job title; changed titles or company names may need review.'));
  const form=el('form'),label=el('label','Application history — one per line: Company | Job title | Status | Notes | Work mode | Country | Interview date/time');
  const input=el('textarea');input.setAttribute('aria-label','Application history to import');input.rows=10;input.style.width='100%';input.required=true;input.placeholder='Company | Job title | applied | Optional notes';label.append(input);
@@ -396,9 +396,9 @@ function mountExternalHistory(){
  const refresh=el('button','Refresh imported history');refresh.type='button';
  const status=el('p');status.setAttribute('role','status');const list=el('div');
  form.append(label,submit);section.append(form,refresh,status,list);host.prepend(section);
- async function show(){const d=await api('/application-history');list.replaceChildren(el('p',d.records.length+' imported application records · excluded from repeat applications'));
- renderHistoryOverview(d.records); const table=el('table');table.style.width='100%';const head=el('tr');for(const h of ['Company','Job title','Status','Work mode / country','Source / notes'])head.append(el('th',h));table.append(head);
- for(const r of d.records){const tr=el('tr');for(const v of [r.company,r.title,r.status,r.work_mode+' / '+(r.country||'Unknown'),r.source+(r.notes?' — '+r.notes:'')])tr.append(el('td',v));table.append(tr);}list.append(table);}
+ async function show(){const d=await api('/application-history');list.replaceChildren(el('p',d.records.length+' records stored in the background for duplicate protection'));
+ renderHistoryOverview(d.records);}
+
  refresh.onclick=()=>show().catch(e=>status.textContent=e.message);
  form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{
  const lines=input.value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);

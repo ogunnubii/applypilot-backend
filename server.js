@@ -1,3 +1,6 @@
+import {fillPendingFactQuestions} from './paused-fact-fill.js';
+import {prepareFormAnswer} from './form-answer.js';
+import {hasFactDraft} from './draft-provenance.js';
 import {installSavedRecovery,recoverSavedAnswers,savedRecoveryStatus} from './saved-answer-recovery.js';
 import {applicationLimit,employerHold,employerLimits,recordEmployerLimit} from './employer-limits.js';
 import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
@@ -12,7 +15,7 @@ import {extensionArchive} from './extension-package.js';
 import {importHistory} from './application-history.js';
 import {installArchive,archiveApplications,restoreApplication} from './application-archive.js';
 import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse,reusableAnswers} from './answer-library.js';
-import {installDrafts,draftForJob} from './answer-drafts.js';
+import {installDrafts,draftForJob,draftAnswer} from './answer-drafts.js';
 import {hasResearchDraftForQuestion,installResearch,isResearchDraft,markResearchDraftUsed,researchForJob} from './google-research.js';
 import {researchConsentWithdrawn} from './research-consent.js';
 import {deleteApplication} from './delete-application.js';
@@ -30,10 +33,11 @@ const savedRecoveryTick=()=>{try{recoverSavedAnswers(db);}catch(error){console.e
 const savedRecoveryTimer=setInterval(savedRecoveryTick,60000);savedRecoveryTimer.unref();setTimeout(savedRecoveryTick,2000).unref();
 const pipelineTimer=setInterval(()=>{try{queueEnabledPipelines(db);}catch(error){console.error('Application pipeline:',error.message);}},60000);pipelineTimer.unref();
 let publicFillBusy=false;
-async function publicFillTick(){if(publicFillBusy)return;publicFillBusy=true;try{await fillPendingPublicQuestions(db);}catch(error){console.error('Public answer drafting:',error.message);}finally{publicFillBusy=false;}}
+async function publicFillTick(){if(publicFillBusy)return;publicFillBusy=true;try{await fillPendingPublicQuestions(db);await fillPendingFactQuestions(db);}catch(error){console.error('Public answer drafting:',error.message);}finally{publicFillBusy=false;}}
 const publicFillTimer=setInterval(publicFillTick,60000);publicFillTimer.unref();setTimeout(publicFillTick,1500).unref();
 let emailBusy=false;
 const emailTimer=setInterval(async()=>{if(emailBusy)return;emailBusy=true;try{await sendBlockerEmails(db)}catch{console.error('Blocker notification delivery failed')}finally{emailBusy=false}},60000);emailTimer.unref();
+const factsDiagnosticRuns=new Map();
 const origin=process.env.PUBLIC_ORIGIN;if(!origin)throw Error('Set PUBLIC_ORIGIN');if(!process.env.REGISTRATION_CODE||process.env.REGISTRATION_CODE.length<24)throw Error('Set REGISTRATION_CODE to a random value of at least 24 characters');const attempts=new Map();const uploadDir=resolve(process.env.UPLOAD_DIR||'./data/resumes');const limit=6*1024*1024;
 const send=(res,status,data)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});res.end(JSON.stringify(data))};
 async function body(req,max=100000){let chunks=[],size=0;for await(let chunk of req){size+=chunk.length;if(size>max)throw Error('Request too large');chunks.push(chunk)}return Buffer.concat(chunks)}
@@ -71,14 +75,19 @@ if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-typ
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
-if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.6.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
+if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.7.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-02-focused-homepage',extensionVersion:'0.6.6',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-02-gemini-form-preparation',extensionVersion:'0.6.7',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(req));if(input.registration_code!==process.env.REGISTRATION_CODE)return send(res,403,{error:'Registration code required'});let email=text(input.email,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return send(res,400,{error:'Valid email required'});let id=randomUUID(),hash=hashPassword(input.password);try{db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(id,email,hash,now())}catch{return send(res,409,{error:'Account already exists'})}return send(res,201,{token:issueToken(id,input.remember===true)})}
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id,input.remember===true)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
 
 if(path==='/api/ai-status'&&req.method==='GET')return send(res,200,publicFillStatus(db,uid));
+if(path==='/api/ai-facts-test'&&req.method==='POST'){
+ const last=factsDiagnosticRuns.get(uid)||0;if(Date.now()-last<60000)return send(res,429,{error:'Wait one minute before testing again.'});
+ const p=db.prepare('SELECT * FROM applicants WHERE user_id=? AND gemini_facts_consent=1 ORDER BY created_at LIMIT 1').get(uid);if(!p)return send(res,400,{error:'Enable Gemini professional-fact drafting in your saved profile first.'});
+ factsDiagnosticRuns.set(uid,Date.now());try{return send(res,200,await draftAnswer({question:'Briefly describe your technical background and skills.',profile:p,job:{title:'Professional background check',company:''},answers:reusableAnswers(db,p)}));}catch(error){return send(res,400,{error:error.message});}
+}
 if(path==='/api/ai-test'&&req.method==='POST'){try{return send(res,200,await testPublicDrafting(db,uid));}catch(e){return send(res,400,{error:e.message});}}
 
 if(path==='/api/application-history'&&req.method==='GET')return send(res,200,{records:db.prepare('SELECT id,company,title,status,source,notes,imported_at,work_mode,country,interview_at,interview_stage FROM external_application_history WHERE user_id=? ORDER BY company,title').all(uid)});
@@ -125,7 +134,7 @@ if(continuationRoute){
 
 if(path==='/api/employer-limits'&&req.method==='GET')return send(res,200,{limits:employerLimits(db,uid)});
 if(path==='/api/employer-limits'&&req.method==='POST'){const x=JSON.parse(await body(req));return send(res,200,recordEmployerLimit(db,uid,text(x.jobId,60),text(x.message,4000)));}
-const heldRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/(queue|continue|continuation|local\/(claim|packet|step|attempt|research-answer)|handoff\/(open|click|drag|upload|text|key|resume))$/);
+const heldRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/(queue|continue|continuation|local\/(claim|packet|step|attempt|research-answer|answer)|handoff\/(open|click|drag|upload|text|key|resume))$/);
 if(heldRoute&&(req.method==='POST'||heldRoute[2]==='local/packet'&&req.method==='GET')){
  const heldJob=ownJob(uid,heldRoute[1]),held=heldJob&&employerHold(db,heldJob);
  if(held&&!(heldRoute[2]==='local/packet'&&heldJob.local_attempt_at))return send(res,409,{error:held.message+' Applications to this employer are paused; other employers can continue.'});
@@ -154,9 +163,9 @@ if(searchRoute&&req.method==='POST'){
   if(searchRoute[2]==='toggle'){db.prepare('UPDATE searches SET enabled=? WHERE id=?').run(s.enabled?0:1,s.id);return send(res,200,{enabled:!s.enabled})}
   return send(res,200,await runSearch(s.id,uid));
 }
-if(path==='/api/applicants'&&req.method==='GET')return send(res,200,{applicants:db.prepare('SELECT id,user_id,name,email,phone,location,focus,execution_mode,answers_json,consent,ai_consent,google_research_consent,resume_path IS NOT NULL AS has_resume FROM applicants WHERE user_id=?').all(uid).map(p=>({...p,answers:JSON.parse(p.answers_json),reusableAnswers:{...reusableAnswers(db,p)},answers_json:undefined,user_id:undefined,resume_path:undefined}))});
-if(path==='/api/applicants'&&req.method==='POST'){let x=JSON.parse(await body(req)),id=randomUUID();db.prepare('INSERT INTO applicants(id,user_id,name,email,phone,location,focus,answers_json,consent,ai_consent,google_research_consent,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,uid,text(x.name,150),text(x.email,254),text(x.phone,50),text(x.location,150),text(x.focus,300),JSON.stringify(x.answers||{}),x.consent===true?1:0,x.ai_consent===true?1:0,x.google_research_consent===true?1:0,now());db.prepare('UPDATE applicants SET execution_mode=? WHERE id=?').run(x.execution_mode==='local'?'local':'cloud',id);return send(res,201,{id})}
-let m=path.match(/^\/api\/applicants\/([a-f0-9-]+)$/);if(m&&req.method==='PUT'){let x=JSON.parse(await body(req)),p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(m[1],uid);if(!p)return send(res,404,{error:'Applicant not found'});db.prepare('UPDATE applicants SET name=?,email=?,phone=?,location=?,focus=?,answers_json=?,consent=?,ai_consent=?,google_research_consent=? WHERE id=?').run(text(x.name,150),text(x.email,254),text(x.phone,50),text(x.location,150),text(x.focus,300),JSON.stringify(x.answers||{}),x.consent===true?1:0,x.ai_consent===true?1:0,x.google_research_consent===true?1:0,p.id);if(['local','cloud'].includes(x.execution_mode))db.prepare('UPDATE applicants SET execution_mode=? WHERE id=?').run(x.execution_mode,p.id);return send(res,200,{ok:true})}
+if(path==='/api/applicants'&&req.method==='GET')return send(res,200,{applicants:db.prepare('SELECT id,user_id,name,email,phone,location,focus,execution_mode,answers_json,consent,ai_consent,google_research_consent,gemini_facts_consent,resume_path IS NOT NULL AS has_resume FROM applicants WHERE user_id=?').all(uid).map(p=>({...p,answers:JSON.parse(p.answers_json),reusableAnswers:{...reusableAnswers(db,p)},answers_json:undefined,user_id:undefined,resume_path:undefined}))});
+if(path==='/api/applicants'&&req.method==='POST'){let x=JSON.parse(await body(req)),id=randomUUID();db.prepare('INSERT INTO applicants(id,user_id,name,email,phone,location,focus,answers_json,consent,ai_consent,google_research_consent,gemini_facts_consent,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,uid,text(x.name,150),text(x.email,254),text(x.phone,50),text(x.location,150),text(x.focus,300),JSON.stringify(x.answers||{}),x.consent===true?1:0,x.ai_consent===true?1:0,x.google_research_consent===true?1:0,x.gemini_facts_consent===true?1:0,now());db.prepare('UPDATE applicants SET execution_mode=? WHERE id=?').run(x.execution_mode==='local'?'local':'cloud',id);return send(res,201,{id})}
+let m=path.match(/^\/api\/applicants\/([a-f0-9-]+)$/);if(m&&req.method==='PUT'){let x=JSON.parse(await body(req)),p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(m[1],uid);if(!p)return send(res,404,{error:'Applicant not found'});db.prepare('UPDATE applicants SET name=?,email=?,phone=?,location=?,focus=?,answers_json=?,consent=?,ai_consent=?,google_research_consent=?,gemini_facts_consent=? WHERE id=?').run(text(x.name,150),text(x.email,254),text(x.phone,50),text(x.location,150),text(x.focus,300),JSON.stringify(x.answers||{}),x.consent===true?1:0,x.ai_consent===true?1:0,x.google_research_consent===true?1:0,(x.gemini_facts_consent===undefined?!!p.gemini_facts_consent:x.gemini_facts_consent===true)?1:0,p.id);if(['local','cloud'].includes(x.execution_mode))db.prepare('UPDATE applicants SET execution_mode=? WHERE id=?').run(x.execution_mode,p.id);return send(res,200,{ok:true})}
 
 const resumeEditRoute=path.match(/^\/api\/applicants\/([a-f0-9-]+)\/resume-edit$/);
 if(resumeEditRoute&&req.method==='POST'){
@@ -186,7 +195,7 @@ if(m&&req.method==='POST'){let p=db.prepare('SELECT * FROM applicants WHERE id=?
 if(path==='/api/jobs'&&req.method==='GET')return send(res,200,{jobs:db.prepare(`SELECT id,applicant_id,title,company,url,status,notes,confirmation,challenge,created_at,updated_at,required_fields_json,answers_json,handoff_available,local_phase,local_attempt_at,attempts,match_score,job_metadata_json,metadata_attempt_at,(SELECT execution_mode FROM applicants WHERE id=jobs.applicant_id) AS execution_mode,(SELECT message FROM events WHERE job_id=jobs.id AND type IN ('paused','needs_review') ORDER BY id DESC LIMIT 1) AS blocker_message,(SELECT message FROM events WHERE job_id=jobs.id ORDER BY id DESC LIMIT 1) AS last_message FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived') AND (NOT EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1) OR id=(SELECT job_id FROM work_focus f WHERE f.user_id=jobs.user_id) OR status IN ('submitted','interview','rejected','offer')) ORDER BY match_score DESC,discovery_priority,created_at DESC`).all(uid).map(job=>{let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}return {...job,employer_hold:employerHold(db,{...job,user_id:uid}),metadata:metadataFor(job),application_only_questions:[...new Set(questions.filter(question=>typeof question==='string'&&!canReuse(question)))]};})});
 if(path==='/api/jobs'&&req.method==='POST'){let x=JSON.parse(await body(req)),p=db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(x.applicant_id,uid);if(!p)return send(res,400,{error:'Select your applicant profile'});let url=normalizeURL(x.url),id=randomUUID(),date=now();if(!supported(url))return send(res,400,{error:'Use a supported direct employer application link. Aggregator listings are not accepted.'});try{db.prepare('INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,uid,p.id,text(x.title,200),text(x.company,200),url,url,text(x.notes,2000),date,date)}catch{return send(res,409,{error:'Job already tracked for this applicant'})}event(id,'saved','Job added');return send(res,201,{id})}
 // Local browser mode owns the application until a receipt is recorded.
-let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|research-answer|research-used|step|attempt|submitted|capture|assistance)$/);
+let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|answer|research-answer|research-used|step|attempt|submitted|capture|assistance)$/);
 if(localRoute){
  const j=ownJob(uid,localRoute[1]);if(!j)return send(res,404,{error:'Job not found'});
  const focus=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(uid);if(focus&&focus.job_id!==j.id&&['claim','packet'].includes(localRoute[2]))return send(res,409,{error:'This application is parked while you work on one job at a time.'});
@@ -195,7 +204,7 @@ if(localRoute){
  if(action==='claim'&&req.method==='POST'){
   if(j.status==='local_browser'){
    if(j.local_owner&&j.local_owner!==owner)return send(res,409,{error:'This application belongs to another browser. Complete it there or record an employer receipt.'});
-   if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
+   if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
    db.prepare("UPDATE jobs SET local_owner=?,local_attempt_at=CASE WHEN local_owner IS NULL THEN COALESCE(local_attempt_at,?) ELSE local_attempt_at END WHERE id=?").run(owner,now(),j.id);
    const current=db.prepare('SELECT local_attempt_at FROM jobs WHERE id=?').get(j.id);
    return send(res,200,{ok:true,attempted:!!current.local_attempt_at,phase:j.local_phase});
@@ -205,7 +214,7 @@ if(localRoute){
   if(!supported(j.url))return send(res,400,{error:'Use a supported direct employer application link'});
   const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
   if(!p?.consent||!p.email||!p.resume_path)return send(res,400,{error:'Applicant consent, email and resume required'});
-  if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
+  if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
   if(j.handoff_available){
    try{const r=await fetch('http://127.0.0.1:8081/'+j.id+'/close',{method:'POST',headers:{authorization:req.headers.authorization,'content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(20000)});if(!r.ok)throw Error();}
    catch{return send(res,409,{error:'Close the existing live session before switching to your browser'});}
@@ -226,14 +235,17 @@ if(localRoute){
    if(x.kind==='partial'&&!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('completion_tracking','assistance_boundary')").get(j.id))event(j.id,'assistance_boundary','An existing employer page was reused; earlier assistance is unknown.');
    return send(res,200,{ok:true});
   }
-  if(action==='capture'&&req.method==='POST'){const x=JSON.parse(await body(req)),fields=Array.isArray(x.fields)?x.fields.filter(f=>typeof f?.question==='string'&&!hasResearchDraftForQuestion(db,j.id,f.question.trim())):x.fields;return send(res,200,{saved:captureAnswers(db,j,fields)});}
+  if(action==='capture'&&req.method==='POST'){const x=JSON.parse(await body(req)),fields=Array.isArray(x.fields)?x.fields.filter(f=>typeof f?.question==='string'&&!hasResearchDraftForQuestion(db,j.id,f.question.trim())&&!hasFactDraft(db,j.id,f.question.trim())):x.fields;return send(res,200,{saved:captureAnswers(db,j,fields)});}
  if(action==='packet'&&req.method==='GET'){
   const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
   if(!p?.consent)return send(res,403,{error:'Applicant consent required'});
-  if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
+  if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
   const bytes=await readFile(p.resume_path);if(bytes.length>limit)throw Error('Resume too large');
   const applicationAnswers=JSON.parse(j.answers_json||'{}');if(!p.google_research_consent)for(const [question,answer] of Object.entries(applicationAnswers))if(isResearchDraft(db,j.id,question,answer))delete applicationAnswers[question];
-  return send(res,200,{job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...reusableAnswers(db,p),...applicationAnswers},applicationOnlyQuestions:db.prepare('SELECT DISTINCT question FROM research_drafts WHERE job_id=?').all(j.id).map(row=>row.question),resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
+  return send(res,200,{job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...reusableAnswers(db,p),...applicationAnswers},aiAssistance:!!((p.google_research_consent||p.gemini_facts_consent)&&process.env.GEMINI_API_KEY||p.ai_consent&&process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),applicationOnlyQuestions:db.prepare('SELECT question FROM research_drafts WHERE job_id=? UNION SELECT question FROM fact_drafts WHERE job_id=?').all(j.id,j.id).map(row=>row.question),resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
+ }
+ if(action==='answer'&&req.method==='POST'){
+  const x=JSON.parse(await body(req));try{return send(res,200,await prepareFormAnswer(db,uid,j.id,x.question,{expectedOwner:owner,choices:x.choices,answerFormat:x.answerFormat==='number'?'number':'text',check:job=>{const focus=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(uid);return focus&&focus.job_id!==job.id?'This application is parked.':employerHold(db,job)?.message||((policy=>policy.allowed?'':policy.message)(companyApplicationPolicy(db,job.applicant_id,job)))||'';}}));}catch(error){return send(res,400,{error:error.message});}
  }
  if(action==='research-answer'&&req.method==='POST'){
   const x=JSON.parse(await body(req)),question=text(x.question,240);if(!question)return send(res,400,{error:'A public job-page question is required'});
@@ -251,22 +263,22 @@ if(localRoute){
   if(!questions.length)return send(res,400,{error:'Research-backed fields required'});
   let marked=0;for(const question of questions)if(markResearchDraftUsed(db,j.id,question))marked++;
   if(!marked)return send(res,400,{error:'Research provenance not found for these fields'});
-  if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
+  if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
   return send(res,200,{marked});
  }
  if(action==='step'&&req.method==='POST'){
   const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
   if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
-  if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
+  if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
   return send(res,200,{ok:true});
  }
  if(action==='attempt'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
   if(applicationLimit(x.before)){recordEmployerLimit(db,uid,j.id,x.before,{source:'Employer page observed by browser helper'});return send(res,409,{error:'Employer application limit reached. Other employers can continue.'});}
-  if(x.human!==true)return send(res,409,{error:'Review the employer form and click Submit yourself. Update the browser helper to 0.6.6 if it tried to submit automatically.'});
+  if(x.human!==true)return send(res,409,{error:'Review the employer form and click Submit yourself. Update the browser helper to 0.6.7 if it tried to submit automatically.'});
   const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
   if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
-  if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
+  if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
   if(typeof x.before!=='string'||!sameApplication(x.url,j.url)||employerReceipt(x.before))return send(res,409,{error:'Application requires human review before submission'});
   if(j.local_attempt_at)return send(res,409,{error:'Submission may already have occurred. Check the employer receipt.'});
   const result=db.prepare("UPDATE jobs SET local_attempt_at=?,local_phase='verifying',challenge='Submission in progress',updated_at=? WHERE id=? AND local_attempt_at IS NULL AND status='local_browser'").run(now(),now(),j.id);
@@ -300,7 +312,7 @@ if(handoffRoute&&req.method==='POST'){
  const j=ownJob(uid,handoffRoute[1]);if(!j)return send(res,404,{error:'Job not found'});
  const action=handoffRoute[2];
  if(action==='open'){
-  if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
+  if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
   if(j.handoff_available)return send(res,200,{available:true});
   if(!['paused','needs_review'].includes(j.status)||['Unconfirmed submission','Submission in progress'].includes(j.challenge))return send(res,409,{error:'This application cannot restart until its submission status is checked'});
   const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
@@ -322,18 +334,18 @@ if(continueRoute&&req.method==='POST'){
  if(!['needs_review','paused'].includes(j.status)||['Unconfirmed submission','Submission in progress','CAPTCHA','Sign-in'].includes(j.challenge))return send(res,409,{error:'This application requires employer-site action before it can continue'});
  const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
  if(!p?.consent||!p.email||!p.resume_path)return send(res,400,{error:'Applicant consent, email and resume required'});
- if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
+ if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
  if(!supported(j.url))return send(res,400,{error:'A supported employer application link is required'});
  const x=JSON.parse(await body(req)),entries=Object.entries(x.answers||{});
  if(!entries.length||entries.length>100)return send(res,400,{error:'Enter the missing answers'});
- if(!p.google_research_consent&&entries.some(([question])=>hasResearchDraftForQuestion(db,j.id,question)))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
+ if(!p.google_research_consent&&entries.some(([question])=>hasResearchDraftForQuestion(db,j.id,question)))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
  const answers=JSON.parse(j.answers_json||'{}');for(const [question,answer] of entries){if(typeof answer!=='string'||!question.trim()||question.length>240||!answer.trim()||answer.length>4000)return send(res,400,{error:'Complete each answer (maximum 4,000 characters)'});Object.defineProperty(answers,question,{value:answer.trim(),enumerable:true,configurable:true,writable:true});}
  if(Object.keys(answers).length>100)return send(res,400,{error:'Answer limit reached'});
  let result;try{result=db.prepare("UPDATE jobs SET answers_json=?,status='queued',challenge=NULL,updated_at=? WHERE id=? AND status=? AND COALESCE(challenge,'')=COALESCE(?,'')").run(JSON.stringify(answers),now(),j.id,j.status,j.challenge);}
  catch(error){companyTransitionFailure(res,j,error);return;}
  if(!result.changes)return send(res,409,{error:'Application changed. Refresh to see its current status'});
  for(const [question] of entries)markResearchDraftUsed(db,j.id,question);
- if(x.remember===true)rememberAnswers(j.applicant_id,entries.filter(([q])=>canReuse(q.trim())&&!hasResearchDraftForQuestion(db,j.id,q.trim())));
+ if(x.remember===true)rememberAnswers(j.applicant_id,entries.filter(([q])=>canReuse(q.trim())&&!hasResearchDraftForQuestion(db,j.id,q.trim())&&!hasFactDraft(db,j.id,q.trim())));
  event(j.id,'queued','Missing answers saved; application queued to continue');return send(res,200,{ok:true});
 }
 let answerRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/answers$/);
@@ -347,7 +359,7 @@ if(answerRoute){const j=ownJob(uid,answerRoute[1]);if(!j)return send(res,404,{er
   Object.defineProperty(answers,question,{value:answer,enumerable:true,configurable:true,writable:true});
   db.prepare('UPDATE jobs SET answers_json=?,updated_at=? WHERE id=?').run(JSON.stringify(answers),now(),j.id);
   markResearchDraftUsed(db,j.id,question);
-  const reusable=x.remember===true&&canReuse(question)&&!hasResearchDraftForQuestion(db,j.id,question);
+  const reusable=x.remember===true&&canReuse(question)&&!hasResearchDraftForQuestion(db,j.id,question)&&!hasFactDraft(db,j.id,question);
   if(reusable)rememberAnswers(j.applicant_id,[[question,answer]]);
   event(j.id,'answer_saved',reusable?'Saved applicant-approved answer for reuse':'Saved an answer for this application');return send(res,200,{ok:true});
  }
@@ -368,7 +380,7 @@ if(jobLink&&req.method==='PUT'){
   try{db.prepare("UPDATE jobs SET url=?,normalized_url=?,status='saved',challenge=NULL,updated_at=? WHERE id=?").run(url,url,now(),j.id)}catch{return send(res,409,{error:'This employer job is already tracked'})}
   event(j.id,'link_updated','Direct employer application link added');return send(res,200,{ok:true});
 }
-m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/queue$/);if(m&&req.method==='POST'){let j=ownJob(uid,m[1]);if(!j)return send(res,404,{error:'Job not found'});if(priorApplication(db,uid,j))return send(res,409,{error:'This role was already applied to or is in progress. Repeat application blocked.'});if(j.handoff_available)return send(res,409,{error:'Resume the existing live browser instead of queuing a duplicate attempt'});if(metadataFor(j).available===false)return send(res,409,{error:'This employer posting is no longer available. Choose a current match.'});if(!supported(j.url))return send(res,400,{error:'Add the direct employer application link before queuing'});if(['Unconfirmed submission','Submission in progress'].includes(j.challenge))return send(res,409,{error:'The employer may have received this application. Check the employer site and record confirmation before trying again.'});let p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);if(!p.consent||!p.email||!p.resume_path)return send(res,400,{error:'Applicant consent, email and resume required'});if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});if(!['saved','needs_review','paused'].includes(j.status))return send(res,409,{error:'This job cannot be queued from its current state'});try{db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=?").run(now(),j.id);}catch(error){companyTransitionFailure(res,j,error);return;}event(j.id,'queued','Application queued');return send(res,200,{ok:true})}
+m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/queue$/);if(m&&req.method==='POST'){let j=ownJob(uid,m[1]);if(!j)return send(res,404,{error:'Job not found'});if(priorApplication(db,uid,j))return send(res,409,{error:'This role was already applied to or is in progress. Repeat application blocked.'});if(j.handoff_available)return send(res,409,{error:'Resume the existing live browser instead of queuing a duplicate attempt'});if(metadataFor(j).available===false)return send(res,409,{error:'This employer posting is no longer available. Choose a current match.'});if(!supported(j.url))return send(res,400,{error:'Add the direct employer application link before queuing'});if(['Unconfirmed submission','Submission in progress'].includes(j.challenge))return send(res,409,{error:'The employer may have received this application. Check the employer site and record confirmation before trying again.'});let p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);if(!p.consent||!p.email||!p.resume_path)return send(res,400,{error:'Applicant consent, email and resume required'});if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});if(!['saved','needs_review','paused'].includes(j.status))return send(res,409,{error:'This job cannot be queued from its current state'});try{db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=?").run(now(),j.id);}catch(error){companyTransitionFailure(res,j,error);return;}event(j.id,'queued','Application queued');return send(res,200,{ok:true})}
 m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/confirm$/);if(m&&req.method==='POST'){let j=ownJob(uid,m[1]);if(!j)return send(res,404,{error:'Job not found'});if(['queued','running'].includes(j.status))return send(res,409,{error:'Wait until the worker finishes before recording a manual confirmation'});let x=JSON.parse(await body(req)),receipt=text(x.receipt,300);if(applicationLimit(x.receipt)){recordEmployerLimit(db,uid,j.id,x.receipt);return send(res,409,{error:'The employer limit message is not a submission receipt.'});}if(!employerReceipt(receipt)||/placeholder|example\.com|github\.com|not (?:yet )?(?:submitted|confirmed)|unconfirmed|simulat|test receipt/i.test(receipt))return send(res,400,{error:'Paste the employer message confirming that your application was received or submitted. Profile links and placeholders are not receipts.'});db.prepare("UPDATE jobs SET status='submitted',confirmation=?,challenge=NULL,updated_at=? WHERE id=?").run('Applicant verified: '+receipt,now(),j.id);confirmLibrary(db,j);event(j.id,'manual_confirmation','Applicant recorded employer confirmation: '+receipt);return send(res,200,{ok:true})}
 m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/events$/);if(m&&req.method==='GET'){if(!ownJob(uid,m[1]))return send(res,404,{error:'Job not found'});return send(res,200,{events:db.prepare('SELECT at,type,message FROM events WHERE job_id=? ORDER BY id').all(m[1])})}
 return send(res,404,{error:'Not found'});

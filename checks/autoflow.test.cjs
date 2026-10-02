@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
-const sources=Object.fromEntries(["saved-answer-recovery.js","hosted-form.js","local-policy.js","automatic-answer.js","employer-limits.js","application-pipeline.js","application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
+const sources=Object.fromEntries(["draft-provenance.js","answer-drafts.js","form-answer.js","paused-fact-fill.js","saved-answer-recovery.js","hosted-form.js","local-policy.js","automatic-answer.js","employer-limits.js","application-pipeline.js","application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
 test("routine preparation stops at Submit and a trusted click is durably recorded once",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),{implForWrapper}=require('../node_modules/jsdom/lib/generated/idl/utils.js'),{fireAnEvent}=require('../node_modules/jsdom/lib/jsdom/living/helpers/events.js'),MouseEvent=require('../node_modules/jsdom/lib/generated/idl/MouseEvent.js');
  const wait=()=>new Promise(r=>setTimeout(r,250));
@@ -214,7 +214,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.6",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.7",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -423,6 +423,7 @@ test('Gemini browser handoff uses public questions only, preserves user answers 
  assert.equal(result.filled,0);assert.equal(JSON.parse(db.prepare("SELECT answers_json FROM jobs WHERE id='j'").get().answers_json)[q],'My own answer');
  db.prepare("UPDATE jobs SET answers_json='{}' WHERE id='j'").run();db.exec('DELETE FROM public_fill_attempts');
  await publicFill.fillPublicQuestions(db,'j',{env:{GEMINI_API_KEY:'fixture'},research:async()=>{throw Error('Google research returned HTTP 429.');}});
+ db.exec('ALTER TABLE applicants ADD COLUMN gemini_facts_consent INTEGER NOT NULL DEFAULT 0');
  const status=publicFill.publicFillStatus(db,'u',{GEMINI_API_KEY:'secret-fixture'});assert(status.googleConfigured);assert.equal(status.attempts[0].message,'Google research returned HTTP 429.');assert(!JSON.stringify(status).includes('secret-fixture'));
  assert.equal(publicFill.publicFillStatus(db,'other',{}).attempts.length,0);
  let retries=0;await publicFill.fillPublicQuestions(db,'j',{env:{GEMINI_API_KEY:'fixture'},research:async()=>{retries++;}});assert.equal(retries,0,'provider errors back off for one hour');
@@ -510,7 +511,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.6'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.7'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{
@@ -847,4 +848,98 @@ test('Gemini accepts cited newline-separated claims and retries incomplete citat
  calls=0;mode='retry';result=await researchAnswer(options);assert.equal(result.answer,'Maintain reliable infrastructure.');assert.equal(calls,2);
  calls=0;mode='uncited';await assert.rejects(researchAnswer(options),/No answer was filled/);assert.equal(calls,2);
  calls=0;mode='http';await assert.rejects(researchAnswer(options),/quota limit/);assert.equal(calls,1);
+});
+
+function factModule(bindings={}){
+ const code=sources['answer-drafts.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
+ const deps={canCapture:q=>typeof q==='string'&&q.length<=240&&!/\b(?:consent|agree|signature|captcha|password)\b/i.test(q),canReuse:q=>!/\b(?:why|salary|visa|authorization|availability)\b/i.test(q),reusableAnswers:(_db,p)=>JSON.parse(p.answers_json||'{}'),installFactDrafts:()=>{},resumeText:async()=>'',extname:()=>'.pdf',...bindings};
+ return new Function(...Object.keys(deps),code+';return {draftAnswer,geminiFactAnswer,canDraftProfessional,professionalFacts,draftForJob};')(...Object.values(deps));
+}
+test('Gemini professional answers require separate consent, exact supporting quotes and private-fact minimization',async()=>{
+ const assert=require('node:assert/strict'),{geminiFactAnswer}=factModule();let sent,calls=0,output={answer:'I build Kubernetes platforms.',reason:'',evidence:[{id:'1',quote:'I build Kubernetes platforms.'}]};
+ const opts={question:'Describe your technical experience',profile:{gemini_facts_consent:1},job:{title:'Platform Engineer',company:'Example'},answers:{'Professional background':'I build Kubernetes platforms. Contact private@example.com https://secret.example/profile','Email':'private@example.com','Phone':'555-555-5555','Work authorization':'private status'},env:{GEMINI_API_KEY:'test-key'},fetchImpl:async(url,request)=>{calls++;assert(url.endsWith('/interactions'));sent=JSON.parse(request.body);return {ok:true,json:async()=>({status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify(output)}]}]})};}};
+ await assert.rejects(geminiFactAnswer({...opts,profile:{google_research_consent:1}}),/Enable Gemini/);assert.equal(calls,0);
+ const result=await geminiFactAnswer(opts);assert.equal(result.answer,output.answer);assert.equal(result.provider,'gemini');assert.deepEqual(result.sources,['Professional background']);
+ assert.equal(sent.store,false);assert.equal(sent.tools,undefined);assert.equal(sent.response_format.mime_type,'application/json');
+ assert(!sent.input.includes('private@example'));assert(!sent.input.includes('555-555'));assert(!sent.input.includes('secret.example'));assert(!sent.input.includes('private status'));
+ output.evidence=[{id:'1',quote:'Invented production leadership'}];await assert.rejects(geminiFactAnswer(opts),/support/);
+ output.evidence=[];await assert.rejects(geminiFactAnswer(opts),/support/);
+ output={answer:'',reason:'A specific incident is not in the saved facts.',evidence:[]};assert.equal((await geminiFactAnswer(opts)).answer,'');
+ const n=calls;for(const question of ['What salary do you want?','Are you authorized to work?','When are you available?','Solve this coding assessment','Do you agree to the terms?'])assert.equal((await geminiFactAnswer({...opts,question})).answer,'');assert.equal(calls,n);
+ assert.equal((await geminiFactAnswer({...opts,fetchImpl:async()=>({ok:false,status:429})}).catch(e=>e.message)).includes('429'),true);
+});
+test('Gemini uses saved resume professional content and respects exact choice and number formats',async()=>{
+ const assert=require('node:assert/strict'),{draftAnswer,geminiFactAnswer}=factModule({resumeText:async()=> 'Private Person\nPrivate City\nemail: hidden@example.com\nBuilt reliable Kubernetes platforms.\nManaged incident response.'});
+ let sent;const base={question:'Describe your technical experience',profile:{gemini_facts_consent:1,resume_path:'resume.pdf',name:'Private Person',location:'Private City'},job:{title:'Engineer',company:'Example'},answers:{},env:{GEMINI_API_KEY:'test-key'},fetchImpl:async(_url,r)=>{sent=JSON.parse(r.body);return{ok:true,json:async()=>({status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({answer:'I built reliable Kubernetes platforms.',reason:'',evidence:[{id:'1',quote:'Built reliable Kubernetes platforms.'}]})}]}]})};}};
+ assert((await draftAnswer(base)).answer.includes('Kubernetes'));assert(sent.input.includes('Managed incident response'));for(const privateText of ['Private Person','Private City','hidden@example.com'])assert(!sent.input.includes(privateText));
+ const fetchImpl=async(_url,r)=>({ok:true,json:async()=>({status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({answer:'Not one of the options',reason:'',evidence:[{id:'1',quote:'I build Kubernetes platforms.'}]})}]}]})});
+ const result=await geminiFactAnswer({...base,profile:{gemini_facts_consent:1},answers:{Skills:'I build Kubernetes platforms.'},choices:['Yes','No'],fetchImpl});assert.equal(result.answer,'');assert(result.reason.includes('field format'));
+ assert.equal((await geminiFactAnswer({...base,answers:{Skills:'I build Kubernetes platforms.'},answerFormat:'number',fetchImpl})).answer,'');
+});
+test('application AI preparation preserves concurrent edits, owner changes, consent and prior attempts',async()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(':memory:');
+ db.exec("CREATE TABLE applicants(id TEXT,user_id TEXT,consent INTEGER,gemini_facts_consent INTEGER,ai_consent INTEGER,google_research_consent INTEGER);CREATE TABLE jobs(id TEXT,user_id TEXT,applicant_id TEXT,status TEXT,local_owner TEXT,local_attempt_at TEXT,handoff_available INTEGER,url TEXT,answers_json TEXT,updated_at TEXT);CREATE TABLE events(job_id TEXT,type TEXT);INSERT INTO applicants VALUES('p','u',1,1,0,1);INSERT INTO jobs VALUES('j','u','p','local_browser','device',NULL,0,'https://example.test/job','{}','now');");
+ const src=sources['form-answer.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
+ const {prepareFormAnswer}=new Function('canResearchQuestion','researchForJob','markResearchDraftUsed','canDraftProfessional','draftForJob','researchConsentWithdrawn',src+';return {prepareFormAnswer};')(()=>false,()=>{throw Error('wrong provider')},()=>{},()=>true,()=>{},()=>false);
+ const q='Describe your technical experience',good={answer:'I build Kubernetes platforms.',provider:'gemini',sources:['Skills']};
+ await assert.rejects(prepareFormAnswer(db,'other','j',q),/cannot be prepared/);
+ await assert.rejects(prepareFormAnswer(db,'u','j',q,{check:()=> 'Employer hold'}),/Employer hold/);
+ let result=await prepareFormAnswer(db,'u','j',q,{expectedOwner:'device',draft:async()=>{db.prepare("UPDATE jobs SET answers_json=? WHERE id='j'").run(JSON.stringify({[q]:'My own edit',other:'Preserve me'}));return good;}});assert.equal(result.answer,'My own edit');
+ db.exec("UPDATE jobs SET answers_json='{}'");
+ for(const mutation of ["UPDATE jobs SET local_attempt_at='attempt'","UPDATE jobs SET local_owner='other'","UPDATE applicants SET gemini_facts_consent=0"]){
+  await assert.rejects(prepareFormAnswer(db,'u','j',q,{expectedOwner:'device',draft:async()=>{db.exec(mutation);return good;}}),/changed/);
+  assert.equal(db.prepare('SELECT answers_json FROM jobs').get().answers_json,'{}');db.exec("UPDATE jobs SET local_attempt_at=NULL,local_owner='device';UPDATE applicants SET gemini_facts_consent=1");
+ }
+ result=await prepareFormAnswer(db,'u','j',q,{draft:async()=>good});assert.equal(result.answer,good.answer);assert.equal(db.prepare('SELECT status FROM jobs').get().status,'local_browser');assert.equal(db.prepare('SELECT local_attempt_at FROM jobs').get().local_attempt_at,null);
+ db.exec("UPDATE jobs SET answers_json='{}';INSERT INTO events VALUES('j','submission_started')");await assert.rejects(prepareFormAnswer(db,'u','j',q,{draft:async()=>{throw Error('must not call')}}),/cannot be prepared/);db.close();
+});
+test('AI-filled browser fields reach manual Submit without overwriting user input or recording an attempt',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ async function scenario(edit=false){
+  const dom=new JSDOM('<form><label>Describe your technical skills<textarea required></textarea></label><button type="button" id="submit">Submit application</button></form>',{runScripts:'outside-only',url:'https://jobs.ashbyhq.com/example/12345678-1234-1234-1234-123456789abc'}),w=dom.window,messages=[];
+  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent}});w.HTMLElement.prototype.getClientRects=function(){return this.closest('[hidden]')?[]:[{}]};w.setInterval=()=>0;w.clearInterval=()=>{};
+  let clicks=0;w.document.querySelector('#submit').onclick=()=>clicks++;
+  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Engineer'},profile:{},answers:{},aiAssistance:true}};if(m.action==='state')return{ok:true,data:{attempted:false,automatic:true}};if(m.action==='answer'){if(edit)w.document.querySelector('textarea').value='User typed while Gemini was working';return{ok:true,data:{answer:'I build Kubernetes platforms.',source:'approved_facts'}};}return{ok:true,data:{}};}}};
+  w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);
+  for(let i=0;i<100&&!messages.some(m=>m.action==='progress'&&m.blocked);i++)await new Promise(r=>setTimeout(r,25));
+  assert.equal(w.document.querySelector('textarea').value,edit?'User typed while Gemini was working':'I build Kubernetes platforms.');
+  assert(messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')));assert.equal(clicks,0);assert(!messages.some(m=>m.action==='attempt'));assert.equal(messages.filter(m=>m.action==='answer').length,1);w.close();
+ }
+ await scenario();await scenario(true);
+});
+test('Gemini failures leave unanswered employer questions visible without generating a submission',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),dom=new JSDOM('<form><label>Describe your technical skills<textarea required></textarea></label><button>Submit application</button></form>',{runScripts:'outside-only',url:'https://jobs.ashbyhq.com/example/12345678-1234-1234-1234-123456789abc'}),w=dom.window,messages=[];
+ Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent}});w.HTMLElement.prototype.getClientRects=()=>[{}];w.setInterval=()=>0;w.clearInterval=()=>{};
+ w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Engineer'},profile:{},answers:{},aiAssistance:true}};if(m.action==='state')return{ok:true,data:{attempted:false,automatic:true}};if(m.action==='answer')return{ok:false,error:'Gemini returned HTTP 429'};return{ok:true,data:{}};}}};
+ w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);for(let i=0;i<80&&!messages.some(m=>m.action==='progress'&&m.blocked);i++)await new Promise(r=>setTimeout(r,25));
+ assert.equal(w.document.querySelector('textarea').value,'');assert(messages.some(m=>m.action==='progress'&&m.fields.includes('Describe your technical skills')&&m.message.includes('429')));assert(!messages.some(m=>m.action==='attempt'));w.close();
+});
+test('professional AI drafts remain application-only and withdrawal blocks later preparation',()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(':memory:');
+ db.exec('CREATE TABLE jobs(id TEXT PRIMARY KEY)');db.exec("INSERT INTO jobs VALUES('j')");
+ const src=sources['draft-provenance.js'].replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
+ const p=new Function(src+';return {installFactDrafts,hasFactDraft,factDraftProvider,factDraftConsentWithdrawn};')();p.installFactDrafts(db);
+ db.prepare('INSERT INTO fact_drafts VALUES(?,?,?,?,?,?)').run('j','Technical skills','Kubernetes','gemini','["Skills"]','now');
+ assert(p.hasFactDraft(db,'j','Technical skills'));assert.equal(p.factDraftProvider(db,'j','Technical skills','Kubernetes'),'gemini');assert(p.factDraftConsentWithdrawn(db,'j',{google_research_consent:1,ai_consent:1}));assert(!p.factDraftConsentWithdrawn(db,'j',{gemini_facts_consent:1}));
+ assert(sources['answer-library.js'].includes('!hasFactDraft(db,j.id'));assert(sources['server.js'].includes('!hasFactDraft(db,j.id,q.trim())'));db.close();
+});
+
+test('paused professional recovery respects holds, attempts, separate consent and retry cooldowns',async()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(':memory:');
+ db.exec("CREATE TABLE applicants(id TEXT,user_id TEXT,consent INTEGER,gemini_facts_consent INTEGER,ai_consent INTEGER);CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,status TEXT,local_phase TEXT,local_attempt_at TEXT,handoff_available INTEGER,required_fields_json TEXT,answers_json TEXT,updated_at TEXT);CREATE TABLE work_focus(user_id TEXT,enabled INTEGER,job_id TEXT);CREATE TABLE public_fill_attempts(job_id TEXT,question TEXT,attempted_at TEXT,state TEXT,message TEXT,PRIMARY KEY(job_id,question));INSERT INTO applicants VALUES('p','u',1,1,0),('off','u',1,0,0);");
+ const q='Describe your technical skills';
+ for(const [id,p,attempt] of [['ready','p',null],['held','p',null],['attempted','p','attempt'],['off','off',null]])db.prepare("INSERT INTO jobs VALUES(?,?,?,'local_browser','blocked',?,0,?,'{}','now')").run(id,'u',p,attempt,JSON.stringify([q]));
+ const src=sources['paused-fact-fill.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');let calls=[],continuations=[];
+ const {fillPendingFactQuestions}=new Function('canDraftProfessional','prepareFormAnswer','requestContinuation','employerHold','companyApplicationPolicy','researchConsentWithdrawn',src+';return {fillPendingFactQuestions};')(()=>true,()=>{},(_db,_u,id)=>continuations.push(id),(_db,j)=>j.id==='held'?{message:'Hold'}:null,()=>({allowed:true,message:'This message must not block when allowed'}),()=>false);
+ const opts={env:{GEMINI_API_KEY:'test'},prepare:async(_db,_u,id,question,{check})=>{calls.push(id);assert.equal(check(db.prepare('SELECT * FROM jobs WHERE id=?').get(id)),'');db.prepare('UPDATE jobs SET answers_json=? WHERE id=?').run(JSON.stringify({[question]:'Supported professional answer'}),id);return{answer:'Supported professional answer'};}};
+ await fillPendingFactQuestions(db,opts);assert.deepEqual(calls,['ready']);assert.deepEqual(continuations,['ready']);await fillPendingFactQuestions(db,opts);assert.equal(calls.length,1);
+ db.exec("UPDATE jobs SET answers_json='{}' WHERE id='ready'");await fillPendingFactQuestions(db,opts);assert.equal(calls.length,1,'same question has a retry cooldown');
+ for(const id of ['held','attempted','off'])assert.equal(db.prepare('SELECT answers_json FROM jobs WHERE id=?').get(id).answers_json,'{}');db.close();
+});
+test('Gemini exact option answers fill native select and radio fields without clicking Submit',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),dom=new JSDOM('<form><label>Which technical skill do you use?<select required><option disabled selected value="">Select</option><option>Kubernetes</option><option>Java</option></select></label><fieldset><legend>Do you have Kubernetes experience?</legend><label><input type="radio" name="experience" required value="yes">Yes</label><label><input type="radio" name="experience" required value="no">No</label></fieldset><button type="button">Submit application</button></form>',{runScripts:'outside-only',url:'https://jobs.ashbyhq.com/example/12345678-1234-1234-1234-123456789abc'}),w=dom.window,messages=[];
+ Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent}});w.HTMLElement.prototype.getClientRects=()=>[{}];w.setInterval=()=>0;w.clearInterval=()=>{};
+ w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return{ok:true,data:{job:{title:'Engineer'},profile:{},answers:{},aiAssistance:true}};if(m.action==='state')return{ok:true,data:{attempted:false,automatic:true}};if(m.action==='answer'){const choice=m.question.startsWith('Which')?'Kubernetes':'Yes';assert(m.choices.includes(choice));return{ok:true,data:{answer:choice}};}return{ok:true,data:{}};}}};
+ w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);for(let i=0;i<100&&!messages.some(m=>m.action==='progress'&&m.blocked);i++)await new Promise(r=>setTimeout(r,25));
+ assert.equal(w.document.querySelector('select').value,'Kubernetes');assert(w.document.querySelector('input[value="yes"]').checked);assert(!w.document.querySelector('input[value="no"]').checked);assert(messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')));assert(!messages.some(m=>m.action==='attempt'));w.close();
 });

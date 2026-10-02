@@ -384,7 +384,7 @@ function focusLocalApplication(jobId){
 function renderLibraryLauncher(){
  if(document.querySelector('#answer-library'))return;
  const box=el('section');box.id='answer-library';box.style.cssText='padding:20px;margin:16px 0;border:1px solid #74ad91;border-radius:12px';
- box.append(el('h2','Answer library'),el('p','Save filled employer forms with the extension’s Save form answers to library button. Confirmed ordinary answers can fill matching questions automatically. Approve other reusable answers here; conflicts and application-specific answers need review. Matching dropdowns fill automatically. Extension 0.6.6 prepares supported forms and waits for your final Submit click.'));
+ box.append(el('h2','Answer library'),el('p','Save filled employer forms with the extension’s Save form answers to library button. Confirmed ordinary answers can fill matching questions automatically. Approve other reusable answers here; conflicts and application-specific answers need review. Matching dropdowns fill automatically. Extension 0.6.7 prepares supported forms and waits for your final Submit click.'));
  const load=el('button','Open / refresh answer library'),list=el('div');box.append(load,list);placeWorkspacePanel(box);
  load.onclick=async()=>{load.disabled=true;try{const {answers}=await api('/answer-library');list.replaceChildren();if(!answers.length)list.append(el('p','No captured answers yet. Save a filled form from its employer tab.'));
  for(const entry of answers){const form=el('form');form.style.cssText='padding:12px 0;border-top:1px solid #ddd';const input=field(form,entry.question);input.value=entry.answer;form.append(el('small',entry.company+' · '+(entry.confirmed?'Employer receipt recorded':'Captured draft — not proof of submission')));
@@ -506,14 +506,14 @@ function renderBrowserReadiness(jobs){
  if(box){if(Date.now()-Number(box.dataset.checkedAt||0)>30000)box.querySelector('button').click();return;}
  box=el('section');box.id='browser-readiness';box.style.cssText='padding:16px;border:1px solid #74ad91;border-radius:12px;margin:16px 0';
  box.append(el('h2','Application preparation in your browser'));
- const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.6)');
+ const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.7)');
  setup.href='/local-browser.html';setup.style.marginLeft='12px';status.setAttribute('role','status');
  box.append(status,check,setup);placeWorkspacePanel(box);
  check.onclick=()=>{
   if(check.disabled)return;check.disabled=true;box.dataset.checkedAt=String(Date.now());const requestId=crypto.randomUUID();
   const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);check.disabled=false;
    browserHelperStatus=error?null:{...data,checkedAt:Date.now()};
-   status.textContent=error|| (data?.version!=='0.6.6'?'Browser helper '+data?.version+' is connected. Update to 0.6.6 so supported forms stop at final Submit.':data?.enabled?'Browser helper 0.6.6 connected. New queued applications are prepared automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine preparation.')+(data?.error?' '+data.error:'');
+   status.textContent=error|| (data?.version!=='0.6.7'?'Browser helper '+data?.version+' is connected. Update to 0.6.7 so supported forms stop at final Submit.':data?.enabled?'Browser helper 0.6.7 connected. New queued applications are prepared automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine preparation.')+(data?.error?' '+data.error:'');
   };
   const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-browser-status-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
   const timer=setTimeout(()=>finish('Browser helper not detected here. Open this dashboard in the Chrome or Edge profile with ApplyPilot Local enabled.'),3500);
@@ -633,7 +633,7 @@ function renderContinuationQueue(data){
 }
 async function drainContinuations(data){
  if(continuationBusy||busy||activeHandoff||Date.now()<nextContinuationCheck||!data?.requests?.some(r=>r.state==='queued'))return;
- if(!browserHelperStatus?.enabled||browserHelperStatus.version!=='0.6.6'||Date.now()-browserHelperStatus.checkedAt>45000)return;
+ if(!browserHelperStatus?.enabled||browserHelperStatus.version!=='0.6.7'||Date.now()-browserHelperStatus.checkedAt>45000)return;
  continuationBusy=true;nextContinuationCheck=Date.now()+20000;
  try{
   const {request}=await api('/continuations/claim','POST',{});if(!request)return;
@@ -658,12 +658,12 @@ function preparedProfileAnswer(question,profile,saved){
 async function updateAIStatus(){
  let box=$('#ai-status');if(!box){box=el('section');box.id='ai-status';box.className='ai-status';placeWorkspacePanel(box);}
  try{
-  const [data,recovery]=await Promise.all([api('/ai-status'),api('/saved-answer-recovery').catch(()=>null)]),signature=JSON.stringify([data,recovery]);if(box.dataset.signature===signature)return;box.dataset.signature=signature;box.replaceChildren(el('h2','AI form assistance'));box.dataset.configured=String(!!data.googleConfigured);
-  box.append(el('p',data.googleConfigured?'Gemini key configured · checks paused browser forms for supported public company/job questions every minute. API errors appear below.':'Gemini is not configured on the server. Saved-answer autofill remains available.'));
+  const [data,recovery]=await Promise.all([api('/ai-status'),api('/saved-answer-recovery').catch(()=>null)]),signature=JSON.stringify([data,recovery]);if(box.dataset.signature===signature)return;box.dataset.signature=signature;box.replaceChildren(el('h2','AI form assistance'));box.dataset.configured=String(!!data.googleConfigured);box.dataset.facts=String(!!data.geminiFactsConfigured&&(data.profiles||[]).some(p=>p.geminiFactsConsent));
+  box.append(el('p',data.googleConfigured?'Gemini key configured · fills supported public questions and approved professional-fact answers; checks paused forms every minute. API errors appear below.':'Gemini is not configured on the server. Saved-answer autofill remains available.'));
   box.append(el('p','Saved profile facts now cover common question wording, including LinkedIn-link prompts. Eligible paused browser forms are checked every minute and resume preparation when all recorded missing answers are available.'));
   if(recovery)box.append(el('p','Saved-answer recovery '+(recovery.enabled?'on':'paused with automatic queueing')+' · '+(recovery.filled||0)+' answers recovered across '+(recovery.applications||0)+' applications. These are preparation counts, not submissions.'));
-  box.append(el('p','Gemini currently uses the employer’s public job page. Questions about your own experience, desired pay, availability or work authorization need your saved answers. Verification and employer declarations remain in your browser.'));
-  for(const p of data.profiles||[])box.append(el('small',p.name+': Google public-page consent '+(p.googleConsent?'enabled':'off')+'. Personal-answer drafting '+(p.personalDraftConsent&&data.personalDraftsConfigured?'enabled':'inactive')+'. Professional background '+(p.hasBackground?'saved':'not yet saved')+'.'));
+  box.append(el('p','Gemini can use your approved professional facts and the public employer page. Unknown experience, desired pay, availability and work authorization need your saved answers. You handle verification, declarations and the final Submit click.'));
+  for(const p of data.profiles||[])box.append(el('small',p.name+': Google public-page consent '+(p.googleConsent?'enabled':'off')+'. Personal-answer drafting '+(p.geminiFactsConsent&&data.geminiFactsConfigured?'Gemini enabled':p.personalDraftConsent&&data.personalDraftsConfigured?'OpenAI enabled':'inactive')+'. Professional background '+(p.hasBackground?'saved':'not yet saved')+'.'));
   for(const attempt of data.attempts||[])box.append(el('p',attempt.company+' · '+attempt.question+' — '+attempt.message));
   const testRow=el('div'),testButton=el('button','Test Gemini on a public job page'),testResult=el('p');testRow.className='ai-test';testResult.setAttribute('role','status');testButton.type='button';testButton.disabled=!data.googleConfigured;testResult.setAttribute('role','status');testRow.append(testButton,testResult);box.append(testRow);
   testButton.onclick=async()=>{
@@ -673,6 +673,8 @@ async function updateAIStatus(){
    }catch(error){testResult.textContent='Gemini test failed: '+error.message;}
    finally{testButton.disabled=false;}
   };
+  const factsRow=el('div'),factsButton=el('button','Test Gemini with my saved professional facts'),factsResult=el('p');factsRow.className='ai-test';factsButton.type='button';factsButton.disabled=box.dataset.facts!=='true';factsResult.setAttribute('role','status');factsRow.append(factsButton,factsResult);box.append(factsRow);
+  factsButton.onclick=async()=>{factsButton.disabled=true;factsResult.textContent='Checking a professional answer against your saved facts…';try{const result=await api('/ai-facts-test','POST',{});factsResult.textContent=(result.answer?'Gemini professional-answer test passed: '+result.answer:result.reason)+' This test did not fill or submit an application.';}catch(error){factsResult.textContent='Gemini test failed: '+error.message;}finally{factsButton.disabled=false;}};
   const setup=el('a','View resume and profile facts →');setup.href='https://marvelous-vitality-production-c2d8.up.railway.app/setup';box.append(setup);
  }catch{box.dataset.configured='unknown';box.replaceChildren(el('h2','AI form assistance'),el('p','AI status could not be verified. Your saved answers remain available.'));}finally{compactAIStatus(box);}
 }
@@ -777,6 +779,6 @@ function compactAIStatus(box){
  if(box.querySelector(':scope > .ai-details'))return;
  const details=el('details');details.className='ai-details';details.append(el('summary','AI details, recovery & errors'));
  for(const child of [...box.children])if(child.tagName!=='H2'&&!child.classList.contains('ai-test'))details.append(child);
- const brief=el('p',box.dataset.configured==='true'?'Gemini key configured · Public company and job-page answers':box.dataset.configured==='unknown'?'AI status unavailable · Saved-answer autofill remains available':'Gemini not configured · Saved-answer autofill remains available');brief.className='ai-brief';
+ const brief=el('p',box.dataset.configured==='true'?(box.dataset.facts==='true'?'Gemini active · Saved professional facts + public job answers · You click Submit':'Gemini key configured · Public company and job-page answers'):box.dataset.configured==='unknown'?'AI status unavailable · Saved-answer autofill remains available':'Gemini not configured · Saved-answer autofill remains available');brief.className='ai-brief';
  box.querySelector('h2')?.after(brief);box.append(details);
 }

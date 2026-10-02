@@ -16,7 +16,7 @@ Submitted means the extension observed a recognized receipt after a submission a
 
 The popup environment cannot switch servers while records exist. Use a separate browser profile for another backend. To customize hosting/port, update background.js and manifest.json together. Reload the extension after changing files.
 
-Version 0.6.6's prepare-only final step replaces the earlier automatic final-submit behavior described in older release notes below.
+Version 0.6.7's prepare-only final step replaces the earlier automatic final-submit behavior described in older release notes below.
 
 Version 0.6.1 fixes missing-tab queue stalls and resumes routine submissions after a durable attempt record. A timeout or uncertain receipt is never retried automatically. Existing paused forms need explicit continuation. Reload the updated extension in the existing browser profile; keep its stored records. The hosted download is built from the deployed extension source, not an older checked-in ZIP.
 
@@ -26,4 +26,4 @@ Version 0.6.1 fixes missing-tab queue stalls and resumes routine submissions aft
 
 Version 0.6.2 recognizes employer HTTP 500/502/503/504, rate limits, denied access and missing pages. It does not treat them as application forms or confirmations. Newly opened automatic jobs may retry an empty landing page once after a one-minute cooldown, using a fresh GET. Other employer hosts continue during the wait. Existing records, edited/populated forms, form steps, and any possible submission remain paused. Stop automation and browser restart cancel pending retries. No access checks are bypassed. Update by extracting the ZIP over this same directory and reloading the same extension; keep its records.
 
-Version 0.6.6 prepares more routine forms by using accessible labels and descriptions, exact portal dropdown choices, ARIA radios and checkboxes, content-editable fields, and additional safe Next/Continue/Review labels. It ignores static footer boilerplate while still stopping for required legal, demographic, CAPTCHA, MFA, and unknown responses. ApplyPilot never clicks the final Submit button: the applicant clicks it once, and the extension durably records that attempt before replaying the click to the employer page.
+Version 0.6.7 prepares more routine forms by using accessible labels and descriptions, exact portal dropdown choices, ARIA radios and checkboxes, content-editable fields, and additional safe Next/Continue/Review labels. It ignores static footer boilerplate while still stopping for required legal, demographic, CAPTCHA, MFA, and unknown responses. ApplyPilot never clicks the final Submit button: the applicant clicks it once, and the extension durably records that attempt before replaying the click to the employer page.

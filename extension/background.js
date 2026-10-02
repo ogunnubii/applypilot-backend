@@ -124,6 +124,7 @@ async function handle(m,sender){
  if(m.action==='attention-position'){const {jobs}=await listedJobs(),waiting=P.attentionOrder(jobs),index=waiting.findIndex(j=>j.id===b.id);return {position:index<0?0:index+1,total:waiting.length};}
  if(m.action==='state')return {attempted:b.attempted,automatic:b.auto&&!b.attempted,phase:b.phase};
  if(m.action==='assistance'){b.assisted=true;await saveRecord(b);return api('/jobs/'+b.id+'/local/assistance','POST',{kind:'human'});}
+ if(m.action==='answer'){if(b.attempted)throw Error('Submission already started.');return api('/jobs/'+b.id+'/local/answer','POST',{question:m.question,choices:m.choices,answerFormat:m.answerFormat});}
  if(m.action==='research-answer')return api('/jobs/'+b.id+'/local/research-answer','POST',{question:m.question});
  if(m.action==='research-used')return api('/jobs/'+b.id+'/local/research-used','POST',{questions:m.questions});
  if(m.action==='attempt'){

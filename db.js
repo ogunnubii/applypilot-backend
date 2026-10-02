@@ -81,3 +81,5 @@ installPipeline(db);
 installEmployerLimits(db);
 
 installCompanyApplicationPolicy(db);
+
+if(!db.prepare('PRAGMA table_info(applicants)').all().some(c=>c.name==='gemini_facts_consent'))db.exec('ALTER TABLE applicants ADD COLUMN gemini_facts_consent INTEGER NOT NULL DEFAULT 0');

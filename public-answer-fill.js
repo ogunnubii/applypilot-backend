@@ -9,7 +9,7 @@ export async function fillPublicQuestions(db,id,{research=researchForJob,continu
  if(!env.GEMINI_API_KEY)return {filled:0};let job=readJob(db,id);if(!waiting(job))return {filled:0};
  const fields=parse(job.required_fields_json,[]);if(!Array.isArray(fields))return {filled:0};
  let filled=0;
- for(const question of [...new Set(fields)].filter(q=>typeof q==='string'&&q.length<=240&&canResearchQuestion(q)).slice(0,4)){
+ for(const question of [...new Set(fields)].filter(q=>typeof q==='string'&&q.length<=240&&canResearchQuestion(q)&&!parse(job.answers_json,{})[q]?.trim()).slice(0,4)){
   job=readJob(db,id);if(!waiting(job))break;
   if(parse(job.answers_json,{})[question]?.trim())continue;
   const at=new Date(clock()).toISOString(),cutoff=new Date(clock()-3600000).toISOString();
@@ -49,9 +49,9 @@ export async function fillPendingPublicQuestions(db,options={}){
  for(const row of rows)await fillPublicQuestions(db,row.id,options);
 }
 export function publicFillStatus(db,uid,env=process.env){
- const profiles=db.prepare('SELECT id,name,google_research_consent,ai_consent,answers_json FROM applicants WHERE user_id=?').all(uid).map(p=>({id:p.id,name:p.name,googleConsent:!!p.google_research_consent,personalDraftConsent:!!p.ai_consent,hasBackground:!!parse(p.answers_json,{})['Professional background']?.trim()}));
+ const profiles=db.prepare('SELECT id,name,google_research_consent,ai_consent,gemini_facts_consent,answers_json FROM applicants WHERE user_id=?').all(uid).map(p=>({id:p.id,name:p.name,googleConsent:!!p.google_research_consent,geminiFactsConsent:!!p.gemini_facts_consent,personalDraftConsent:!!p.ai_consent,hasBackground:!!parse(p.answers_json,{})['Professional background']?.trim()}));
  const attempts=db.prepare('SELECT f.question,f.state,f.message,f.attempted_at,j.company,j.title FROM public_fill_attempts f JOIN jobs j ON j.id=f.job_id WHERE j.user_id=? ORDER BY f.attempted_at DESC LIMIT 5').all(uid);
- return {googleConfigured:!!env.GEMINI_API_KEY,personalDraftsConfigured:!!(env.OPENAI_API_KEY&&env.OPENAI_MODEL),profiles,attempts};
+ return {googleConfigured:!!env.GEMINI_API_KEY,geminiFactsConfigured:!!env.GEMINI_API_KEY,personalDraftsConfigured:!!(env.OPENAI_API_KEY&&env.OPENAI_MODEL),profiles,attempts};
 }
 
 const diagnosticRuns=new Map();

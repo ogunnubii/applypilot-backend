@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ApplyPilot Local",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "Prepare approved applications in your normal Chrome or Edge profile, then record your final Submit click before navigation.",
   "minimum_chrome_version": "120",
   "permissions": [

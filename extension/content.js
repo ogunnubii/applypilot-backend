@@ -2,6 +2,7 @@
 const P=globalThis.ApplyPilotPolicy;
 if(globalThis.__applypilotAgentLoaded)return;globalThis.__applypilotAgentLoaded=true;
 let packet,bar,note,started=false,initialReceipt=false,attempted=false,timer,busy=false,stopped=false,lastStep='',stepAt=0,submitAt=0;
+const aiTried=new Map(),aiIssues=new Map();
 let assistanceSent=false,submissionRecording=false,replayingSubmission=false;
 const norm=P.normalize;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -97,7 +98,7 @@ async function updateAttentionPosition(){
 function mount(){
  document.getElementById('applypilot-local-controls')?.remove();bar=document.createElement('aside');bar.id='applypilot-local-controls';bar.style.cssText='position:fixed;bottom:16px;right:16px;max-width:360px;z-index:2147483647;background:#12253b;color:white;padding:16px;border-radius:12px;box-shadow:0 3px 18px #0008;font:14px system-ui';
  const heading=document.createElement('strong');heading.textContent='ApplyPilot · '+packet.job.title;note=document.createElement('p');note.setAttribute('role','status');
- const refill=document.createElement('button');refill.textContent='Fill saved answers';refill.onclick=async()=>{try{await recordAssistance();packet=null;attemptedCustom=new WeakMap();await fill();await advance();}catch(e){note.textContent=e.message;}};
+ const refill=document.createElement('button');refill.textContent='Fill available answers';refill.onclick=async()=>{try{await recordAssistance();packet=null;attemptedCustom=new WeakMap();await fill();await advance();}catch(e){note.textContent=e.message;}};
  const save=document.createElement('button');save.textContent='Remember an answer';save.onclick=async()=>{await recordAssistance();const question=prompt('Exact question to remember for this applicant:');if(!question)return;if(protectedQuestion(question)){note.textContent='Complete sensitive statements directly with the employer.';return;}const value=prompt('Your truthful answer (reused only for this exact question):');if(value===null||!value.trim())return;try{await send('remember',{question,answer:value});packet=null;await fill();note.textContent='Answer saved for this applicant.';}catch(e){note.textContent=e.message;}};
  const capture=document.createElement('button');capture.textContent='Save form answers to library';capture.onclick=async()=>{capture.disabled=true;try{await recordAssistance();const r=await send('capture',{fields:formAnswers()});note.textContent=r.saved+' answers saved. Review them in the dashboard Answer library. Nothing was submitted.';}catch(e){note.textContent='Could not save answers: '+e.message;}finally{capture.disabled=false;}};
  bar.append(heading,note,refill,save,capture);document.body.append(bar);updateAttentionPosition();
@@ -138,7 +139,30 @@ async function fillPass(){
  count+=await fillRoleRadios(fields);
  const files=[...document.querySelectorAll('input[type="file"]')].filter(e=>!e.disabled&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
  if(files.length===1&&!files[0].files.length&&packet.resume?.base64){const r=packet.resume,bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0)),dt=new DataTransfer();dt.items.add(new File([bytes],r.name,{type:r.name.endsWith('.pdf')?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));files[0].files=dt.files;files[0].dispatchEvent(new Event('input',{bubbles:true}));files[0].dispatchEvent(new Event('change',{bubbles:true}));count++;}
- note.textContent=count+' saved fields filled.';if(count)await send('progress',{fields:[],message:'Filled '+count+' saved fields on the employer form.',blocked:false,filled:count});return count;
+ note.textContent=count+' fields filled.';if(count)await send('progress',{fields:[],message:'Filled '+count+' fields on the employer form.',blocked:false,filled:count});return count;
+}
+// AI results are application-only and are never allowed to overwrite a user's edit.
+async function prepareMissingAnswers(){
+ if(!packet?.aiAssistance||attempted||siteIssue())return 0;
+ let prepared=0;
+ for(const e of controls()){
+  const fields=controls(),q=label(e),key=norm(q);
+  if(prepared>=12)break;
+  if(attempted||!visible(e)||controlComplete(e,fields)||descriptors(e).some(protectedQuestion)||answer(e)!==null||q==='Required field'||q.length<3||['file','password','checkbox','hidden','submit','button'].includes(e.type)||controlRole(e)==='checkbox')continue;
+  if(!e.matches('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="radio"]'))continue;
+  if(aiTried.has(key)&&Date.now()-aiTried.get(key)<60000)continue;
+  aiTried.set(key,Date.now());const url=location.href,question=q;note.textContent='Gemini is preparing: '+q;
+  try{
+   const choices=e.tagName==='SELECT'?[...e.options].filter(o=>!o.disabled&&o.value&&!/^(?:select|choose)\b/i.test(o.textContent.trim())).map(o=>o.textContent.trim()):e.type==='radio'?fields.filter(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form).map(optionText):controlRole(e)==='radio'?roleRadioGroup(e).map(optionText):[];
+   const result=await send('answer',{question,choices,answerFormat:e.type==='number'?'number':'text'}),state=await send('state');
+   if(attempted||state.attempted||location.href!==url||!visible(e)||label(e)!==question||controlComplete(e,controls()))continue;
+   if(typeof result.answer==='string'&&result.answer.trim()){
+    packet.answers=packet.answers||{};Object.defineProperty(packet.answers,question,{value:result.answer.trim(),enumerable:true,configurable:true,writable:true});
+    packet.applicationOnlyQuestions=[...new Set([...(packet.applicationOnlyQuestions||[]),question])];aiIssues.delete(question);prepared++;
+   }else if(isRequired(e))aiIssues.set(question,result.reason||'Save the missing fact in your profile.');
+  }catch(error){if(isRequired(e))aiIssues.set(question,error.message);}
+ }
+ return prepared;
 }
 // Let conditional controls settle and fill newly revealed fields before calling
 // a step blocked. Each pass uses a fresh DOM and never clicks navigation/Submit.
@@ -147,8 +171,10 @@ async function fill(){
  let total=0;
  for(let pass=0;pass<4;pass++){
   if(attempted)break;
-  const filled=await fillPass();total+=filled;
-  if(!filled)break;
+  let filled=await fillPass();total+=filled;
+  const prepared=await prepareMissingAnswers();
+  if(prepared){const added=await fillPass();filled+=added;total+=added;}
+  if(!filled&&!prepared)break;
   await pause(180);
  }
  return total;
@@ -163,7 +189,7 @@ async function advance(){
  const state=await send('state');attempted=attempted||state.attempted;const issue=siteIssue();if(issue){stopped=true;clearInterval(timer);const result=await send('site-error',{code:issue.code,empty:controls().length===0&&!document.querySelector('form'),initial:lastStep===''});note.textContent=result.message;return;}
  const text=receipt();if(text&&!initialReceipt&&attempted){await send('receipt',{receipt:text});note.textContent='Employer receipt verified. Application submitted.';stopped=true;clearInterval(timer);return;}
  if(attempted){if(!submitAt)submitAt=Date.now();if(Date.now()-submitAt>30000)await report('Submission uncertain. Check the employer receipt before retrying.');return;}
- const check=review();if(!state.automatic){note.textContent=check.reason||'Saved details filled. Review the employer form and click Submit.';await report(note.textContent,check.fields,!!check.reason);if(!attempted){stopped=true;clearInterval(timer);}return;}if(check.reason)return report(check.reason,check.fields);if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
+ const check=review();if(check.fields.length){const issue=check.fields.map(q=>aiIssues.get(q)).find(Boolean);if(issue)check.reason+=' · '+issue;}if(!state.automatic){note.textContent=check.reason||'Saved details filled. Review the employer form and click Submit.';await report(note.textContent,check.fields,!!check.reason);if(!attempted){stopped=true;clearInterval(timer);}return;}if(check.reason)return report(check.reason,check.fields);if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
  const signatureNow=signature();if(lastStep===signatureNow){if(Date.now()-stepAt>15000)await report('This step did not advance. Check employer validation.');return;}
  const bs=buttons(),submit=bs.filter(isSubmitAction),next=bs.filter(isNextAction);
  if(submit.length===1&&next.length===0){

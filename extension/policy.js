@@ -30,7 +30,16 @@
    linkedin:['linkedin','linkedin profile','linkedin url','linkedin profile url'],github:['github','github profile','github url','github profile url'],
    school:['school','university','college university','school name','university name'],degree:['degree','degree type'],discipline:['discipline','field of study','major']
   };
-  function fieldKind(question){const q=normalize(question).replace(/[():/_-]/g,' ').replace(/\b(optional|required)\b/g,'').replace(/\s+/g,' ').trim();return Object.keys(aliases).find(k=>aliases[k].includes(q));}
+  function fieldKind(question){const q=normalize(question).replace(/[():/_-]/g,' ').replace(/\b(optional|required)\b/g,'').replace(/\s+/g,' ').trim();const direct=Object.keys(aliases).find(k=>aliases[k].includes(q));if(direct)return direct;
+    // Anchored wording variants only: no fuzzy matching or employer/third-party URLs.
+    const prompted=q.replace(/^(?:please\s+)?(?:provide|enter|share|list)\s+(?:a\s+)?(?:link\s+to\s+)?(?:your\s+)?/,'').replace(/^(?:what is|what's)\s+your\s+/,'');
+    const social=prompted.replace(/\s+(?:profile\s+)?(?:url|link)$/,'').replace(/\s+profile$/,'').replace(/\s+below$/,'').trim();
+    if(['linkedin','github'].includes(social))return social;
+    if(/^(?:please\s+)?(?:enter|provide|share)\s+your\s+/.test(q)||/^(?:what is|what's)\s+your\s+/.test(q)){
+      return ['name','first','last','email','phone','city','country','region','postal'].find(k=>aliases[k].includes(prompted));
+    }
+    return undefined;
+  }
   function knownAnswer(question,profile,answers){
    if(sensitive(question)||normalize(question)==='required field')return null;
    const exact=savedAnswer(question,answers);if(exact!==null)return exact;

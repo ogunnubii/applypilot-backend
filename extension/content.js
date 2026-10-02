@@ -123,7 +123,7 @@ function review(){
  const embedded=[...document.querySelectorAll('iframe')].filter(visible).some(e=>!/captcha|challenge/i.test(e.src)&&e.getBoundingClientRect().height>150);
  return {fields:missing,reason:fieldErrors.length?'Could not fill: '+fieldErrors.join('; '):captcha?'CAPTCHA requires you':login?'Sign-in or MFA requires you':sensitive?'Sensitive, legal, or demographic response requires you':custom?'Required custom form control requires review':embedded?'Embedded form requires review':missing.length?'Needs your input: '+missing.join('; '):errors.length?'Employer validation needs review':''};
 }
-async function fill(){
+async function fillPass(){
  if(!packet)packet=await send('packet');if(!bar)mount();let count=0;fieldErrors=[];if(siteIssue())return 0;const fields=controls();if(fields.length||document.querySelector('form'))await send('form-opened');
  for(const e of fields){
   try{
@@ -139,6 +139,19 @@ async function fill(){
  const files=[...document.querySelectorAll('input[type="file"]')].filter(e=>!e.disabled&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
  if(files.length===1&&!files[0].files.length&&packet.resume?.base64){const r=packet.resume,bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0)),dt=new DataTransfer();dt.items.add(new File([bytes],r.name,{type:r.name.endsWith('.pdf')?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));files[0].files=dt.files;files[0].dispatchEvent(new Event('input',{bubbles:true}));files[0].dispatchEvent(new Event('change',{bubbles:true}));count++;}
  note.textContent=count+' saved fields filled.';if(count)await send('progress',{fields:[],message:'Filled '+count+' saved fields on the employer form.',blocked:false,filled:count});return count;
+}
+// Let conditional controls settle and fill newly revealed fields before calling
+// a step blocked. Each pass uses a fresh DOM and never clicks navigation/Submit.
+async function fill(){
+ if(!packet)packet=await send('packet');if(!bar)mount();
+ let total=0;
+ for(let pass=0;pass<4;pass++){
+  if(attempted)break;
+  const filled=await fillPass();total+=filled;
+  if(!filled)break;
+  await pause(180);
+ }
+ return total;
 }
 async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked});if(blocked)await updateAttentionPosition();}
 function signature(){return location.href+'|'+controls().map(e=>label(e)+':'+e.type+':'+controlRole(e)).join('|')+'|'+buttons().map(e=>buttonName(e)).join('|');}

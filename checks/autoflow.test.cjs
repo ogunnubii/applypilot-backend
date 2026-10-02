@@ -1,9 +1,9 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
-const sources=Object.fromEntries(["employer-limits.js","application-pipeline.js","application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
+const sources=Object.fromEntries(["saved-answer-recovery.js","hosted-form.js","local-policy.js","automatic-answer.js","employer-limits.js","application-pipeline.js","application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
 test("routine preparation stops at Submit and a trusted click is durably recorded once",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),{implForWrapper}=require('../node_modules/jsdom/lib/generated/idl/utils.js'),{fireAnEvent}=require('../node_modules/jsdom/lib/jsdom/living/helpers/events.js'),MouseEvent=require('../node_modules/jsdom/lib/generated/idl/MouseEvent.js');
- const wait=()=>new Promise(r=>setTimeout(r,45));
+ const wait=()=>new Promise(r=>setTimeout(r,250));
  async function scenario(extra='',{denied=false,initialAttempt=false,automatic=true,receipt=false}={}){
   const dom=new JSDOM('<form><label>Full name<input required></label>'+extra+'<button type="button" id="submit">Submit application</button></form>',{runScripts:'outside-only',url:'https://jobs.ashbyhq.com/example/12345678-1234-1234-1234-123456789abc'}),w=dom.window;
   Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});
@@ -12,12 +12,12 @@ test("routine preparation stops at Submit and a trusted click is durably recorde
   w.setInterval=fn=>{timers.push(fn);return timers.length};w.clearInterval=()=>{};
   w.document.getElementById('submit').onclick=()=>{assert(attempted,'intent must precede click');clicks++;if(receipt)w.document.querySelector('form').innerHTML='<p>Thank you for applying</p>';};
   w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Fixture',attempted},profile:{name:'Applicant'},answers:{},resume:{name:'resume.pdf',base64:''}}};if(m.action==='state')return {ok:true,data:{attempted,automatic:automatic&&!attempted}};if(m.action==='attempt'){if(denied)return {ok:false,error:'transport uncertain'};assert(!attempted);attempted=true;}return {ok:true,data:{}};}}};
-  w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);await wait();
+  w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);for(let n=0;n<80&&!messages.some(m=>m.action==='progress'&&m.blocked||m.action==='site-error')&&!initialAttempt;n++)await new Promise(r=>setTimeout(r,25));await wait();
   const trustedClick=async()=>{const button=w.document.getElementById('submit');if(button)fireAnEvent('click',implForWrapper(button),MouseEvent,{bubbles:true,cancelable:true,isTrusted:true});await wait();};
   const runTimers=async()=>{for(const fn of [...timers])await fn();await wait();};
   return {messages,get clicks(){return clicks;},trustedClick,runTimers,close:()=>w.close()};
  }
- let f=await scenario('',{receipt:true});assert.equal(f.clicks,0,'automation must leave final Submit untouched');assert(!f.messages.some(m=>m.action==='attempt'));assert(f.messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')));
+ let f=await scenario('',{receipt:true});assert.equal(f.clicks,0,'automation must leave final Submit untouched');assert(!f.messages.some(m=>m.action==='attempt'));assert(f.messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')),JSON.stringify(f.messages));
  await f.trustedClick();assert.equal(f.clicks,1);assert.equal(f.messages.filter(m=>m.action==='attempt').length,1);await f.trustedClick();assert.equal(f.clicks,1,'the same trusted action is never replayed twice');await f.runTimers();assert(f.messages.some(m=>m.action==='receipt'));f.close();
  f=await scenario('',{denied:true});await f.trustedClick();assert.equal(f.clicks,0,'navigation stays paused when durable attempt recording fails');assert.equal(f.messages.filter(m=>m.action==='attempt').length,1);f.close();
  f=await scenario('',{initialAttempt:true});await f.trustedClick();assert.equal(f.clicks,0,'an already-recorded attempt cannot be submitted again');f.close();
@@ -214,7 +214,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.5",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.6",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -510,7 +510,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.5'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.6'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{
@@ -713,4 +713,85 @@ test('hosted worker records an explicit employer application limit without filli
  const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold','applicationLimit','recordEmployerLimit',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,()=>null,()=>null,m.applicationLimit,()=>{recorded++;});
  await run({id:'j',user_id:'u',applicant_id:'p',url:'https://jobs.ashbyhq.com/ashby/j'},browser);
  assert.equal(recorded,1);assert.equal(status,'needs_review');assert.equal(challenge,'Employer application limit');assert(closed);assert(!events.some(e=>['filled','submitted','submission_started'].includes(e.type)));
+});
+
+test('common profile prompt wording resolves exact approved facts without widening question scope',()=>{
+ const vm=require('node:vm'),assert=require('node:assert/strict'),c={};vm.runInNewContext(sources['extension/policy.js'],c);const p=c.ApplyPilotPolicy;
+ for(const q of ['Please provide a link to your LinkedIn profile','What is your LinkedIn profile URL?','Please enter your LinkedIn URL','Share your GitHub profile']){
+  assert.equal(p.knownAnswer(q,{}, {'LinkedIn Profile':'https://linkedin.com/in/example','GitHub':'https://github.com/example'}),q.includes('GitHub')?'https://github.com/example':'https://linkedin.com/in/example');
+ }
+ assert.equal(p.knownAnswer('What is your current city?',{location:'Toronto, Ontario, Canada'},{}),'Toronto');
+ for(const q of ['Please provide your manager LinkedIn profile','Please provide a link to your employer LinkedIn profile','Why is your LinkedIn profile relevant?','What is your desired salary?','Please provide your work authorization','Please share your GitHub project experience']){
+  assert.equal(p.fieldKind(q),undefined,q);
+ }
+ assert.equal(p.knownAnswer('Please provide a link to your LinkedIn profile',{}, {'LinkedIn':'one','LinkedIn Profile':'two'}),null);
+});
+
+test('conditional required controls settle and fill before the helper pauses; final Submit remains manual',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ const dom=new JSDOM('<form><label>Country<select required><option value="">Choose</option><option>Canada</option></select></label><button id="send" type="button">Submit application</button></form>',{runScripts:'outside-only',url:'https://jobs.ashbyhq.com/example/conditional'}),w=dom.window;
+ Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});w.HTMLElement.prototype.getClientRects=function(){return this.isConnected?[{}]:[]};
+ w.setInterval=()=>0;w.clearInterval=()=>{};let clicks=0;const messages=[];
+ w.document.querySelector('#send').onclick=()=>clicks++;
+ w.document.querySelector('select').onchange=()=>{w.setTimeout(()=>{const label=w.document.createElement('label');label.textContent='What is your current city?';const input=w.document.createElement('input');input.required=true;label.append(input);w.document.querySelector('form').prepend(label);},60)};
+ w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);return {ok:true,data:m.action==='packet'?{job:{title:'Fixture'},profile:{location:'Toronto, Ontario, Canada'},answers:{},resume:{base64:''}}:m.action==='state'?{automatic:true,attempted:false}:{}};}}};
+ w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);await new Promise(r=>setTimeout(r,750));
+ assert.equal(w.document.querySelector('input').value,'Toronto');assert.equal(clicks,0);assert(!messages.some(m=>m.action==='attempt'));
+ assert(messages.some(m=>m.action==='progress'&&/Ready to submit/.test(m.message)));w.close();
+});
+
+test('saved-answer recovery reuses approved facts, resumes once, and isolates attempts, consent, holds and incomplete forms',async()=>{
+ const vm=require('node:vm'),assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(':memory:');
+ const context=vm.createContext({process,Date,JSON,String,Set,Object,Error,console,URL});const modules={};
+ const stubValues={
+  './answer-library.js':{reusableAnswers:(_db,p)=>JSON.parse(p.answers_json||'{}'),canReuse:q=>!/(?:salary|authorization|why)/i.test(q)},
+  './employer-limits.js':{employerHold:()=>null},'./company-application-policy.js':{companyApplicationPolicy:()=>({allowed:true})},
+  './research-consent.js':{researchConsentWithdrawn:()=>false},
+  './continuation-queue.js':{requestContinuation:()=>{throw Error('inject continuation')}}
+ };
+ const load=async spec=>{
+  if(modules[spec])return modules[spec];
+  if(stubValues[spec]){const v=stubValues[spec];return modules[spec]=new vm.SyntheticModule(Object.keys(v),function(){for(const [k,x]of Object.entries(v))this.setExport(k,x)},{context});}
+  return modules[spec]=new vm.SourceTextModule(sources[spec.replace(/^\.\//,'')],{context});
+ };
+ const mod=await load('./saved-answer-recovery.js');await mod.link(load);await mod.evaluate();const {installSavedRecovery,recoverSavedAnswers,savedRecoveryStatus}=mod.namespace;
+ db.exec("CREATE TABLE applicants(id TEXT,user_id TEXT,consent INTEGER,email TEXT,resume_path TEXT,name TEXT,location TEXT,answers_json TEXT);CREATE TABLE pipeline_preferences(user_id TEXT,auto_queue_found INTEGER);CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,status TEXT,local_phase TEXT,local_attempt_at TEXT,handoff_available INTEGER,challenge TEXT,required_fields_json TEXT,answers_json TEXT,updated_at TEXT,company TEXT,title TEXT);CREATE TABLE events(id INTEGER PRIMARY KEY,job_id TEXT,at TEXT,type TEXT,message TEXT);CREATE TABLE continuation_requests(job_id TEXT,state TEXT);INSERT INTO pipeline_preferences VALUES('u',1),('other',1),('off',0);");
+ const facts=JSON.stringify({'LinkedIn Profile':'https://linkedin.com/in/example'});
+ for(const [id,u,consent,a] of [['p','u',1,facts],['q','other',1,JSON.stringify({'LinkedIn Profile':'https://linkedin.com/in/other'})],['no','u',0,facts],['off','off',1,facts],['conflict','u',1,JSON.stringify({'LinkedIn':'one','LinkedIn profile':'two'})]])db.prepare("INSERT INTO applicants VALUES(?,?,?,'email','resume','Example','Toronto, Ontario, Canada',?)").run(id,u,consent,a);
+ const question='Please provide a link to your LinkedIn profile';const add=(id,{u='u',p='p',attempt=null,status='local_browser',challenge=null,questions=[question],answers={},handoff=0}={})=>db.prepare("INSERT INTO jobs VALUES(?,?,?,?,?,?,?, ?,?,?,?,'Company','Role')").run(id,u,p,status,'blocked',attempt,handoff,challenge,JSON.stringify(questions),JSON.stringify(answers),'2026-10-01');
+ add('ready');add('partial',{questions:[question,'What products have you worked on?']});add('attempted',{attempt:'y'});add('event');db.exec("INSERT INTO events(job_id,at,type,message) VALUES('event','t','submission_started','attempt')");
+ add('other',{u:'other',p:'q'});add('noconsent',{p:'no'});add('off',{u:'off',p:'off'});add('held');add('readySubmit',{challenge:'Ready to submit'});add('sensitive',{challenge:'Sensitive action'});add('captcha',{challenge:'CAPTCHA'});add('done',{status:'submitted'});add('conflict',{p:'conflict'});add('existing',{answers:{[question]:'https://linkedin.com/in/edited'}});add('handoff',{handoff:1});add('inflight');db.exec("INSERT INTO continuation_requests VALUES('inflight','dispatching')");
+ installSavedRecovery(db);const calls=[],options={userId:'u',check:(_db,j)=>j.id==='held'?'hold':'',continueJob(db,u,id,check){
+  const j=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);assert.equal(check(j),'');const a=JSON.parse(j.answers_json);if(JSON.parse(j.required_fields_json).some(q=>!a[q]))throw Error('partial');calls.push(id);db.prepare('INSERT INTO continuation_requests VALUES(?,?)').run(id,'queued');return {state:'queued'};
+ }};
+ const r=recoverSavedAnswers(db,options);assert.equal(r.filled,2);assert.equal(r.queued,1);assert.deepEqual(calls,['ready']);
+ assert.equal(recoverSavedAnswers(db,options).filled,0);assert.equal(calls.length,1);
+ for(const id of ['attempted','event','other','noconsent','held','off','readySubmit','sensitive','captcha','done','conflict','handoff','inflight'])assert.equal(db.prepare('SELECT answers_json FROM jobs WHERE id=?').get(id).answers_json,'{}',id);
+ assert.equal(JSON.parse(db.prepare("SELECT answers_json FROM jobs WHERE id='existing'").get().answers_json)[question],'https://linkedin.com/in/edited');
+ assert.equal(savedRecoveryStatus(db,'u').filled,2);assert.equal(savedRecoveryStatus(db,'other').filled,0);
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM events WHERE type='submitted'").get().n,0);db.close();
+});
+
+test('preparation stages expose actionable counts without treating ready forms as receipts',()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
+ w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
+ const jobs=[
+  {id:'ready',company:'A',title:'Role',status:'local_browser',local_phase:'blocked',last_message:'Ready to submit — all supported fields are filled.',required_fields_json:'[]'},
+  {id:'questions',company:'B',title:'Role',status:'local_browser',local_phase:'blocked',required_fields_json:'["LinkedIn"]'},
+  {id:'captcha',status:'local_browser',local_phase:'blocked',last_message:'CAPTCHA requires you',required_fields_json:'["Name"]'},
+  {id:'held',status:'needs_review',employer_hold:{message:'Limit'}},
+  {id:'unknown',status:'needs_review'},
+  {id:'awaiting',status:'local_browser',local_attempt_at:'y',last_message:'Ready to submit'},
+  {id:'done',status:'submitted',evidence:{confirmed:true}},
+  {id:'interview',status:'interview'},
+  {id:'active',status:'queued'},
+ ];
+ w.fixtureJobs=jobs;assert.equal(w.eval('preparationStage(fixtureJobs[0])'),'ready');assert.equal(w.eval('preparationStage(fixtureJobs[5])'),'awaiting');assert.equal(w.eval('preparationStage(fixtureJobs[6])'),null);
+ const board=w.eval('renderPreparationSummary(fixtureJobs.concat(fixtureJobs[0]))');w.document.querySelector('#workspace').prepend(board);
+ for(const stage of ['ready','answers','employer','held','review'])assert.equal(board.querySelector('[data-preparation='+stage+'] strong').textContent,'1');
+ assert(board.textContent.includes('Only employer receipts count'));
+ for(const j of jobs){const c=w.document.createElement('article');c.className='job';c.dataset.state=j.status;c.dataset.search='';w.fixtureJob=j;c.dataset.preparation=w.eval('preparationStage(fixtureJob)')||'';w.document.querySelector('#jobs').append(c);}
+ board.querySelector('[data-preparation=ready]').click();assert.equal([...w.document.querySelector('#jobs').children].filter(e=>!e.hidden).length,1);
+ assert.equal(w.document.querySelector('#jobs').firstChild.hidden,false);
+ w.close();
 });

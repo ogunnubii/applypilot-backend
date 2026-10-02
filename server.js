@@ -1,3 +1,4 @@
+import {installSavedRecovery,recoverSavedAnswers,savedRecoveryStatus} from './saved-answer-recovery.js';
 import {applicationLimit,employerHold,employerLimits,recordEmployerLimit} from './employer-limits.js';
 import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
 import {pipelineStatus,setPipeline,queueFoundApplications,queueEnabledPipelines} from './application-pipeline.js';
@@ -24,7 +25,9 @@ import {createServer} from 'node:http';import {randomUUID} from 'node:crypto';im
 import {parseBoards,parseIntent,profileSearchInstruction,runSearch,SEARCH_INTERVAL_SECONDS} from './discovery.js';
 import {resumeRoles,resumeText} from './resume.js';
 installNotifications(db);installLibrary(db);installDrafts(db);installResearch(db);db.exec('CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT)');
-installArchive(db);installContinuations(db);installPublicFill(db);installResumeEditor(db);
+installArchive(db);installContinuations(db);installPublicFill(db);installResumeEditor(db);installSavedRecovery(db);
+const savedRecoveryTick=()=>{try{recoverSavedAnswers(db);}catch(error){console.error('Saved-answer recovery:',error.message);}};
+const savedRecoveryTimer=setInterval(savedRecoveryTick,60000);savedRecoveryTimer.unref();setTimeout(savedRecoveryTick,2000).unref();
 const pipelineTimer=setInterval(()=>{try{queueEnabledPipelines(db);}catch(error){console.error('Application pipeline:',error.message);}},60000);pipelineTimer.unref();
 let publicFillBusy=false;
 async function publicFillTick(){if(publicFillBusy)return;publicFillBusy=true;try{await fillPendingPublicQuestions(db);}catch(error){console.error('Public answer drafting:',error.message);}finally{publicFillBusy=false;}}
@@ -68,9 +71,9 @@ if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-typ
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
-if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.5.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
+if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.6.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-01-company-cap-prepare-only',extensionVersion:'0.6.5',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-02-saved-answer-recovery',extensionVersion:'0.6.6',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(req));if(input.registration_code!==process.env.REGISTRATION_CODE)return send(res,403,{error:'Registration code required'});let email=text(input.email,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return send(res,400,{error:'Valid email required'});let id=randomUUID(),hash=hashPassword(input.password);try{db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(id,email,hash,now())}catch{return send(res,409,{error:'Account already exists'})}return send(res,201,{token:issueToken(id,input.remember===true)})}
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id,input.remember===true)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
@@ -96,6 +99,7 @@ const draftRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/draft-answer$/);
 if(draftRoute&&req.method==='POST'){try{const x=JSON.parse(await body(req));return send(res,200,await draftForJob(db,uid,draftRoute[1],x.question));}catch(e){return send(res,400,{error:e.message});}}
 const researchRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/research-answer$/);
 if(researchRoute&&req.method==='POST'){try{const x=JSON.parse(await body(req));return send(res,200,await researchForJob(db,uid,researchRoute[1],x.question));}catch(e){return send(res,400,{error:e.message});}}
+if(path==='/api/saved-answer-recovery'&&req.method==='GET')return send(res,200,savedRecoveryStatus(db,uid));
 if(path==='/api/answer-library'&&req.method==='GET')return send(res,200,{answers:db.prepare('SELECT a.*,j.company,j.title FROM answer_history a JOIN jobs j ON j.id=a.job_id WHERE a.user_id=? ORDER BY a.updated_at DESC LIMIT 500').all(uid).map(a=>({...a,canReuse:canReuse(a.question)}))});
 const libraryRoute=path.match(/^\/api\/answer-library\/([a-f0-9-]+)$/);
 if(libraryRoute&&['PUT','DELETE'].includes(req.method)){try{if(req.method==='DELETE')deleteLibrary(db,uid,libraryRoute[1]);else{const x=JSON.parse(await body(req));updateLibrary(db,uid,libraryRoute[1],x.answer,x.reuse===true);}return send(res,200,{ok:true});}catch(e){return send(res,400,{error:e.message});}}
@@ -259,7 +263,7 @@ if(localRoute){
  if(action==='attempt'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
   if(applicationLimit(x.before)){recordEmployerLimit(db,uid,j.id,x.before,{source:'Employer page observed by browser helper'});return send(res,409,{error:'Employer application limit reached. Other employers can continue.'});}
-  if(x.human!==true)return send(res,409,{error:'Review the employer form and click Submit yourself. Update the browser helper to 0.6.5 if it tried to submit automatically.'});
+  if(x.human!==true)return send(res,409,{error:'Review the employer form and click Submit yourself. Update the browser helper to 0.6.6 if it tried to submit automatically.'});
   const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
   if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
   if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});

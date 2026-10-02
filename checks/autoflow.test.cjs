@@ -145,7 +145,7 @@ test('local missing answers are saved without queuing a new attempt',async()=>{
  const job={id:'local',applicant_id:'p',company:'Example',title:'Engineer',status:'local_browser',local_phase:'blocked',challenge:'Local browser',required_fields_json:'["Preferred name","Required field","AI Policy for Application"]',answers_json:'{}'};
  w.renderMissingAnswers([job]);const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form'),input=form.querySelector('textarea');assert(!section.hidden);assert.equal(form.querySelectorAll('textarea').length,1);assert.equal(section.querySelector('details').open,false);input.value='Applicant';
  w.eval('refresh=async()=>{}');await form.onsubmit({preventDefault(){}});assert(requests.some(([url,method])=>url.endsWith('/answers')&&method==='PUT'));assert(!requests.some(([url])=>url.endsWith('/continue')));
- section.dataset.dirty='false';w.renderMissingAnswers([{...job,local_attempt_at:'2026-10-01'}]);assert(section.hidden,'attempted application must not re-enter the answer/resume flow');w.close();
+ section.dataset.dirty='false';w.renderMissingAnswers([{...job,local_attempt_at:'2026-10-01'}]);assert.equal(section.querySelector('form'),null,'attempted application must not re-enter the answer/resume flow');w.close();
 });
 
 test('dashboard resume rejects attempted applications and other origins',async()=>{
@@ -203,7 +203,7 @@ test('saving complete browser answers requests continuation, partial and protect
   w.renderMissingAnswers([{id:'j',applicant_id:'p',company:'Fixture',title:'Engineer',status:'local_browser',local_phase:'blocked',required_fields_json:JSON.stringify(questions),answers_json:'{}',local_attempt_at:attempted?'today':null}]);
   const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form');
   if(form){form.querySelector('textarea').value='Applicant';await form.onsubmit({preventDefault(){}});}
-  const result={requests,hidden:section.hidden};w.close();return result;
+  const result={requests,hidden:!section.querySelector('form')};w.close();return result;
  }
  let r=await scenario(['Preferred name']);assert(r.requests.some(([url,method])=>url.endsWith('/continuation')&&method==='POST'));assert(!r.requests.some(([url])=>url.endsWith('/continue')||url.endsWith('/attempt')));
  for(const questions of [['Preferred name','Unknown fact'],['Preferred name','AI policy']]){r=await scenario(questions);assert(!r.requests.some(([url])=>url.endsWith('/continuation')));}
@@ -373,7 +373,7 @@ test('ranked salary card is prominent and annual estimates remain explicit',asyn
  w.eval("document.querySelector('#workspace').hidden=false");
  const metadata={available:true,strong:true,eligibility:{eligible:true},checkedAt:new Date().toISOString(),location:'Worldwide remote',reasons:['Strong role match'],pay:[{currency:'CAD',annualMin:187200,annualMax:228800,min:90,max:110,period:'hour',estimated:true,assumption:'2,080 paid hours'}]};
  w.eval('renderNextMatch('+JSON.stringify([{id:'match',title:'Cloud Engineer',company:'Example',url:'https://example.com/job',status:'saved',match_score:94,metadata}])+')');
- assert.equal(w.document.querySelector('#workspace').firstElementChild.id,'next-match');
+ assert.equal(w.document.querySelector('#next-match').parentElement.id,'workspace-tools-body');
  assert(w.document.querySelector('#next-match').textContent.includes('CAD 187,200–228,800 / year · estimate'));
  assert(w.document.querySelector('#next-match').textContent.includes('2,080 paid hours'));
  assert(w.document.querySelector('#next-match').textContent.includes('Apply to this match next'));w.close();
@@ -640,7 +640,7 @@ test('dashboard shows completion groups, filters them and enables all-found queu
  w.eval('renderOperations('+JSON.stringify(snapshot)+',{events:[]},'+JSON.stringify(jobs)+')');
  assert.equal(w.document.querySelectorAll('#completion-breakdown [data-completion]').length,3);assert.equal(w.document.querySelectorAll('#completion-breakdown li').length,3);
  const cards=w.document.querySelector('#jobs');for(const j of snapshot.applications){const card=w.document.createElement('article');card.dataset.completion=j.completion;card.dataset.search=j.id;cards.append(card);}
- w.document.querySelector('[data-completion=assisted]').click();assert.deepEqual([...cards.children].map(c=>c.hidden),[true,false,true]);
+ w.document.querySelector('#completion-breakdown [data-completion=assisted]').click();assert.deepEqual([...cards.children].map(c=>c.hidden),[true,false,true]);
  const calls=[];w.pipelineCalls=calls;w.eval("api=async(path,method,input)=>{pipelineCalls.push({path,method,input});return {result:{queued:7,held:1,duplicates:2}}};refresh=async()=>{};renderPipeline({enabled:false,found:10});");
  w.document.querySelector('#application-pipeline .primary').click();await new Promise(r=>setTimeout(r,10));
  assert.equal(calls[0].path,'/pipeline');assert.equal(calls[0].method,'PUT');assert.equal(calls[0].input.enabled,true);assert(w.document.querySelector('#notice').textContent.includes('7 queued'));
@@ -794,4 +794,57 @@ test('preparation stages expose actionable counts without treating ready forms a
  board.querySelector('[data-preparation=ready]').click();assert.equal([...w.document.querySelector('#jobs').children].filter(e=>!e.hidden).length,1);
  assert.equal(w.document.querySelector('#jobs').firstChild.hidden,false);
  w.close();
+});
+
+test('focused homepage shows pending jobs, keeps attempts separate and exposes unanswered forms without settings clutter',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
+ const job=(id,extra={})=>({id,applicant_id:'p',company:'Example '+id,title:'Platform Engineer '+id,execution_mode:'local',status:'needs_review',required_fields_json:'[]',url:'https://example.test/jobs/'+id,...extra});
+ const jobs=[job('question',{challenge:'Missing answers',required_fields_json:'["Describe your experience"]'}),job('ready',{challenge:'Ready to submit',handoff_available:1}),job('attempt',{challenge:'Unconfirmed submission'}),job('done',{status:'submitted'}),job('queued',{status:'queued'}),job('local',{status:'local_browser',local_phase:'blocked',last_message:'Ready to submit — all fields filled.'})];
+ const operations={totals:{confirmed:1,worked:3,awaiting:1},applications:[{id:'done',confirmed:true,worked:true},{id:'attempt',awaiting:true,attempted:true,worked:true}],checkedAt:new Date().toISOString()};
+ w.setInterval=()=>0;w.HTMLElement.prototype.scrollIntoView=()=>{};const calls=[];
+ w.fetch=async(url,options={})=>{calls.push([String(url),options.method]);const p=new URL(url,'https://example.test').pathname;
+ const data=p==='/api/jobs'?{jobs}:p==='/api/operations'?operations:p==='/api/status'?{workerOnline:true}:p==='/api/application-history'?{records:[{id:'ext',company:'Elsewhere',title:'SRE',status:'interview'}]}:p==='/api/continuations'?{requests:[]}:p==='/api/pipeline'?{enabled:true,found:0}:p==='/api/employer-limits'?{limits:[]}:p==='/api/searches'?{searches:[]}:p==='/api/work-focus'?{enabled:false}:p==='/api/activity'?{events:[]}:{};return {ok:true,json:async()=>data};};
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);await w.refresh(true);await new Promise(r=>setTimeout(r,30));
+ const $=s=>w.document.querySelector(s),visible=()=>[...$('#jobs').children].filter(c=>!c.hidden).map(c=>c.id);
+ assert.deepEqual(visible().sort(),['job-local','job-question','job-queued','job-ready']);
+ assert.equal($('#jobs').firstElementChild.id,'external-ext');assert.equal($('#job-ready').hidden,false);
+ assert.equal($('#home-summary [data-home-filter="pending"] strong').textContent,'4');
+ assert.equal($('#home-summary [data-home-filter="prep-ready"] strong').textContent,'2');
+ assert.equal($('#home-summary [data-home-filter="receipt"] strong').textContent,'1');
+ assert.equal($('#home-summary [data-home-filter="awaiting"] strong').textContent,'1');
+ assert.equal($('#home-summary [data-home-filter="interview"] strong').textContent,'1');
+ assert.equal($('#workspace-tools').open,false);assert.equal($('#interview-panel').open,false);
+ for(const id of ['operations','next-match','application-pipeline','employer-limits','browser-readiness','work-focus','discovery-status','blocker-notifications'])assert.equal($('#'+id).parentElement.id,'workspace-tools-body',id);
+ assert.equal($('#career-overview').parentElement.id,'interview-panel-body');assert.equal($('#ai-status').parentElement.id,'ai-status-slot');assert.equal($('#ai-status .ai-details').open,false);
+ assert.equal($('#missing-answers').querySelector('form').closest('details'),null,'unanswered form must be immediately visible');
+ const input=$('#missing-answers textarea');input.value='My unfinished answer';input.dispatchEvent(new w.Event('input',{bubbles:true}));
+ await w.refresh();assert.equal($('#missing-answers textarea'),input);assert.equal(input.value,'My unfinished answer');
+ $('#home-summary [data-home-filter="awaiting"]').click();assert.deepEqual(visible(),['job-attempt']);
+ $('#home-summary [data-home-filter="prep-ready"]').click();assert.deepEqual(visible().sort(),['job-local','job-ready']);
+ $('#home-summary [data-home-filter="receipt"]').click();assert.deepEqual(visible(),['job-done']);
+ $('a[data-open-panel="interview-panel"]').click();assert.equal($('#interview-panel').open,true);
+ assert(!calls.some(([url,method])=>method&&method!=='GET'),'refresh and filters must not change applications or open handoffs');
+ assert.equal(w.pendingSubmission(job('stale-ready',{challenge:'Ready to submit',local_attempt_at:'2026-10-01'})),false);
+ assert.equal(w.pendingSubmission(job('in-progress',{challenge:'Submission in progress'})),false);
+ w.renderHomeSummary(null,jobs,[]);assert.equal($('#home-summary [data-home-filter="receipt"] strong').textContent,'—','unavailable totals are not zero');
+ w.close();
+});
+
+test('Gemini accepts cited newline-separated claims and retries incomplete citations once without accepting uncited text',async()=>{
+ const assert=require('node:assert/strict'),source=sources['google-research.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
+ const {researchAnswer}=new Function('isIP','Buffer','AbortSignal',source+';return {researchAnswer};')(require('node:net').isIP,Buffer,AbortSignal);
+ const url='https://job-boards.greenhouse.io/example/jobs/1234';let calls=0,mode='lines';
+ const claims=['Maintain infrastructure','Investigate production incidents'],intro='Uncited heading\n',ending='\nUnsupported closing sentence.';
+ const options={question:'What are the responsibilities of this role?',job:{url},env:{GEMINI_API_KEY:'fixture-only'},fetchImpl:async(endpoint,request)=>{
+  calls++;const body=JSON.parse(request.body),input=JSON.parse(body.input);assert.equal(input.publicJobUrl,url);assert.equal(body.store,false);assert.deepEqual(body.tools,[{type:'url_context'}]);
+  if(mode==='http')return {ok:false,status:429};
+  const text=mode==='lines'?intro+claims.join('\n')+ending:'Maintain reliable infrastructure.';
+  const annotations=mode==='lines'?claims.map((claim,i)=>({type:'url_citation',url,start_index:Buffer.byteLength(intro+(i?claims[0]+'\n':'')),end_index:Buffer.byteLength(intro+(i?claims[0]+'\n':'')+claim)})):mode==='retry'&&calls===2?[{type:'url_citation',url,start_index:0,end_index:Buffer.byteLength(text)}]:[];
+  if(calls===2)assert(input.task.includes('one short, complete factual sentence'));
+  return{ok:true,json:async()=>({status:'completed',steps:[{type:'url_context_call',id:'one',arguments:{urls:[url]}},{type:'url_context_result',call_id:'one',result:[{url,status:'success'}]},{type:'model_output',content:[{type:'text',text,annotations}]}]})};
+ }};
+ let result=await researchAnswer(options);assert.equal(result.answer,claims.join('\n'));assert.equal(calls,1);assert(!result.answer.includes('Uncited'));assert(!result.answer.includes('Unsupported'));
+ calls=0;mode='retry';result=await researchAnswer(options);assert.equal(result.answer,'Maintain reliable infrastructure.');assert.equal(calls,2);
+ calls=0;mode='uncited';await assert.rejects(researchAnswer(options),/No answer was filled/);assert.equal(calls,2);
+ calls=0;mode='http';await assert.rejects(researchAnswer(options),/quota limit/);assert.equal(calls,1);
 });

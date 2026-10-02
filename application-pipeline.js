@@ -1,3 +1,4 @@
+import {employerHold} from './employer-limits.js';
 import {priorApplication} from './application-dedup.js';
 import {companyKey,historyKey} from './application-history.js';
 import {supported} from './local-policy.js';
@@ -25,7 +26,8 @@ export function queueFoundApplications(db,userId,{applicantId=null}={}){
    else if(duplicate){
     db.prepare("UPDATE jobs SET status='duplicate',challenge='Already applied or in progress',updated_at=? WHERE id=? AND status='saved'").run(at,job.id);
     record(job,'duplicate','Prior application retained; repeat application excluded from the pipeline.');result.duplicates++;continue;
-   }else if(job.challenge)reason='Resolve the existing application blocker: '+job.challenge;
+   }else if(employerHold(db,job))reason=employerHold(db,job).message;
+   else if(job.challenge)reason='Resolve the existing application blocker: '+job.challenge;
    else if(!profile?.consent||!profile.email||!profile.resume_path)reason='Profile consent, email and a resume are required before application preparation.';
    else if(metadataFor(job).available===false)reason='A current employer posting could not be verified. Check that the application link is still available.';
    else if(!supported(job.url))reason='A supported direct employer application link is required.';

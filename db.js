@@ -1,3 +1,4 @@
+import {installEmployerLimits} from './employer-limits.js';
 import {installPipeline} from './application-pipeline.js';
 import {installRepeatGuard} from './application-dedup.js';
 import {installHistory} from './application-history.js';
@@ -68,3 +69,5 @@ for(const [table,name,type] of [['jobs','job_metadata_json',"TEXT NOT NULL DEFAU
 installRepeatGuard(db);
 
 installPipeline(db);
+
+installEmployerLimits(db);

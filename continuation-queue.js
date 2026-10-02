@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {canCapture} from './answer-library.js';
-const humanSteps=new Set(['CAPTCHA','Sign-in','Unconfirmed submission','Submission in progress','Sensitive action','Upload needs review']);
+const humanSteps=new Set(['Employer application limit','CAPTCHA','Sign-in','Unconfirmed submission','Submission in progress','Sensitive action','Upload needs review']);
 const parse=(value,fallback)=>{try{return JSON.parse(value||'')??fallback;}catch{return fallback;}};
 export function continuationProblem(job){
  if(!job)return 'Application not found';

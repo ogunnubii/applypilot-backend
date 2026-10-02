@@ -1,7 +1,7 @@
 import {receipt} from './local-policy.js';
 export function applicationEvidence(job,now=Date.now()){
  const text=String(job.confirmation||'');
- const placeholder=/placeholder|example\.com|github\.com|not (?:yet )?(?:submitted|confirmed)|unconfirmed|simulat|test receipt/i.test(text);
+ const placeholder=/reached your application limit|application limit (?:has been )?reached|could(?:n['’]t| not) submit your application|placeholder|example\.com|github\.com|not (?:yet )?(?:submitted|confirmed)|unconfirmed|simulat|test receipt/i.test(text);
  const confirmed=!!job.receipt_event&&!placeholder&&!!receipt(text);
  const completion=confirmed?(job.help_event?'assisted':job.tracking_event&&job.automatic_event&&!job.review_event?'automatic':'unknown'):null;
  const attempted=!!job.local_attempt_at||!!job.attempt_event;

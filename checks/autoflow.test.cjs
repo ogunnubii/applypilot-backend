@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
-const sources=Object.fromEntries(["application-pipeline.js","application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
+const sources=Object.fromEntries(["employer-limits.js","application-pipeline.js","application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
 test("routine submissions and receipt safety",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const wait=()=>new Promise(r=>setTimeout(r,35));
@@ -293,15 +293,16 @@ test('hosted worker stops an HTTP 503 before inspecting or submitting a form and
  const page={setDefaultTimeout(){},goto:async()=>{gotoCount++;return {status:()=>503};},waitForTimeout:async()=>{},locator(selector){if(selector==='body')return {innerText:async()=>'Error 503\nService Unavailable'};if(selector==='form,input:visible,textarea:visible,select:visible')return {count:async()=>0};throw Error('Must not inspect/fill an error page: '+selector);},isClosed:()=>false};
  const context={newPage:async()=>page,close:async()=>{closed=true;}};const browser={newContext:async()=>context};
  const code=sources['worker.js'].replace(/import\s+[^;]+;/g,'').replace(/main\(\)\.catch[\s\S]*$/,'');
- const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,ctx.ApplyPilotPolicy.employerPageIssue);
+ const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,ctx.ApplyPilotPolicy.employerPageIssue,()=>null);
  await run({id:'j',user_id:'u',applicant_id:'p',url:'https://job-boards.greenhouse.io/example/jobs/42'},browser);
  assert.equal(gotoCount,1);assert.equal(status,'needs_review');assert.equal(challenge,'Employer site unavailable');assert(closed);
  assert(events.some(e=>e.message.includes('HTTP 503')));assert(!events.some(e=>['filled','submitted'].includes(e.type)));
 });
 
 function pureModule(file,bindings={}){
+ if(file!=='employer-limits.js')bindings={employerHold:()=>null,...bindings};
  const code=sources[file].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const|let|class)/g,'');
- return new Function(...Object.keys(bindings),code+';return {installPipeline:typeof installPipeline==="function"?installPipeline:null,pipelineEnabled:typeof pipelineEnabled==="function"?pipelineEnabled:null,queueFoundApplications:typeof queueFoundApplications==="function"?queueFoundApplications:null,setPipeline:typeof setPipeline==="function"?setPipeline:null,pipelineStatus:typeof pipelineStatus==="function"?pipelineStatus:null,sameApplication:typeof sameApplication==="function"?sameApplication:null,priorApplication:typeof priorApplication==="function"?priorApplication:null,installRepeatGuard:typeof installRepeatGuard==="function"?installRepeatGuard:null,compensation:typeof compensation==="function"?compensation:null,jobIntelligence:typeof jobIntelligence==="function"?jobIntelligence:null,nextApplication:typeof nextApplication==="function"?nextApplication:null,nextApplicationEligible:typeof nextApplicationEligible==="function"?nextApplicationEligible:null,sourceBatch:typeof sourceBatch==="function"?sourceBatch:null,cachedJSON:typeof cachedJSON==="function"?cachedJSON:null,runSearch:typeof runSearch==="function"?runSearch:null};')(...Object.values(bindings));
+ return new Function(...Object.keys(bindings),code+';return {employerKey:typeof employerKey==="function"?employerKey:null,applicationLimit:typeof applicationLimit==="function"?applicationLimit:null,installEmployerLimits:typeof installEmployerLimits==="function"?installEmployerLimits:null,employerHold:typeof employerHold==="function"?employerHold:null,recordEmployerLimit:typeof recordEmployerLimit==="function"?recordEmployerLimit:null,employerLimits:typeof employerLimits==="function"?employerLimits:null,installPipeline:typeof installPipeline==="function"?installPipeline:null,pipelineEnabled:typeof pipelineEnabled==="function"?pipelineEnabled:null,queueFoundApplications:typeof queueFoundApplications==="function"?queueFoundApplications:null,setPipeline:typeof setPipeline==="function"?setPipeline:null,pipelineStatus:typeof pipelineStatus==="function"?pipelineStatus:null,sameApplication:typeof sameApplication==="function"?sameApplication:null,priorApplication:typeof priorApplication==="function"?priorApplication:null,installRepeatGuard:typeof installRepeatGuard==="function"?installRepeatGuard:null,compensation:typeof compensation==="function"?compensation:null,jobIntelligence:typeof jobIntelligence==="function"?jobIntelligence:null,nextApplication:typeof nextApplication==="function"?nextApplication:null,nextApplicationEligible:typeof nextApplicationEligible==="function"?nextApplicationEligible:null,sourceBatch:typeof sourceBatch==="function"?sourceBatch:null,cachedJSON:typeof cachedJSON==="function"?cachedJSON:null,runSearch:typeof runSearch==="function"?runSearch:null};')(...Object.values(bindings));
 }
 test('posted pay preserves currency, period, pay tiers and conservative unknowns',()=>{
  const assert=require('node:assert/strict'),{compensation}=pureModule('job-intelligence.js');
@@ -637,4 +638,55 @@ test('completion groups next application reflects the actual approved queue even
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
  const jobs=[{id:'saved',title:'High saved',company:'A',status:'saved',match_score:99,metadata:{available:true,strong:true,eligibility:{eligible:true},checkedAt:new Date().toISOString()}},{id:'queued',title:'Actual next queued',company:'B',status:'queued',match_score:70,url:'https://jobs.lever.co/b/123'},{id:'attempted',title:'Attempted',company:'C',status:'queued',match_score:100,local_attempt_at:'now'}];
  w.eval('renderNextMatch('+JSON.stringify(jobs)+')');const text=w.document.querySelector('#next-match').textContent;assert(text.includes('Actual next queued'));assert(text.includes('Queued for your application worker'));assert(!text.includes('High saved'));assert(!text.includes('Attempted'));w.close();
+});
+
+const ashbyLimitMessage="We couldn't submit your application. Thank you for considering Ashby! You have reached your application limit. To ensure the best possible candidate experience in light of high application volumes we want to ensure candidates apply to roles that are the best fit for them. To ensure that we limit applications to a total of 3 over the span of 60 days.";
+test('employer limit recognizes the refusal and scopes Ashby by employer board, not ATS host',()=>{
+ const assert=require('node:assert/strict'),{applicationLimit,employerKey}=pureModule('employer-limits.js');
+ const limit=applicationLimit(ashbyLimitMessage);assert.equal(limit.count,3);assert.equal(limit.days,60);
+ assert.equal(applicationLimit('We limit applications to 3 over 60 days. Join our team.'),null);
+ assert.equal(applicationLimit('Your application was successfully submitted.'),null);
+ assert.equal(employerKey({company:'Ashby',url:'https://jobs.ashbyhq.com/ashby/a/application'}),employerKey({company:'ashby',url:'https://jobs.ashbyhq.com/ashby/b'}));
+ assert.notEqual(employerKey({company:'Ashby',url:'https://jobs.ashbyhq.com/ashby/a'}),employerKey({company:'Other',url:'https://jobs.ashbyhq.com/other/a'}));
+});
+test('employer hold blocks only the affected applicant and employer while preserving receipts and attempts',()=>{
+ const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(':memory:'),m=pureModule('employer-limits.js');
+ db.exec("CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,company TEXT,title TEXT,url TEXT,status TEXT,local_phase TEXT,challenge TEXT,local_attempt_at TEXT,confirmation TEXT,updated_at TEXT);CREATE TABLE events(id INTEGER PRIMARY KEY,job_id TEXT,at TEXT,type TEXT,message TEXT)");
+ m.installEmployerLimits(db);
+ const add=(id,{user='u',applicant='p',board='ashby',status='saved',attempt=null,receipt=null}={})=>db.prepare('INSERT INTO jobs(id,user_id,applicant_id,company,title,url,status,local_phase,local_attempt_at,confirmation) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,user,applicant,board,'Engineer','https://jobs.ashbyhq.com/'+board+'/'+id,status,'ready',attempt,receipt);
+ add('failed',{status:'local_browser',attempt:'earlier'});add('queued',{status:'queued'});add('receipt',{status:'submitted',receipt:'Thank you for applying'});add('other-employer',{board:'baseten'});add('other-user',{user:'v'});add('other-applicant',{applicant:'q'});
+ const at='2099-01-01T00:00:00.000Z',result=m.recordEmployerLimit(db,'u','failed',ashbyLimitMessage,{at});assert.equal(result.held,2);assert.equal(result.holdUntil,'2099-03-02T00:00:00.000Z');
+ const row=id=>db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
+ assert.equal(row('failed').local_attempt_at,'earlier');assert.equal(row('failed').local_phase,'blocked');assert.equal(row('receipt').status,'submitted');assert.equal(row('receipt').confirmation,'Thank you for applying');
+ assert.equal(row('queued').status,'needs_review');for(const id of ['other-employer','other-user','other-applicant']){assert.equal(row(id).status,'saved');db.prepare("UPDATE jobs SET status='queued' WHERE id=?").run(id);}
+ assert.throws(()=>db.prepare("UPDATE jobs SET status='queued' WHERE id='queued'").run(),/Employer application limit/);
+ add('future');assert(m.employerHold(db,row('future'),at));assert.throws(()=>db.prepare("UPDATE jobs SET status='queued' WHERE id='future'").run(),/Employer application limit/);
+ const repeat=m.recordEmployerLimit(db,'u','failed',ashbyLimitMessage,{at:'2099-01-02T00:00:00.000Z'});assert.equal(repeat.holdUntil,result.holdUntil);
+ assert.equal(m.employerHold(db,row('failed'),'2099-03-03T00:00:00.000Z'),null);
+ assert.throws(()=>m.recordEmployerLimit(db,'v','failed',ashbyLimitMessage),/not found/);
+ assert.throws(()=>m.recordEmployerLimit(db,'u','failed','ordinary job description'),/Paste the employer/);
+ db.close();
+});
+test('dashboard reports an employer limit using the selected owned job and labels the conservative date',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.com'}),w=dom.window;w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
+ w.fixtureMessage=ashbyLimitMessage;w.calls=[];w.eval("api=async(path,method,data)=>{calls.push({path,method,data});return {company:'Ashby',held:3}};refresh=async()=>{};renderEmployerLimits({limits:[{company:'Ashby',message:'Employer limit reached',hold_until:'2099-03-02T00:00:00Z'}]},[{id:'ashby-job',company:'Ashby',title:'Engineer',status:'local_browser'}])");
+ assert(w.document.querySelector('#employer-limits').textContent.includes('exact reset date is not known'));
+ const form=w.document.querySelector('#employer-limits form');form.querySelector('select').value='ashby-job';form.querySelector('textarea').value=ashbyLimitMessage;await form.onsubmit({preventDefault(){}});
+ assert.equal(w.calls[0].path,'/employer-limits');assert.equal(w.calls[0].method,'POST');assert.equal(w.calls[0].data.jobId,'ashby-job');assert.equal(w.calls[0].data.message,ashbyLimitMessage);assert(w.document.querySelector('#notice').textContent.includes('3 pending applications paused'));w.close();
+});
+test('an employer limit refusal is never counted as a receipt even with thank-you wording',async()=>{
+ const assert=require('node:assert/strict');
+ const policy='data:text/javascript;base64,'+Buffer.from(sources['extension/policy.js']+'\nexport const receipt=globalThis.ApplyPilotPolicy.receipt;').toString('base64');
+ const {applicationEvidence}=await import('data:text/javascript;base64,'+Buffer.from(sources['operation-evidence.js'].replace("'./local-policy.js'",JSON.stringify(policy))).toString('base64'));
+ const evidence=applicationEvidence({status:'local_browser',receipt_event:1,local_attempt_at:'earlier',confirmation:'Thank you for your application. '+ashbyLimitMessage});assert.equal(evidence.confirmed,false);assert.equal(evidence.completion,null);assert.equal(evidence.awaiting,true);
+});
+test('hosted worker records an explicit employer application limit without filling or reporting success',async()=>{
+ const assert=require('node:assert/strict');let status='running',challenge=null,closed=false,recorded=0;const events=[],m=pureModule('employer-limits.js');
+ const db={prepare(sql){return {get(){if(sql.includes('FROM applicants'))return {id:'p',user_id:'u',consent:1,email:'applicant@example.test',resume_path:'fixture.pdf',answers_json:'{}'};return {status,challenge};},run(...values){if(sql.startsWith('UPDATE jobs SET status=')){status=values[0];challenge=values[1];}}};}};
+ const page={setDefaultTimeout(){},goto:async()=>({status:()=>200}),waitForTimeout:async()=>{},locator(selector){if(selector==='body')return {innerText:async()=>ashbyLimitMessage};if(selector==='form,input:visible,textarea:visible,select:visible')return {count:async()=>0};throw Error('Limit page must not be filled: '+selector);},isClosed:()=>false};
+ const context={newPage:async()=>page,close:async()=>{closed=true;}},browser={newContext:async()=>context};
+ const code=sources['worker.js'].replace(/import\s+[^;]+;/g,'').replace(/main\(\)\.catch[\s\S]*$/,'');
+ const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold','applicationLimit','recordEmployerLimit',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,()=>null,()=>null,m.applicationLimit,()=>{recorded++;});
+ await run({id:'j',user_id:'u',applicant_id:'p',url:'https://jobs.ashbyhq.com/ashby/j'},browser);
+ assert.equal(recorded,1);assert.equal(status,'needs_review');assert.equal(challenge,'Employer application limit');assert(closed);assert(!events.some(e=>['filled','submitted','submission_started'].includes(e.type)));
 });

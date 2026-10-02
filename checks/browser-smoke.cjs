@@ -12,9 +12,13 @@ const {chromium}=require('playwright');const fs=require('node:fs');const path=re
   });
   await page.goto('https://jobs.ashbyhq.com/fixture/job-123');
   for(const name of ['policy.js','content.js'])await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../extension',name),'utf8')});
+  await page.waitForFunction(()=>window.messages.some(m=>m.action==='progress'&&String(m.message).startsWith('Ready to submit')),{},{timeout:15000}).catch(async e=>{console.error(await page.evaluate(()=>({messages:window.messages,text:document.body.innerText})));throw e;});
+  assert.equal(await page.evaluate(()=>window.clicks||0),0);
+  assert.equal(await page.evaluate(()=>window.messages.filter(m=>m.action==='attempt').length),0);
+  await page.click('#submit');
   await page.waitForFunction(()=>window.messages.some(m=>m.action==='receipt'),{},{timeout:15000}).catch(async e=>{console.error(await page.evaluate(()=>({messages:window.messages,text:document.body.innerText})));throw e;});
   assert.equal(await page.evaluate(()=>window.clicks),1);
   assert.equal(await page.evaluate(()=>window.messages.filter(m=>m.action==='attempt').length),1);
-  console.log('PASS: real Chromium form events, multi-page flow, PDF attachment, durable intent before submit, single click and receipt detection');
+  console.log('PASS: real Chromium multi-page fill stops before Submit, then records one trusted manual click before receipt detection');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

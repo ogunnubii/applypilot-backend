@@ -6,6 +6,8 @@ test('ATS allowlist and job identity reject lookalikes and other applications',(
  for(const url of ['https://jobs.ashbyhq.com/example/123','https://jobs.smartrecruiters.com/example/123','https://apply.workable.com/example/j/123','https://example.bamboohr.com/careers/123','https://example.recruitee.com/o/123','https://example.wd1.myworkdayjobs.com/en-US/jobs/job/123'])assert(supported(url));
  for(const url of ['https://lever.co.evil.test/x','http://jobs.lever.co/x','https://user:pass@jobs.lever.co/x','https://jobs.lever.co:444/x','not a url'])assert(!supported(url));
  assert(sameApplication('https://jobs.lever.co/org/123/apply?source=feed','https://jobs.lever.co/org/123'));
+ assert(sameApplication('https://boards.greenhouse.io/org/jobs/123?lang=fr-CA','https://job-boards.greenhouse.io/org/jobs/123?locale=en-US'));
+ assert(sameApplication('https://example.wd1.myworkdayjobs.com/fr-CA/jobs/job/123?source=feed','https://example.wd1.myworkdayjobs.com/en-US/jobs/job/123'));
  assert(!sameApplication('https://jobs.lever.co/org/123','https://jobs.lever.co/org/456'));
  assert(!sameApplication('https://example.bamboohr.com/careers?jobId=1','https://example.bamboohr.com/careers?jobId=2'));
 });

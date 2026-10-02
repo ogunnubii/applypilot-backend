@@ -21,7 +21,7 @@ const autocompleteKind=field=>AUTOCOMPLETE[String(field?.autocomplete||'').toLow
 
 export function hostedFieldKind(field){
  const parts=textParts(field),context=policyText(parts.join(' '));if(protectedHostedQuestion(context)||THIRD_PARTY_CONTACT.test(context))return null;
- const kinds=parts.map(value=>{const spaced=value.replace(/([a-z\d])([A-Z])/g,'$1 $2'),direct=fieldKind(spaced);if(direct)return direct;return fieldKind(spaced.replace(/^(?:applicant|candidate|user|profile)\s+/i,''));}).filter(Boolean);
+ const kinds=parts.map(value=>{const spaced=value.replace(/([a-z\d])([A-Z])/g,'$1 $2'),direct=fieldKind(value)||fieldKind(spaced);if(direct)return direct;return fieldKind(spaced.replace(/^(?:applicant|candidate|user|profile)\s+/i,''));}).filter(Boolean);
  const token=autocompleteKind(field);if(token)kinds.push(token);
  const type=String(field?.type||'').toLowerCase();if(type==='email')kinds.push('email');if(type==='tel')kinds.push('phone');
  const unique=[...new Set(kinds)];return unique.length===1&&PROFILE_KINDS.has(unique[0])?unique[0]:null;
@@ -59,6 +59,27 @@ export function approvedHostedRadioIndex(options,answers={}){
  const answer=savedAnswer(options[0].question,answers);if(answer===null)return -1;
  const matches=(options||[]).map((option,index)=>({option,index})).filter(({option})=>normalize(option.label)===normalize(answer));
  return matches.length===1?matches[0].index:-1;
+}
+
+export function approvedHostedCheckbox(question,answers={}){
+ const context=policyText(question);if(!context||GENERIC_QUESTION.test(context)||protectedHostedQuestion(context))return null;
+ const answer=savedAnswer(question,answers);if(answer===null||answer===undefined)return null;
+ const normalized=normalize(String(answer));
+ if(['yes','true','checked','check','on','1'].includes(normalized))return true;
+ if(['no','false','unchecked','off','0'].includes(normalized))return false;
+ return null;
+}
+
+// A portal-rendered combobox may put its options anywhere in the document.
+// Prefer the list explicitly named by aria-controls/aria-owns. When the
+// control supplies neither relationship, accept only options that became
+// visible after the control opened and that belong to one option container.
+export function scopedHostedComboboxOptions(options,{scopeIds=[],opened=false}={}){
+ if(!opened)return [];
+ const ids=[...new Set((scopeIds||[]).map(String).filter(Boolean))];
+ if(ids.length)return (options||[]).filter(option=>(option.scopeIds||[]).some(id=>ids.includes(String(id))));
+ const fresh=(options||[]).filter(option=>option.newlyVisible&&option.group!==null&&option.group!==undefined&&String(option.group)!=='');
+ return new Set(fresh.map(option=>String(option.group))).size===1?fresh:[];
 }
 
 export function requiredUnansweredRadioGroups(radios=[]){

@@ -1,7 +1,8 @@
-import {installEmployerLimits} from './employer-limits.js';
+import {employerKey,installEmployerLimits} from './employer-limits.js';
+import {installCompanyApplicationPolicy,registerCompanyApplicationPolicyFunctions} from './company-application-policy.js';
 import {installPipeline} from './application-pipeline.js';
-import {installRepeatGuard} from './application-dedup.js';
-import {installHistory} from './application-history.js';
+import {installRepeatGuard,sameApplication} from './application-dedup.js';
+import {companyKey,historyKey,installHistory} from './application-history.js';
 import {canonicalJobURL} from './form-policy.js';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync} from 'node:fs';
@@ -16,6 +17,13 @@ CREATE TABLE IF NOT EXISTS searches(id TEXT PRIMARY KEY,user_id TEXT NOT NULL RE
 CREATE INDEX IF NOT EXISTS searches_due ON searches(enabled,last_run);
 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT NOT NULL REFERENCES jobs(id),at TEXT NOT NULL,type TEXT NOT NULL,message TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(status,created_at);CREATE INDEX IF NOT EXISTS events_job ON events(job_id,id);`);
+// SQLite triggers persist across restarts and can fire during startup
+// migrations, so restore their connection-local functions before any updates.
+registerCompanyApplicationPolicyFunctions(db);
+db.function('application_employer_key',{deterministic:true},(company,url)=>employerKey({company,url}));
+db.function('same_application',{deterministic:true},(ac,at,au,bc,bt,bu)=>Number(sameApplication({company:ac,title:at,url:au},{company:bc,title:bt,url:bu})));
+db.function('history_company',{deterministic:true},companyKey);
+db.function('history_title',{deterministic:true},historyKey);
 if(!db.prepare('PRAGMA table_info(searches)').all().some(c=>c.name==='auto_generated'))db.exec('ALTER TABLE searches ADD COLUMN auto_generated INTEGER NOT NULL DEFAULT 0');
 export function event(id,type,message){db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(id,new Date().toISOString(),type,String(message).slice(0,800))}
 export const now=()=>new Date().toISOString();
@@ -71,3 +79,5 @@ installRepeatGuard(db);
 installPipeline(db);
 
 installEmployerLimits(db);
+
+installCompanyApplicationPolicy(db);

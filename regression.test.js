@@ -17,7 +17,7 @@ test('Discovery queues only eligible direct matches and deduplicates repeated ru
  db.prepare('INSERT INTO users VALUES(?,?,?,?)').run('u','test@example.com','unused',now());
  db.prepare('INSERT INTO applicants(id,user_id,name,email,resume_path,consent,created_at) VALUES(?,?,?,?,?,?,?)').run('a','u','Tester','test@example.com','/fake.pdf',1,now());
  db.prepare('INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,created_at) VALUES(?,?,?,?,?,?,?)').run('s','u','a','DevOps Engineer; Canada','["https://jobs.lever.co/example"]',1,now());
- const original=global.fetch;global.fetch=async url=>({ok:true,headers:new Headers(),text:async()=>JSON.stringify(String(url).includes('api.lever.co')?[{text:'Site Reliability Engineer',categories:{location:'Toronto'},applyUrl:'https://jobs.lever.co/example/abc/apply'}]:String(url).includes('jobicy')?{jobs:[{jobTitle:'DevOps Engineer',companyName:'Aggregator fixture',jobGeo:'Canada',url:'https://jobicy.com/jobs/123-fixture'}]}:{data:[]})});
+ const original=global.fetch;global.fetch=async url=>({ok:true,headers:new Headers(),text:async()=>JSON.stringify(String(url).includes('api.lever.co')?[{text:'Site Reliability Engineer',categories:{location:'Toronto'},descriptionPlain:'B2B contract engagement',applyUrl:'https://jobs.lever.co/example/abc/apply'}]:String(url).includes('jobicy')?{jobs:[{jobTitle:'DevOps Engineer',companyName:'Aggregator fixture',jobGeo:'Canada',url:'https://jobicy.com/jobs/123-fixture'}]}:{data:[]})});
  try{const first=await runSearch('s','u');assert.equal(first.queued,1);assert.equal(first.added,1);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE company=?').get('Aggregator fixture').n,0);assert.equal((await runSearch('s','u')).added,0);db.prepare("UPDATE jobs SET status='saved' WHERE applicant_id='a'").run();assert.equal((await runSearch('s','u')).queued,1);assert.equal(JSON.parse(db.prepare("SELECT last_result_json FROM searches WHERE id='s'").get().last_result_json).queued,1);}finally{global.fetch=original}
 });
 test('Ashby discovery saves comparable roles but queues only strong profile matches',async()=>{
@@ -25,8 +25,8 @@ test('Ashby discovery saves comparable roles but queues only strong profile matc
  db.prepare('INSERT INTO applicants(id,user_id,name,email,location,focus,resume_path,consent,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run('a2','u2','Second','second@example.com','Toronto, Ontario','DevOps Engineer, Cloud Support Engineer','/fake.pdf',1,now());
  db.prepare('INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,created_at) VALUES(?,?,?,?,?,?,?)').run('s2','u2','a2','DevOps Engineer; Toronto, remote Canada','["https://jobs.ashbyhq.com/fixture"]',1,now());
  const original=global.fetch;global.fetch=async url=>({ok:true,headers:new Headers(),text:async()=>JSON.stringify(String(url).includes('/job-board/fixture')?{jobs:[
-  {title:'Cloud Support Engineer',location:'Toronto, Ontario',jobUrl:'https://jobs.ashbyhq.com/fixture/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'},
-  {title:'Senior Cloud Support Engineer',location:'Toronto, Ontario',jobUrl:'https://jobs.ashbyhq.com/fixture/bbbbbbbb-cccc-dddd-eeee-ffffffffffff'},
+  {title:'Cloud Support Engineer',location:'Toronto, Ontario',descriptionPlain:'B2B contract engagement',jobUrl:'https://jobs.ashbyhq.com/fixture/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'},
+  {title:'Senior Cloud Support Engineer',location:'Toronto, Ontario',descriptionPlain:'B2B contract engagement',jobUrl:'https://jobs.ashbyhq.com/fixture/bbbbbbbb-cccc-dddd-eeee-ffffffffffff'},
   {title:'Cloud Support Engineer',location:'Remote - United States only',isRemote:true,jobUrl:'https://jobs.ashbyhq.com/fixture/cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa'}
  ]}:String(url).includes('api.lever.co')?[]:String(url).includes('jobicy')?{jobs:[]}:String(url).includes('arbeitnow')?{data:[]}:{jobs:[]})});
  try{const result=await runSearch('s2','u2');assert.equal(result.added,2);assert.equal(result.strongMatches,1);assert.equal(result.queued,1);assert.deepEqual(db.prepare("SELECT status FROM jobs WHERE applicant_id='a2' ORDER BY title").all().map(row=>row.status),['queued','saved']);}finally{global.fetch=original}
@@ -174,9 +174,9 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   const continued=db.prepare('SELECT status,answers_json FROM jobs WHERE id=?').get(id);assert.equal(continued.status,'queued');assert.equal(JSON.parse(continued.answers_json).Question,'Answer');
   assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers,body:JSON.stringify({answers:{Question:'Changed'}})})).status,409);
   db.prepare("UPDATE jobs SET status='running' WHERE id=?").run(id);
-  assert.equal((await fetch(base+'/api/jobs/'+id+'/confirm',{method:'POST',headers,body:JSON.stringify({receipt:'Employer confirmation 1234'})})).status,409);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/confirm',{method:'POST',headers,body:JSON.stringify({receipt:'Your application was received. Confirmation 1234'})})).status,409);
   db.prepare("UPDATE jobs SET status='needs_review' WHERE id=?").run(id);
-  assert.equal((await fetch(base+'/api/jobs/'+id+'/confirm',{method:'POST',headers,body:JSON.stringify({receipt:'Employer confirmation 1234'})})).status,200);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/confirm',{method:'POST',headers,body:JSON.stringify({receipt:'Your application was received. Confirmation 1234'})})).status,200);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(id).status,'submitted');
 
   assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
@@ -196,6 +196,7 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({url:'https://jobs.lever.co/example/def',before:'I certify these statements'})})).status,409);
   const intent={url:'https://jobs.lever.co/example/def/apply',before:'Application form',human:true};
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({...intent,human:false})})).status,409);
+  assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({...intent,human:false,automatic:true})})).status,409);
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify(intent)})).status,200);
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify(intent)})).status,409);
   assert.equal((await (await fetch(endpoint+'claim',{method:'POST',headers,body:'{}'})).json()).attempted,true);
@@ -215,6 +216,8 @@ test('Canonical URLs collapse Lever apply aliases; upload selection rejects ambi
  assert.equal(canonicalJobURL('https://jobs.lever.co/newton/abc/apply?source=feed'),canonicalJobURL('https://jobs.lever.co/newton/abc'));
  assert.notEqual(canonicalJobURL('https://jobs.lever.co/newton/abc'),canonicalJobURL('https://jobs.lever.co/newton/def'));
  assert.equal(canonicalJobURL('https://jobs.ashbyhq.com/hopper/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/application?utm_source=test'),canonicalJobURL('https://jobs.ashbyhq.com/hopper/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
+ assert.equal(canonicalJobURL('https://boards.greenhouse.io/newton/jobs/123?lang=fr-CA'),canonicalJobURL('https://job-boards.greenhouse.io/newton/jobs/123?locale=en-US'));
+ assert.equal(canonicalJobURL('https://example.wd1.myworkdayjobs.com/fr-CA/jobs/job/123?source=feed'),canonicalJobURL('https://example.wd1.myworkdayjobs.com/en-US/jobs/job/123'));
  assert.equal(pickResumeField([{id:'resume'},{id:'cover letter'}]),0);
  assert.equal(pickResumeField([{label:'Resume'},{label:'Alternative resume'}]),-1);
  assert.equal(pickResumeField([{label:'Cover letter'}]),-1);
@@ -232,7 +235,7 @@ test('Radio choices require an exact approved question and unambiguous option',a
 
 test('Live handoff isolates owners, preserves context on resume and expires idle sessions',async()=>{
  const {Handoffs}=await import('./handoff.js');let time=0,closed=0,resumed=0,submitted=0,body='Application form';
- const page={isClosed:()=>false,locator:()=>({innerText:async()=>body}),frames:()=>[page],screenshot:async()=>Buffer.from('mock-image'),url:()=> 'https://jobs.lever.co/example/abc',keyboard:{insertText:async()=>{},press:async()=>{}},mouse:{click:async()=>{},wheel:async()=>{}},evaluate:async()=>false};
+ const page={isClosed:()=>false,locator:()=>({innerText:async()=>body}),frames:()=>[page],screenshot:async()=>Buffer.from('mock-image'),url:()=> 'https://jobs.lever.co/example/abc',keyboard:{insertText:async()=>{},press:async()=>{}},mouse:{click:async()=>{},wheel:async()=>{}},evaluate:async()=>({activeControl:{text:'Submit application',type:'submit'}})};
  const context={pages:()=>[page],close:async()=>{closed++}};
  const h=new Handoffs({clock:()=>time,onResume:async(j,s)=>{assert.equal(s.context,context);resumed++},onClose:()=>{},onSubmitted:()=>{submitted++},onPossibleSubmit:()=>{}});
  await h.hold({id:'job',user_id:'owner'},context,page);
@@ -243,19 +246,19 @@ test('Live handoff isolates owners, preserves context on resume and expires idle
  body='Application form';await h.hold({id:'job',user_id:'owner'},context,page);time=16*60*1000;await h.expire();assert.equal(h.sessions.size,0);assert.equal(closed,2);
 });
 
-test('Full handoff slots evict an idle browser instead of stopping queued work',async()=>{
+test('Full handoff slots preserve the existing browser and reject the newcomer',async()=>{
  const {Handoffs}=await import('./handoff.js');let closed=0;const events=[];
  const page={frames:()=>[page],url:()=> 'https://jobs.lever.co/example/one',locator:()=>({innerText:async()=> 'Form'})};
  const context={pages:()=>[page],close:async()=>{closed++;}};
  const h=new Handoffs({max:1,onClose:(job,message)=>events.push({id:job.id,message}),onResume:()=>{},onSubmitted:()=>{},onPossibleSubmit:()=>{}});
- await h.hold({id:'first'},context,page);await h.hold({id:'second'},context,page);
- assert.equal(closed,1);assert(!h.sessions.has('first'));assert(h.sessions.has('second'));assert.equal(events[0].id,'first');
- h.sessions.get('second').busy=true;assert.equal(await h.hold({id:'third'},context,page),false);assert(h.sessions.has('second'));assert.equal(closed,2);
+ await h.hold({id:'first'},context,page);assert.equal(await h.hold({id:'second'},context,page),false);
+ assert.equal(closed,1);assert(h.sessions.has('first'));assert(!h.sessions.has('second'));assert.equal(events[0].id,'second');
+ h.sessions.get('first').busy=true;assert.equal(await h.hold({id:'third'},context,page),false);assert(h.sessions.has('first'));assert.equal(closed,2);
 });
 
 test('Fast handoff acknowledges input without screenshots and still verifies receipts on view',async()=>{
  const {Handoffs}=await import('./handoff.js');let screenshots=0,submitted=0,intents=0,body='Application form';const keys=[],scroll=[];
- const page={isClosed:()=>false,frames:()=>[page],url:()=> 'https://jobs.lever.co/example/one',locator:()=>({innerText:async()=>body}),screenshot:async()=>{screenshots++;return Buffer.from('same-frame')},keyboard:{insertText:async x=>keys.push(x),press:async x=>keys.push(x)},mouse:{move:async(...p)=>scroll.push(p),wheel:async(...p)=>scroll.push(p)},evaluate:async()=>false};
+ const page={isClosed:()=>false,frames:()=>[page],url:()=> 'https://jobs.lever.co/example/one',locator:()=>({innerText:async()=>body}),screenshot:async()=>{screenshots++;return Buffer.from('same-frame')},keyboard:{insertText:async x=>keys.push(x),press:async x=>keys.push(x)},mouse:{move:async(...p)=>scroll.push(p),wheel:async(...p)=>scroll.push(p)},evaluate:async()=>({activeControl:{text:'Submit application',type:'submit'}})};
  const context={pages:()=>[page],close:async()=>{}};const h=new Handoffs({onClose:()=>{},onResume:()=>{},onSubmitted:()=>submitted++,onPossibleSubmit:()=>intents++});await h.hold({id:'j',user_id:'u'},context,page);
  assert.deepEqual(await h.command('u','j','text',{text:'Hello',render:false}),{accepted:true});assert.equal(screenshots,0);
  await h.command('u','j','key',{key:'ArrowLeft',render:false});await h.command('u','j','scroll',{y:30,x:2,pointerX:100,pointerY:200,render:false});assert.deepEqual(keys,['Hello','ArrowLeft']);assert.deepEqual(scroll,[[100,200],[2,30]]);

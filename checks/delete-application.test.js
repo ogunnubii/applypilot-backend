@@ -2,22 +2,24 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {installLibrary,captureAnswers,updateLibrary} from '../answer-library.js';
+import {installResearch} from '../google-research.js';
 import {deleteApplication} from '../delete-application.js';
 
 function fixture(){
  const db=new DatabaseSync(':memory:');
  db.exec(`PRAGMA foreign_keys=ON;
   CREATE TABLE applicants(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,answers_json TEXT NOT NULL DEFAULT '{}');
-  CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,applicant_id TEXT NOT NULL,status TEXT NOT NULL,handoff_available INTEGER NOT NULL DEFAULT 0);
+  CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,applicant_id TEXT NOT NULL,status TEXT NOT NULL,handoff_available INTEGER NOT NULL DEFAULT 0,answers_json TEXT NOT NULL DEFAULT '{}');
   CREATE TABLE blocker_emails(job_id TEXT NOT NULL);
   CREATE TABLE events(id INTEGER PRIMARY KEY,job_id TEXT NOT NULL REFERENCES jobs(id));
   CREATE TABLE work_focus(user_id TEXT PRIMARY KEY,job_id TEXT);
   INSERT INTO applicants VALUES('p1','u1','{}'),('p2','u2','{}');
-  INSERT INTO jobs VALUES('braze','u1','p1','submitted',0),('other','u2','p2','submitted',0);
+  INSERT INTO jobs(id,user_id,applicant_id,status,handoff_available) VALUES('braze','u1','p1','submitted',0),('other','u2','p2','submitted',0);
   INSERT INTO blocker_emails VALUES('braze'),('other');
   INSERT INTO events VALUES(1,'braze'),(2,'other');
   INSERT INTO work_focus VALUES('u1','braze'),('u2','other');`);
  installLibrary(db);
+ installResearch(db);
  return db;
 }
 

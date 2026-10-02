@@ -8,10 +8,12 @@ export function pickResumeField(fields){
 }
 export function canonicalJobURL(value){
  const u=new URL(value);if(u.protocol!=='https:')throw Error('Use an HTTPS job link');u.hash='';
- for(const k of [...u.searchParams.keys()])if(k.startsWith('utm_')||['ref','source','gh_src'].includes(k))u.searchParams.delete(k);
+ for(const k of [...u.searchParams.keys()]){const key=k.toLowerCase();if(key.startsWith('utm_')||['ref','source','gh_src','lang','language','locale'].includes(key))u.searchParams.delete(k);}
  if(/^jobs(\.eu)?\.lever\.co$/.test(u.hostname)){u.pathname=u.pathname.replace(/\/apply\/?$/,'').replace(/\/$/,'');u.search='';}
  if(u.hostname==='jobs.ashbyhq.com'){u.pathname=u.pathname.replace(/\/application\/?$/,'').replace(/\/$/,'');u.search='';}
  if(['boards.greenhouse.io','job-boards.greenhouse.io'].includes(u.hostname)){u.hostname='boards.greenhouse.io';u.pathname=u.pathname.replace(/\/$/,'');}
+ if(/(?:^|\.)(?:myworkdayjobs|workdayjobs)\.com$/i.test(u.hostname))u.pathname=u.pathname.replace(/^\/[a-z]{2}(?:[-_][a-z]{2})?(?=\/)/i,'');
+ u.searchParams.sort();
  return u.toString().replace(/\/$/,'');
 }
 

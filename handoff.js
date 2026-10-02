@@ -3,22 +3,66 @@ import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
 import {readToken} from './auth.js';
 const receipt=/thank you for (applying|your application)|application (has been )?(submitted|received)|successfully applied/i;
+const intermediateAction=/\b(next|continue|review|proceed)\b|sign\s*in|log\s*in/i;
+const explicitFinalAction=/\bsubmit\b|\bsend\s+(?:my\s+)?application\b|\bcomplete\s+(?:my\s+)?application\b/i;
+export function isFinalSubmitControl(control){
+ if(!control||control.disabled)return false;
+ const label=[control.text,control.value,control.ariaLabel,control.title].filter(Boolean).join(' ').replace(/\s+/g,' ').trim();
+ if(intermediateAction.test(label))return false;
+ return explicitFinalAction.test(label)||(['submit','image'].includes(String(control.type||'').toLowerCase())&&!/sign\s*in|log\s*in/i.test(label));
+}
+async function framePointControl(page,x,y){
+ const frames=page.frames(),main=page.mainFrame?.()||frames[0];
+ for(const frame of frames){
+  if(!supported(frame.url()))continue;
+  let point={x,y};
+  if(frame!==main){
+   const handle=frame.frameElement?await frame.frameElement().catch(()=>null):null;if(!handle)continue;
+   try{
+    const box=await handle.boundingBox().catch(()=>null);if(!box||x<box.x||y<box.y||x>box.x+box.width||y>box.y+box.height)continue;
+    const inset=handle.evaluate?await handle.evaluate(element=>({x:element.clientLeft||0,y:element.clientTop||0})).catch(()=>({x:0,y:0})):{x:0,y:0};
+    point={x:x-box.x-inset.x,y:y-box.y-inset.y};
+   }finally{if(handle.dispose)await handle.dispose().catch(()=>{})}
+  }
+  const control=await frame.evaluate(({x:localX,y:localY})=>{const element=document.elementFromPoint(localX,localY)?.closest('button,input[type="submit"],input[type="image"],[role="button"]');return element?({text:String(element.innerText||''),value:String(element.value||''),ariaLabel:String(element.getAttribute('aria-label')||''),title:String(element.getAttribute('title')||''),type:String(element.type||element.getAttribute('type')||''),disabled:!!element.disabled||element.getAttribute('aria-disabled')==='true'}):null},point).catch(()=>null);
+  if(control)return control;
+ }
+ return null;
+}
+async function enterSubmitControl(page){
+ for(const frame of page.frames()){
+  if(!supported(frame.url()))continue;
+  const state=await frame.evaluate(()=>{
+   if(!document.hasFocus())return null;
+   const active=document.activeElement;if(!active||active===document.body||active===document.documentElement||active.tagName==='IFRAME')return null;
+   const describe=element=>({text:String(element?.innerText||''),value:String(element?.value||''),ariaLabel:String(element?.getAttribute?.('aria-label')||''),title:String(element?.getAttribute?.('title')||''),type:String(element?.type||element?.getAttribute?.('type')||''),disabled:!!element?.disabled||element?.getAttribute?.('aria-disabled')==='true'});
+   const activeControl=active.closest?.('button,input[type="submit"],input[type="image"],[role="button"]');if(activeControl)return {activeControl:describe(activeControl)};
+   if(active.matches?.('textarea,[contenteditable="true"],[contenteditable=""],select,input[type="button"],input[type="reset"],input[type="checkbox"],input[type="radio"],input[type="file"]'))return {blocked:true};
+   const form=active.form||active.closest?.('form');if(!form||!active.matches?.('input'))return {blocked:true};
+   const visible=element=>{const rect=element.getBoundingClientRect(),style=getComputedStyle(element);return rect.width>1&&rect.height>1&&style.display!=='none'&&style.visibility!=='hidden'&&!element.disabled&&element.getAttribute('aria-disabled')!=='true'};
+   const submitters=[...form.querySelectorAll('button,input[type="submit"],input[type="image"]')].filter(element=>visible(element)&&['submit','image'].includes(String(element.type||'').toLowerCase())).map(describe);
+   return {implicitSubmitters:submitters};
+  }).catch(()=>null);
+  if(!state)continue;
+  if(state.activeControl)return isFinalSubmitControl(state.activeControl)?state.activeControl:null;
+  if(state.blocked)return null;
+  if(state.implicitSubmitters?.length===1&&isFinalSubmitControl(state.implicitSubmitters[0]))return state.implicitSubmitters[0];
+  return null;
+ }
+ return null;
+}
 export class Handoffs {
  constructor({onResume,onClose,onSubmitted,onPossibleSubmit,max=3,clock=Date.now}){Object.assign(this,{onResume,onClose,onSubmitted,onPossibleSubmit,max,clock});this.sessions=new Map()}
  full(){return this.sessions.size>=this.max}
  async hold(job,context,page){
   if(this.sessions.has(job.id))return;
-  if(this.full()){
-   const oldest=[...this.sessions.values()].filter(s=>!s.busy).sort((a,b)=>a.touched-b.touched)[0];
-   if(!oldest){await context.close();this.onClose(job,'Live slots busy; saved application remains blocked.');return false;}
-   this.sessions.delete(oldest.job.id);await oldest.context.close().catch(()=>{});this.onClose(oldest.job,'Older blocked browser closed to keep the queue moving. Saved answers remain.');
-  }
+  if(this.full()){await context.close().catch(()=>{});this.onClose(job,'Live browser capacity is full. This application remains saved until a slot is available.');return false;}
   let initial='';for(const frame of page.frames())if(supported(frame.url()))initial+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
-  const session={job,context,page,created:this.clock(),touched:this.clock(),busy:false,attempted:['Submission in progress','Unconfirmed submission'].includes(job.challenge),initialReceipt:receipt.test(initial),chooser:null};
+  const session={job,context,page,created:this.clock(),touched:this.clock(),busy:false,ready:job.challenge==='Ready to submit',attempted:['Submission in progress','Unconfirmed submission'].includes(job.challenge),initialReceipt:receipt.test(initial),chooser:null};
   const attach=p=>p.on?.('filechooser',chooser=>{session.chooser=chooser});context.pages().forEach(attach);context.on?.('page',attach);
   this.sessions.set(job.id,session);
  }
- async expire(){for(const [id,s] of this.sessions)if(!s.busy&&(this.clock()-s.touched>15*60*1000||this.clock()-s.created>45*60*1000)){this.sessions.delete(id);await s.context.close().catch(()=>{});this.onClose(s.job,'Live browser expired. Saved answers remain; reopen to restart the form.')}}
+ async expire(){for(const [id,s] of this.sessions){const expired=s.ready?this.clock()-s.created>12*60*60*1000:(this.clock()-s.touched>15*60*1000||this.clock()-s.created>45*60*1000);if(!s.busy&&expired){this.sessions.delete(id);await s.context.close().catch(()=>{});this.onClose(s.job,s.ready?'Ready-to-submit browser expired after 12 hours. Reopen the application to prepare it again.':'Live browser expired. Saved answers remain; reopen to restart the form.')}}}
  async command(uid,id,action,data={}){
   await this.expire();const s=this.sessions.get(id);
   if(!s||s.job.user_id!==uid){const e=Error('No live browser for this application');e.status=404;throw e}
@@ -33,8 +77,8 @@ export class Handoffs {
    }
    if(action==='click'){
     if(!Number.isFinite(data.x)||!Number.isFinite(data.y)||data.x<0||data.y<0||data.x>1100||data.y>800)throw Error('Invalid click');
-    const possible=await p.evaluate(({x,y})=>{const e=document.elementFromPoint(x,y)?.closest('button,input[type=submit],[role=button]');return !!e&&(/submit|send application/i.test(e.innerText||e.value||e.getAttribute('aria-label')||'')||(e.type==='submit'&&!/next|continue|sign.?in|log.?in/i.test(e.innerText||e.value||'')))},{x:data.x,y:data.y});
-    if(possible){s.attempted=true;this.onPossibleSubmit(s.job);}
+    const possible=isFinalSubmitControl(await framePointControl(p,data.x,data.y));
+    if(possible){s.attempted=true;await this.onPossibleSubmit(s.job);}
     await p.mouse.click(data.x,data.y);s.touched=this.clock();
    }else if(action==='drag'){
     if(!Array.isArray(data.points)||data.points.length<2||data.points.length>40||data.points.some(v=>!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x<0||v.x>1100||v.y<0||v.y>800))throw Error('Invalid drag');
@@ -51,7 +95,10 @@ export class Handoffs {
     await p.keyboard.insertText(data.text);s.touched=this.clock();
    }else if(action==='key'){
     if(!['Tab','Shift+Tab','Enter','Backspace','Delete','ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Home','End','PageDown','PageUp','Escape','ControlOrMeta+A','Space'].includes(data.key))throw Error('Unsupported key');
-    if(data.key==='Enter'){s.attempted=true;this.onPossibleSubmit(s.job);}
+    if(data.key==='Enter'){
+     const possible=!!await enterSubmitControl(p);
+     if(possible){s.attempted=true;await this.onPossibleSubmit(s.job);}
+    }
     await p.keyboard.press(data.key);s.touched=this.clock();
    }else if(action==='scroll'){
     if(!Number.isFinite(data.y)||Math.abs(data.y)>1000||!Number.isFinite(data.x??0)||Math.abs(data.x??0)>1000)throw Error('Invalid scroll');
@@ -64,7 +111,7 @@ export class Handoffs {
    if(s.attempted&&!s.initialReceipt&&receipt.test(content)){const match=content.match(receipt);this.onSubmitted(s.job,content.slice(Math.max(0,match.index-40),match.index+250).trim());this.sessions.delete(id);await s.context.close();return {submitted:true}}
    const image=await p.screenshot({type:'jpeg',quality:60,timeout:10000});
    const frameId=createHash('sha256').update(image).digest('hex');
-   const url=new URL(p.url());return {image:data.frameId===frameId?undefined:image.toString('base64'),frameId,width:1100,height:800,host:url.hostname,uploadRequested:!!s.chooser,expiresAt:Math.min(s.touched+15*60*1000,s.created+45*60*1000)};
+   const url=new URL(p.url());return {image:data.frameId===frameId?undefined:image.toString('base64'),frameId,width:1100,height:800,host:url.hostname,uploadRequested:!!s.chooser,expiresAt:s.ready?s.created+12*60*60*1000:Math.min(s.touched+15*60*1000,s.created+45*60*1000)};
   }finally{s.busy=false}
  }
 }

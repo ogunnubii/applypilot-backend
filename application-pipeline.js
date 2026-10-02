@@ -1,4 +1,5 @@
 import {employerHold} from './employer-limits.js';
+import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
 import {priorApplication} from './application-dedup.js';
 import {companyKey,historyKey} from './application-history.js';
 import {supported} from './local-policy.js';
@@ -13,6 +14,16 @@ export function pipelineEnabled(db,userId){
 export function queueFoundApplications(db,userId,{applicantId=null}={}){
  const result={queued:0,held:0,duplicates:0,applications:[]},at=new Date().toISOString();
  const record=(job,type,message)=>db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(job.id,at,type,message);
+ const policyFor=job=>typeof companyApplicationPolicy==='function'?companyApplicationPolicy(db,job.applicant_id,job):{allowed:true};
+ const retain=(job,policy)=>{
+  if(policy.duplicate){
+   if(typeof markExactRequisitionDuplicate==='function')markExactRequisitionDuplicate(db,job,policy,{at});
+   result.duplicates++;result.applications.push({id:job.id,company:job.company,title:job.title,status:'duplicate',reason:policy.message});
+  }else{
+   if(typeof deferForCompanyLimit==='function')deferForCompanyLimit(db,job,policy,{at});
+   result.held++;result.applications.push({id:job.id,company:job.company,title:job.title,status:'saved',reason:policy.message});
+  }
+ };
  db.exec('BEGIN IMMEDIATE');
  try{
   const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND status='saved' AND (? IS NULL OR applicant_id=?) ORDER BY match_score DESC,created_at,id").all(userId,applicantId,applicantId);
@@ -21,11 +32,13 @@ export function queueFoundApplications(db,userId,{applicantId=null}={}){
    const imported=db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,companyKey(job.company),historyKey(job.title));
    const duplicate=priorApplication(db,userId,job)||imported;
    const priorAttempt=job.local_attempt_at||Number(job.attempts)>0||job.handoff_available||db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('submission_started','submitted','manual_confirmation')").get(job.id);
+   const companyPolicy=policyFor(job);
    let reason='';
    if(priorAttempt)reason='Previous application work or a submission attempt exists. Check the existing employer session or receipt before continuing.';
    else if(duplicate){
     db.prepare("UPDATE jobs SET status='duplicate',challenge='Already applied or in progress',updated_at=? WHERE id=? AND status='saved'").run(at,job.id);
     record(job,'duplicate','Prior application retained; repeat application excluded from the pipeline.');result.duplicates++;continue;
+   }else if(!companyPolicy.allowed){retain(job,companyPolicy);continue;
    }else if(employerHold(db,job))reason=employerHold(db,job).message;
    else if(job.challenge)reason='Resolve the existing application blocker: '+job.challenge;
    else if(!profile?.consent||!profile.email||!profile.resume_path)reason='Profile consent, email and a resume are required before application preparation.';
@@ -36,7 +49,14 @@ export function queueFoundApplications(db,userId,{applicantId=null}={}){
     db.prepare("UPDATE jobs SET status='needs_review',challenge=COALESCE(challenge,'Pipeline needs attention'),updated_at=? WHERE id=? AND status='saved'").run(at,job.id);
     record(job,'needs_review',reason);result.held++;result.applications.push({id:job.id,company:job.company,title:job.title,status:'needs_review',reason});continue;
    }
-   const update=db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND user_id=? AND status='saved' AND local_attempt_at IS NULL AND attempts=0 AND handoff_available=0").run(at,job.id,userId);
+   let update;
+   try{update=db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND user_id=? AND status='saved' AND local_attempt_at IS NULL AND attempts=0 AND handoff_available=0").run(at,job.id,userId);}
+   catch(error){
+    if(!(typeof isCompanyApplicationPolicyError==='function'&&isCompanyApplicationPolicyError(error)))throw error;
+    const current=db.prepare('SELECT * FROM jobs WHERE id=?').get(job.id),policy=policyFor(current||job);
+    retain(current||job,policy.allowed?{...policy,allowed:false,message:String(error.message||error),duplicate:/Exact requisition/i.test(String(error.message||error))}:policy);
+    continue;
+   }
    if(update.changes){record(job,'queued','Found job added to the ranked application pipeline.');result.queued++;result.applications.push({id:job.id,company:job.company,title:job.title,status:'queued'});}
   }
   db.exec('COMMIT');return result;

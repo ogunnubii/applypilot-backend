@@ -23,7 +23,7 @@ test('Unknown required facts block, while exact saved facts fill and existing ed
 });
 test('Routine multi-step preparation fills and captures answers but never clicks Submit',async()=>{
  const g=await fixture('<form><label>Full name<input required></label><button type="button">Next</button></form>');
- try{assert(g.messages.some(m=>m.action==='step'));g.w.document.querySelector('form').innerHTML='<label>Email<input required type="email"></label><button type="button" id="submit">Submit application</button>';let clicks=0;g.w.document.querySelector('#submit').onclick=()=>clicks++;await g.tick();assert.equal(clicks,0);assert(!g.messages.some(m=>m.action==='attempt'));assert(g.messages.some(m=>m.action==='capture'));assert(g.messages.some(m=>m.action==='progress'&&m.message.startsWith('Ready for your review')));await g.tick();assert.equal(clicks,0);}finally{g.close();}
+ try{assert(g.messages.some(m=>m.action==='step'));g.w.document.querySelector('form').innerHTML='<label>Email<input required type="email"></label><button type="button" id="submit">Submit application</button>';let clicks=0;g.w.document.querySelector('#submit').onclick=()=>clicks++;await g.tick();assert.equal(clicks,0);assert(!g.messages.some(m=>m.action==='attempt'));assert(g.messages.some(m=>m.action==='capture'));assert(g.messages.some(m=>m.action==='progress'&&m.message.startsWith('Ready to submit')));await g.tick();assert.equal(clicks,0);}finally{g.close();}
 });
 
 test('CAPTCHA, MFA, legal text, payments and custom controls require human interaction',async()=>{

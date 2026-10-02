@@ -1,4 +1,5 @@
 import {employerHold} from './employer-limits.js';
+import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
 import {pipelineEnabled,queueFoundApplications} from './application-pipeline.js';
 import {priorApplication} from './application-dedup.js';
 import {jobIntelligence,nextApplicationEligible} from './job-intelligence.js';
@@ -240,6 +241,11 @@ async function executeSearch(id,userId){
   const imported=db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,ck,tk);
   const prior=db.prepare("SELECT 1 FROM jobs WHERE user_id=? AND history_company(company)=? AND history_title(title)=? AND (status IN ('submitted','interview','offer','rejected','duplicate','archived','running','local_browser','queued') OR local_attempt_at IS NOT NULL)").get(userId,ck,tk);
   if(imported||prior||priorApplication(db,userId,{...job,id:existing?.id})){duplicatesSkipped++;continue;}
+  const exactPolicy=typeof companyApplicationPolicy==='function'?companyApplicationPolicy(db,applicant.id,{...job,id:existing?.id,applicant_id:applicant.id,normalized_url:url}):{allowed:true};
+  if(!exactPolicy.allowed&&exactPolicy.duplicate){
+   if(existing&&typeof markExactRequisitionDuplicate==='function')markExactRequisitionDuplicate(db,existing,exactPolicy);
+   duplicatesSkipped++;continue;
+  }
   matched++;if(assessment.strong)strongMatches++;
   const jobId=randomUUID(),date=now();
   const result=db.prepare("INSERT OR IGNORE INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'saved',?,?,?)")
@@ -250,9 +256,26 @@ async function executeSearch(id,userId){
  // The account-wide pipeline includes every found role, regardless of ranking. Prior attempts remain protected.
  if(pipelineEnabled(db,userId))queued+=queueFoundApplications(db,userId,{applicantId:applicant.id}).queued;
  else if(search.auto_queue&&applicant.consent&&applicant.email&&applicant.resume_path){
-  const pending=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status='saved' AND challenge IS NULL AND local_attempt_at IS NULL AND attempts=0 ORDER BY match_score DESC,created_at DESC,id").all(userId,applicant.id);
+ const pending=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status='saved' AND challenge IS NULL AND local_attempt_at IS NULL AND attempts=0 ORDER BY match_score DESC,created_at DESC,id").all(userId,applicant.id);
   const ready=pending.filter(row=>nextApplicationEligible(row)&&!employerHold(db,row)&&!priorApplication(db,userId,row)&&!db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,companyKey(row.company),historyKey(row.title)));
-  for(const best of ready)if(db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND status='saved' AND challenge IS NULL AND local_attempt_at IS NULL AND attempts=0").run(now(),best.id).changes){queued++;event(best.id,'queued','Verified match queued by automatic search');}
+  for(const best of ready){
+   let policy=typeof companyApplicationPolicy==='function'?companyApplicationPolicy(db,best.applicant_id,best):{allowed:true};
+   if(!policy.allowed){
+    if(policy.duplicate&&typeof markExactRequisitionDuplicate==='function')markExactRequisitionDuplicate(db,best,policy);
+    else if(typeof deferForCompanyLimit==='function')deferForCompanyLimit(db,best,policy);
+    continue;
+   }
+   try{
+    if(db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND status='saved' AND challenge IS NULL AND local_attempt_at IS NULL AND attempts=0").run(now(),best.id).changes){queued++;event(best.id,'queued','Verified match queued by automatic search');}
+   }catch(error){
+    if(!(typeof isCompanyApplicationPolicyError==='function'&&isCompanyApplicationPolicyError(error)))throw error;
+    const current=db.prepare('SELECT * FROM jobs WHERE id=?').get(best.id)||best;
+    policy=typeof companyApplicationPolicy==='function'?companyApplicationPolicy(db,current.applicant_id,current):{allowed:false,message:String(error.message||error),duplicate:/Exact requisition/i.test(String(error.message||error))};
+    if(policy.allowed)policy={...policy,allowed:false,message:String(error.message||error),duplicate:/Exact requisition/i.test(String(error.message||error))};
+    if(policy.duplicate&&typeof markExactRequisitionDuplicate==='function')markExactRequisitionDuplicate(db,current,policy);
+    else if(typeof deferForCompanyLimit==='function')deferForCompanyLimit(db,current,policy);
+   }
+  }
  }
  const result={scanned,matched,strongMatches,added,queued,duplicatesSkipped,refreshed:enrichment.refreshed,errors,sources:sources.map(s=>({source:s.source,count:s.jobs.length})),sourceCount:boards.length,checkedBoards:batch.boards.length,intervalSeconds:SEARCH_INTERVAL_SECONDS,finishedAt:now()};
  db.prepare('UPDATE searches SET last_error=?,last_result_json=? WHERE id=?').run(errors.join('; ').slice(0,600)||null,JSON.stringify(result),id);

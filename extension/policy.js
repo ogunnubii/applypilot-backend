@@ -8,8 +8,9 @@
   function identity(url) {
     const u = new URL(url); u.hash = '';
     u.hostname = u.hostname.replace('job-boards.greenhouse.io','boards.greenhouse.io');
+    if (/(?:^|\.)(?:myworkdayjobs|workdayjobs)\.com$/i.test(u.hostname)) u.pathname = u.pathname.replace(/^\/[a-z]{2}(?:-[a-z]{2})?(?=\/)/i,'');
     u.pathname = u.pathname.replace(/\/(apply|application|thanks|thank-you|confirmation)\/?$/i,'').replace(/\/$/,'');
-    for (const k of [...u.searchParams.keys()]) if (/^utm_/i.test(k) || ['source','ref','gh_src','step'].includes(k)) u.searchParams.delete(k);
+    for (const k of [...u.searchParams.keys()]) if (/^utm_/i.test(k) || ['source','ref','gh_src','step','lang','locale','language'].includes(k.toLowerCase())) u.searchParams.delete(k);
     u.searchParams.sort(); return u.toString();
   }
   function sameApplication(a,b) { try { return supported(a) && supported(b) && identity(a) === identity(b); } catch { return false; } }

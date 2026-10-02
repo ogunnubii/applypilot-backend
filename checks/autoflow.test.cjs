@@ -1,9 +1,9 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
 const sources=Object.fromEntries(["employer-limits.js","application-pipeline.js","application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
-test("routine submissions and receipt safety",()=>(async()=>{
- const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
- const wait=()=>new Promise(r=>setTimeout(r,35));
+test("routine preparation stops at Submit and a trusted click is durably recorded once",()=>(async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),{implForWrapper}=require('../node_modules/jsdom/lib/generated/idl/utils.js'),{fireAnEvent}=require('../node_modules/jsdom/lib/jsdom/living/helpers/events.js'),MouseEvent=require('../node_modules/jsdom/lib/generated/idl/MouseEvent.js');
+ const wait=()=>new Promise(r=>setTimeout(r,45));
  async function scenario(extra='',{denied=false,initialAttempt=false,automatic=true,receipt=false}={}){
   const dom=new JSDOM('<form><label>Full name<input required></label>'+extra+'<button type="button" id="submit">Submit application</button></form>',{runScripts:'outside-only',url:'https://jobs.ashbyhq.com/example/12345678-1234-1234-1234-123456789abc'}),w=dom.window;
   Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});
@@ -13,13 +13,17 @@ test("routine submissions and receipt safety",()=>(async()=>{
   w.document.getElementById('submit').onclick=()=>{assert(attempted,'intent must precede click');clicks++;if(receipt)w.document.querySelector('form').innerHTML='<p>Thank you for applying</p>';};
   w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Fixture',attempted},profile:{name:'Applicant'},answers:{},resume:{name:'resume.pdf',base64:''}}};if(m.action==='state')return {ok:true,data:{attempted,automatic:automatic&&!attempted}};if(m.action==='attempt'){if(denied)return {ok:false,error:'transport uncertain'};assert(!attempted);attempted=true;}return {ok:true,data:{}};}}};
   w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);await wait();
-  for(const fn of [...timers])await fn();await wait();for(const fn of [...timers])await fn();
-  return {messages,clicks,close:()=>w.close()};
+  const trustedClick=async()=>{const button=w.document.getElementById('submit');if(button)fireAnEvent('click',implForWrapper(button),MouseEvent,{bubbles:true,cancelable:true,isTrusted:true});await wait();};
+  const runTimers=async()=>{for(const fn of [...timers])await fn();await wait();};
+  return {messages,get clicks(){return clicks;},trustedClick,runTimers,close:()=>w.close()};
  }
- let f=await scenario('',{receipt:true});assert.equal(f.clicks,1);assert.equal(f.messages.filter(m=>m.action==='attempt').length,1);assert(f.messages.some(m=>m.action==='receipt'));f.close();
- for(const opts of [{denied:true},{initialAttempt:true},{automatic:false}]){f=await scenario('',opts);assert.equal(f.clicks,0);f.close();}
- for(const extra of ['<p>By submitting you provide consent for a criminal record check.</p>','<label>Unknown fact<input required></label>','<div class="g-recaptcha"></div>','<input type="password">','<p>By submitting, I certify that these statements are true.</p>']){f=await scenario(extra);assert.equal(f.clicks,0);assert(!f.messages.some(m=>m.action==='attempt'));f.close();}
- return 'PASS extension: one submit after durable intent, receipt confirmation, no duplicate, unknown facts/CAPTCHA/login/legal/transport block';
+ let f=await scenario('',{receipt:true});assert.equal(f.clicks,0,'automation must leave final Submit untouched');assert(!f.messages.some(m=>m.action==='attempt'));assert(f.messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')));
+ await f.trustedClick();assert.equal(f.clicks,1);assert.equal(f.messages.filter(m=>m.action==='attempt').length,1);await f.trustedClick();assert.equal(f.clicks,1,'the same trusted action is never replayed twice');await f.runTimers();assert(f.messages.some(m=>m.action==='receipt'));f.close();
+ f=await scenario('',{denied:true});await f.trustedClick();assert.equal(f.clicks,0,'navigation stays paused when durable attempt recording fails');assert.equal(f.messages.filter(m=>m.action==='attempt').length,1);f.close();
+ f=await scenario('',{initialAttempt:true});await f.trustedClick();assert.equal(f.clicks,0,'an already-recorded attempt cannot be submitted again');f.close();
+ for(const extra of ['<footer>By submitting you provide consent for a criminal record check.</footer>','<footer>Agreement to Arbitrate and privacy policy.</footer>']){f=await scenario(extra);assert(f.messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')),'static footer boilerplate must not block routine preparation');f.close();}
+ for(const extra of ['<label>Unknown fact<input required></label>','<div class="g-recaptcha"></div>','<input type="password">','<label><input type="checkbox" required>I certify these statements are accurate</label>','<label>Gender<select required><option value="">Choose</option></select></label>']){f=await scenario(extra);assert(!f.messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')),extra);assert(!f.messages.some(m=>m.action==='attempt'));f.close();}
+ return 'PASS extension: prepare-only final step, one durable trusted attempt, receipt confirmation, footer-safe checks, and required unknown/CAPTCHA/login/legal/demographic blocks';
 })());
 test("interview integration and deduplication",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
@@ -75,25 +79,45 @@ const jobs=await listBoard('https://job-boards.greenhouse.io/example');assert(!u
 return 'PASS Greenhouse adapter: bounded metadata feed and separate per-job evidence URL';
 })());
 
-test('React Select opens before discovering options and verifies the selected value',async()=>{
+test('portal React Select is filled exactly while final Submit remains untouched',async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
- async function scenario({ambiguous=false,accepted=true,preselected=false,legal=''}={}){
-  const dom=new JSDOM('<form><label id="country-label">Country</label><div class="select__control"><div class="select__value-container"><input id="country" role="combobox" aria-labelledby="country-label" aria-required="true" aria-expanded="false"></div></div>'+legal+'<button type="button" id="submit">Submit application</button></form>',{runScripts:'outside-only',url:'https://job-boards.greenhouse.io/example/jobs/42'}),w=dom.window;
+ async function scenario({ambiguous=false,accepted=true,preselected=false,portal=true,extra=''}={}){
+  const dom=new JSDOM('<form><label id="country-label">Country</label><div class="select__control"><div class="select__value-container"><input id="country" role="combobox" aria-labelledby="country-label" aria-required="true" aria-expanded="false"></div></div>'+extra+'<button type="button" id="submit">Submit application</button></form>',{runScripts:'outside-only',url:'https://job-boards.greenhouse.io/example/jobs/42'}),w=dom.window;
   Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});
   w.HTMLElement.prototype.getClientRects=function(){return this.isConnected&&!this.closest('[hidden]')?[{}]:[];};
   w.setInterval=()=>0;w.clearInterval=()=>{};const messages=[];let attempts=0,clicks=0;
   const input=w.document.querySelector('input'),container=input.parentElement;
   const select=()=>{const selected=w.document.createElement('div');selected.className='select__single-value';selected.textContent='Canada';container.prepend(selected);input.value='';input.setAttribute('aria-expanded','false');w.document.getElementById('country-options')?.remove();};
   if(preselected)select();
-  input.onclick=()=>{if(w.document.getElementById('country-options'))return;const list=w.document.createElement('div');list.id='country-options';list.setAttribute('role','listbox');for(let i=0;i<(ambiguous?2:1);i++){const option=w.document.createElement('div');option.setAttribute('role','option');option.textContent='Canada +1';option.onclick=()=>{if(accepted)select();else {input.value='Canada';list.remove();}};list.append(option);}w.document.body.append(list);input.setAttribute('aria-controls',list.id);input.setAttribute('aria-expanded','true');};
+  input.onclick=()=>{if(w.document.getElementById('country-options'))return;const list=w.document.createElement('div');list.id='country-options';list.setAttribute('role','listbox');for(let i=0;i<(ambiguous?2:1);i++){const option=w.document.createElement('div');option.setAttribute('role','option');option.textContent='Canada +1';option.onclick=()=>{if(accepted)select();else {input.value='Canada';list.remove();}};list.append(option);}w.document.body.append(list);if(!portal)input.setAttribute('aria-controls',list.id);input.setAttribute('aria-expanded','true');};
   w.document.getElementById('submit').onclick=()=>{assert(attempts===1);clicks++;};
   w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Fixture'},profile:{location:'Toronto, Ontario, Canada'},answers:{},resume:{name:'resume.pdf',base64:''}}};if(m.action==='state')return {ok:true,data:{automatic:true,attempted:!!attempts}};if(m.action==='attempt')attempts++;return {ok:true,data:{}};}}};
   w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);await new Promise(r=>setTimeout(r,1150));
-  const result={attempts,clicks,messages};w.close();return result;
+  const result={attempts,clicks,messages,ready:messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit'))};w.close();return result;
  }
- const success=await scenario();assert.equal(success.clicks,1);assert(success.messages.some(m=>m.action==='capture'&&m.fields.some(f=>f.question==='Country'&&f.answer==='Canada')));
- assert.equal((await scenario({preselected:true})).clicks,1);
- for(const opts of [{ambiguous:true},{accepted:false},{legal:'<p>Agreement to Arbitrate: please read the arbitration agreement.</p>'},{legal:'<label>Unknown employer question<input required></label>'}])assert.equal((await scenario(opts)).attempts,0);
+ const success=await scenario();assert.equal(success.clicks,0);assert.equal(success.attempts,0);assert(success.ready,JSON.stringify(success.messages));assert(success.messages.some(m=>m.action==='capture'&&m.fields.some(f=>f.question==='Country'&&f.answer==='Canada')));
+ assert((await scenario({preselected:true})).ready);assert((await scenario({portal:false})).ready);
+ for(const opts of [{ambiguous:true},{accepted:false},{extra:'<label>Unknown employer question<input required></label>'}])assert.equal((await scenario(opts)).ready,false);
+ assert((await scenario({extra:'<p>Agreement to Arbitrate: please read the arbitration agreement.</p>'})).ready,'static legal copy is not an interactive question');
+ assert((await scenario({extra:'<div role="checkbox" aria-label="Join product newsletter" aria-checked="false"></div>'})).ready,'an unresolved optional custom control does not block');
+ assert.equal((await scenario({extra:'<div role="checkbox" aria-label="I accept the terms" aria-required="true" aria-checked="false"></div>'})).ready,false);
+});
+test('exact saved answers fill required ARIA radio and checkbox controls using accessible descriptions',async()=>{
+ const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
+ const html='<form><div role="radiogroup" aria-labelledby="arrangement-label" aria-required="true"><span id="arrangement-label">Preferred work arrangement</span><div role="radio" aria-label="Remote" aria-checked="false">Remote</div><div role="radio" aria-label="Hybrid" aria-checked="false">Hybrid</div></div><span id="updates-help">Receive product updates</span><div role="checkbox" aria-describedby="updates-help" aria-required="true" aria-checked="false"></div><button type="button">Submit application</button></form>';
+ const dom=new JSDOM(html,{runScripts:'outside-only',url:'https://jobs.ashbyhq.com/example/12345678-1234-1234-1234-123456789abc'}),w=dom.window,messages=[];
+ Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});w.HTMLElement.prototype.getClientRects=function(){return this.isConnected?[{}]:[];};w.setInterval=()=>0;w.clearInterval=()=>{};
+ for(const control of w.document.querySelectorAll('[role="radio"]'))control.onclick=()=>{for(const other of control.parentElement.querySelectorAll('[role="radio"]'))other.setAttribute('aria-checked',String(other===control));};
+ w.document.querySelector('[role="checkbox"]').onclick=function(){this.setAttribute('aria-checked','true');};
+ w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Fixture'},profile:{},answers:{'Preferred work arrangement':'Remote','Receive product updates':'Yes'},resume:{name:'resume.pdf',base64:''}}};if(m.action==='state')return {ok:true,data:{automatic:true,attempted:false}};return {ok:true,data:{}};}}};
+ w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);await new Promise(r=>setTimeout(r,250));
+ assert.equal(w.document.querySelector('[role="radio"][aria-label="Remote"]').getAttribute('aria-checked'),'true');assert.equal(w.document.querySelector('[role="checkbox"]').getAttribute('aria-checked'),'true');
+ assert(messages.some(m=>m.action==='capture'&&m.fields.some(f=>f.question==='Preferred work arrangement'&&f.answer==='Remote')&&m.fields.some(f=>f.question==='Receive product updates'&&f.answer==='Yes')));assert(messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')));assert(!messages.some(m=>m.action==='attempt'));w.close();
+});
+test('extension application identity collapses localized ATS aliases',()=>{
+ const assert=require('node:assert/strict'),vm=require('node:vm'),ctx={URL};vm.runInNewContext(sources['extension/policy.js'],ctx);const same=ctx.ApplyPilotPolicy.sameApplication;
+ assert(same('https://job-boards.greenhouse.io/acme/jobs/42?lang=fr&gh_src=mail','https://boards.greenhouse.io/acme/jobs/42?locale=en'));
+ assert(same('https://acme.wd5.myworkdayjobs.com/fr-CA/Careers/job/Toronto/Engineer_R123?source=LinkedIn','https://acme.wd5.myworkdayjobs.com/en-US/Careers/job/Toronto/Engineer_R123'));
 });
 test('progress counts are based on evidence and do not recount outcomes',async()=>{
  const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite');
@@ -190,7 +214,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.1",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.5",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -486,7 +510,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.4'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.5'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{

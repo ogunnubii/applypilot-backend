@@ -1,4 +1,5 @@
 import {applicationLimit,employerHold,employerLimits,recordEmployerLimit} from './employer-limits.js';
+import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
 import {pipelineStatus,setPipeline,queueFoundApplications,queueEnabledPipelines} from './application-pipeline.js';
 import {priorApplication} from './application-dedup.js';
 import {installResumeEditor,prepareResumeEdit,saveResumeEdit,previousResumePath} from './resume-editor.js';
@@ -14,7 +15,7 @@ import {installDrafts,draftForJob} from './answer-drafts.js';
 import {hasResearchDraftForQuestion,installResearch,isResearchDraft,markResearchDraftUsed,researchForJob} from './google-research.js';
 import {researchConsentWithdrawn} from './research-consent.js';
 import {deleteApplication} from './delete-application.js';
-import {supported,sameApplication,receipt as employerReceipt,sensitive} from './local-policy.js';
+import {supported,sameApplication,receipt as employerReceipt} from './local-policy.js';
 import {rememberAnswers} from './local-state.js';
 import {installNotifications,emailConfigured,sendBlockerEmails} from './notifications.js';
 import {chat} from './assistant.js';
@@ -35,6 +36,22 @@ const send=(res,status,data)=>{res.writeHead(status,{'content-type':'application
 async function body(req,max=100000){let chunks=[],size=0;for await(let chunk of req){size+=chunk.length;if(size>max)throw Error('Request too large');chunks.push(chunk)}return Buffer.concat(chunks)}
 const text=(v,max=500)=>String(v??'').trim().slice(0,max);
 const ownJob=(uid,id)=>db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(id,uid);
+function companyPolicyBlock(res,job,policy){
+ if(policy.duplicate)markExactRequisitionDuplicate(db,job,policy);
+ else deferForCompanyLimit(db,job,policy);
+ send(res,409,{error:policy.message});return true;
+}
+function companyTransitionCheck(res,job){
+ const policy=companyApplicationPolicy(db,job.applicant_id,job);
+ return policy.allowed?false:companyPolicyBlock(res,job,policy);
+}
+function companyTransitionFailure(res,job,error){
+ if(!isCompanyApplicationPolicyError(error))throw error;
+ const current=db.prepare('SELECT * FROM jobs WHERE id=?').get(job.id)||job;
+ let policy=companyApplicationPolicy(db,current.applicant_id,current);
+ if(policy.allowed)policy={...policy,allowed:false,duplicate:/Exact requisition/i.test(String(error.message||error)),message:String(error.message||error)};
+ return companyPolicyBlock(res,current,policy);
+}
 function createResumeSearch(uid,applicant,roles){
   const instruction=profileSearchInstruction(applicant,roles);
   const existing=db.prepare('SELECT id FROM searches WHERE user_id=? AND applicant_id=? AND auto_generated=1').get(uid,applicant.id);
@@ -51,9 +68,9 @@ if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-typ
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
-if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.4.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
+if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.5.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-01-employer-application-limits',extensionVersion:'0.6.4',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-01-company-cap-prepare-only',extensionVersion:'0.6.5',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(req));if(input.registration_code!==process.env.REGISTRATION_CODE)return send(res,403,{error:'Registration code required'});let email=text(input.email,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return send(res,400,{error:'Valid email required'});let id=randomUUID(),hash=hashPassword(input.password);try{db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(id,email,hash,now())}catch{return send(res,409,{error:'Account already exists'})}return send(res,201,{token:issueToken(id,input.remember===true)})}
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id,input.remember===true)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
@@ -108,6 +125,9 @@ const heldRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/(queue|continue|continua
 if(heldRoute&&(req.method==='POST'||heldRoute[2]==='local/packet'&&req.method==='GET')){
  const heldJob=ownJob(uid,heldRoute[1]),held=heldJob&&employerHold(db,heldJob);
  if(held&&!(heldRoute[2]==='local/packet'&&heldJob.local_attempt_at))return send(res,409,{error:held.message+' Applications to this employer are paused; other employers can continue.'});
+ if(heldJob&&['queue','continue','local/claim','handoff/open'].includes(heldRoute[2])){
+  const blocked=companyTransitionCheck(res,heldJob);if(blocked)return blocked;
+ }
 }
 if(path==='/api/pipeline'&&req.method==='GET')return send(res,200,pipelineStatus(db,uid));
 if(path==='/api/pipeline'&&req.method==='PUT'){const x=JSON.parse(await body(req));try{return send(res,200,setPipeline(db,uid,x.enabled));}catch(error){return send(res,400,{error:error.message});}}
@@ -186,7 +206,8 @@ if(localRoute){
    try{const r=await fetch('http://127.0.0.1:8081/'+j.id+'/close',{method:'POST',headers:{authorization:req.headers.authorization,'content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(20000)});if(!r.ok)throw Error();}
    catch{return send(res,409,{error:'Close the existing live session before switching to your browser'});}
   }
-  const result=db.prepare("UPDATE jobs SET status='local_browser',handoff_available=0,challenge='Local browser',local_owner=?,local_phase='ready',updated_at=? WHERE id=? AND status=? AND COALESCE(challenge,'')=COALESCE(?,'')").run(owner,now(),j.id,j.status,j.challenge);
+  let result;try{result=db.prepare("UPDATE jobs SET status='local_browser',handoff_available=0,challenge='Local browser',local_owner=?,local_phase='ready',updated_at=? WHERE id=? AND status=? AND COALESCE(challenge,'')=COALESCE(?,'')").run(owner,now(),j.id,j.status,j.challenge);}
+  catch(error){companyTransitionFailure(res,j,error);return;}
   if(!result.changes)return send(res,409,{error:'Application changed. Refresh before continuing'});
   event(j.id,'local_browser','Opening in your browser. Cloud retries disabled for this application.');return send(res,200,{ok:true});
  }
@@ -238,16 +259,16 @@ if(localRoute){
  if(action==='attempt'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
   if(applicationLimit(x.before)){recordEmployerLimit(db,uid,j.id,x.before,{source:'Employer page observed by browser helper'});return send(res,409,{error:'Employer application limit reached. Other employers can continue.'});}
-  if(x.human!==true&&x.automatic!==true)return send(res,409,{error:'Review the employer form and click Submit yourself'});
+  if(x.human!==true)return send(res,409,{error:'Review the employer form and click Submit yourself. Update the browser helper to 0.6.5 if it tried to submit automatically.'});
   const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
   if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
   if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
-  if(typeof x.before!=='string'||!sameApplication(x.url,j.url)||employerReceipt(x.before)||(x.automatic===true&&sensitive(x.before)))return send(res,409,{error:'Application requires human review before submission'});
+  if(typeof x.before!=='string'||!sameApplication(x.url,j.url)||employerReceipt(x.before))return send(res,409,{error:'Application requires human review before submission'});
   if(j.local_attempt_at)return send(res,409,{error:'Submission may already have occurred. Check the employer receipt.'});
   const result=db.prepare("UPDATE jobs SET local_attempt_at=?,local_phase='verifying',challenge='Submission in progress',updated_at=? WHERE id=? AND local_attempt_at IS NULL AND status='local_browser'").run(now(),now(),j.id);
   if(!result.changes)return send(res,409,{error:'Submission already started'});
   if(x.humanAssisted===true&&!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='human_assistance'").get(j.id))event(j.id,'human_assistance','Applicant assisted with the employer form before submission.');
-   event(j.id,x.human===true?'manual_submission':'automatic_submission',x.human===true?'Applicant clicked the employer submit control.':'ApplyPilot clicked the routine employer submit control.');
+   event(j.id,'manual_submission','Applicant clicked the employer submit control.');
    event(j.id,'submission_started','Local submission intent saved before clicking; automatic retry disabled.');return send(res,200,{ok:true});
  }
  if(action==='progress'&&req.method==='POST'){
@@ -281,7 +302,8 @@ if(handoffRoute&&req.method==='POST'){
   const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
   if(!p?.consent||!p.email||!p.resume_path)return send(res,400,{error:'Applicant consent, email and resume required'});
   if(!supported(j.url))return send(res,400,{error:'Supported employer link required'});
-  db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=? AND status IN ('paused','needs_review')").run(now(),j.id);
+  try{db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=? AND status IN ('paused','needs_review')").run(now(),j.id);}
+  catch(error){companyTransitionFailure(res,j,error);return;}
   event(j.id,'queued','Preparing a live application browser for applicant takeover');return send(res,200,{preparing:true});
  }
  if(!j.handoff_available)return send(res,409,{error:'The live browser has expired or restarted. Reopen the application to prepare another.'});
@@ -303,7 +325,8 @@ if(continueRoute&&req.method==='POST'){
  if(!p.google_research_consent&&entries.some(([question])=>hasResearchDraftForQuestion(db,j.id,question)))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});
  const answers=JSON.parse(j.answers_json||'{}');for(const [question,answer] of entries){if(typeof answer!=='string'||!question.trim()||question.length>240||!answer.trim()||answer.length>4000)return send(res,400,{error:'Complete each answer (maximum 4,000 characters)'});Object.defineProperty(answers,question,{value:answer.trim(),enumerable:true,configurable:true,writable:true});}
  if(Object.keys(answers).length>100)return send(res,400,{error:'Answer limit reached'});
- const result=db.prepare("UPDATE jobs SET answers_json=?,status='queued',challenge=NULL,updated_at=? WHERE id=? AND status=? AND COALESCE(challenge,'')=COALESCE(?,'')").run(JSON.stringify(answers),now(),j.id,j.status,j.challenge);
+ let result;try{result=db.prepare("UPDATE jobs SET answers_json=?,status='queued',challenge=NULL,updated_at=? WHERE id=? AND status=? AND COALESCE(challenge,'')=COALESCE(?,'')").run(JSON.stringify(answers),now(),j.id,j.status,j.challenge);}
+ catch(error){companyTransitionFailure(res,j,error);return;}
  if(!result.changes)return send(res,409,{error:'Application changed. Refresh to see its current status'});
  for(const [question] of entries)markResearchDraftUsed(db,j.id,question);
  if(x.remember===true)rememberAnswers(j.applicant_id,entries.filter(([q])=>canReuse(q.trim())&&!hasResearchDraftForQuestion(db,j.id,q.trim())));
@@ -341,7 +364,7 @@ if(jobLink&&req.method==='PUT'){
   try{db.prepare("UPDATE jobs SET url=?,normalized_url=?,status='saved',challenge=NULL,updated_at=? WHERE id=?").run(url,url,now(),j.id)}catch{return send(res,409,{error:'This employer job is already tracked'})}
   event(j.id,'link_updated','Direct employer application link added');return send(res,200,{ok:true});
 }
-m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/queue$/);if(m&&req.method==='POST'){let j=ownJob(uid,m[1]);if(!j)return send(res,404,{error:'Job not found'});if(priorApplication(db,uid,j))return send(res,409,{error:'This role was already applied to or is in progress. Repeat application blocked.'});if(j.handoff_available)return send(res,409,{error:'Resume the existing live browser instead of queuing a duplicate attempt'});if(metadataFor(j).available===false)return send(res,409,{error:'This employer posting is no longer available. Choose a current match.'});if(!supported(j.url))return send(res,400,{error:'Add the direct employer application link before queuing'});if(['Unconfirmed submission','Submission in progress'].includes(j.challenge))return send(res,409,{error:'The employer may have received this application. Check the employer site and record confirmation before trying again.'});let p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);if(!p.consent||!p.email||!p.resume_path)return send(res,400,{error:'Applicant consent, email and resume required'});if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});if(!['saved','needs_review','paused'].includes(j.status))return send(res,409,{error:'This job cannot be queued from its current state'});db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=?").run(now(),j.id);event(j.id,'queued','Application queued');return send(res,200,{ok:true})}
+m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/queue$/);if(m&&req.method==='POST'){let j=ownJob(uid,m[1]);if(!j)return send(res,404,{error:'Job not found'});if(priorApplication(db,uid,j))return send(res,409,{error:'This role was already applied to or is in progress. Repeat application blocked.'});if(j.handoff_available)return send(res,409,{error:'Resume the existing live browser instead of queuing a duplicate attempt'});if(metadataFor(j).available===false)return send(res,409,{error:'This employer posting is no longer available. Choose a current match.'});if(!supported(j.url))return send(res,400,{error:'Add the direct employer application link before queuing'});if(['Unconfirmed submission','Submission in progress'].includes(j.challenge))return send(res,409,{error:'The employer may have received this application. Check the employer site and record confirmation before trying again.'});let p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);if(!p.consent||!p.email||!p.resume_path)return send(res,400,{error:'Applicant consent, email and resume required'});if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'Google public job-page drafting consent was withdrawn'});if(!['saved','needs_review','paused'].includes(j.status))return send(res,409,{error:'This job cannot be queued from its current state'});try{db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=?").run(now(),j.id);}catch(error){companyTransitionFailure(res,j,error);return;}event(j.id,'queued','Application queued');return send(res,200,{ok:true})}
 m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/confirm$/);if(m&&req.method==='POST'){let j=ownJob(uid,m[1]);if(!j)return send(res,404,{error:'Job not found'});if(['queued','running'].includes(j.status))return send(res,409,{error:'Wait until the worker finishes before recording a manual confirmation'});let x=JSON.parse(await body(req)),receipt=text(x.receipt,300);if(applicationLimit(x.receipt)){recordEmployerLimit(db,uid,j.id,x.receipt);return send(res,409,{error:'The employer limit message is not a submission receipt.'});}if(!employerReceipt(receipt)||/placeholder|example\.com|github\.com|not (?:yet )?(?:submitted|confirmed)|unconfirmed|simulat|test receipt/i.test(receipt))return send(res,400,{error:'Paste the employer message confirming that your application was received or submitted. Profile links and placeholders are not receipts.'});db.prepare("UPDATE jobs SET status='submitted',confirmation=?,challenge=NULL,updated_at=? WHERE id=?").run('Applicant verified: '+receipt,now(),j.id);confirmLibrary(db,j);event(j.id,'manual_confirmation','Applicant recorded employer confirmation: '+receipt);return send(res,200,{ok:true})}
 m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/events$/);if(m&&req.method==='GET'){if(!ownJob(uid,m[1]))return send(res,404,{error:'Job not found'});return send(res,200,{events:db.prepare('SELECT at,type,message FROM events WHERE job_id=? ORDER BY id').all(m[1])})}
 return send(res,404,{error:'Not found'});

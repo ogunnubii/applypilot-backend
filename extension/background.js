@@ -22,7 +22,7 @@ async function listedJobs(){
 }
 async function initialize(){const s=await read();if(!s.automaticDefault)await chrome.storage.local.set({automaticDefault:true,enabled:true,userPaused:false});if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
 async function saveRecord(record){const s=await read();s.records[record.id]=record;await chrome.storage.local.set({records:s.records});}
-async function openJob(id,auto=true){
+async function openJob(id,auto=true,focus=false){
  const s=await read();let record=s.records[id];
  const claim=await api('/jobs/'+id+'/local/claim','POST',{});
  const packet=await api('/jobs/'+id+'/local/packet');
@@ -35,8 +35,8 @@ async function openJob(id,auto=true){
  if(record.attempted){record.phase='verifying';record.auto=false;}
  await saveRecord(record);
  await api('/jobs/'+id+'/local/assistance','POST',{kind:record.safeInitialLoad?'tracking':'partial'});
- if(!tab){tab=await chrome.tabs.create({url:'about:blank',active:!auto});record.tabId=tab.id;await saveRecord(record);let url=packet.job.url;if(/^jobs(\.eu)?\.lever\.co$/.test(new URL(url).hostname)&&!url.endsWith('/apply'))url=url.replace(/\/$/,'')+'/apply';await chrome.tabs.update(tab.id,{url});}
- else{record.tabId=tab.id;await saveRecord(record);if(!auto)await chrome.tabs.update(tab.id,{active:true});chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']})).catch(()=>{});}
+ if(!tab){tab=await chrome.tabs.create({url:'about:blank',active:focus||!auto});record.tabId=tab.id;await saveRecord(record);let url=packet.job.url;if(/^jobs(\.eu)?\.lever\.co$/.test(new URL(url).hostname)&&!url.endsWith('/apply'))url=url.replace(/\/$/,'')+'/apply';await chrome.tabs.update(tab.id,{url});}
+ else{record.tabId=tab.id;await saveRecord(record);if(focus||!auto)await chrome.tabs.update(tab.id,{active:true});chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']})).catch(()=>{});}
  return {opened:true,attempted:record.attempted};
 }
 function eligible(j,s){
@@ -107,7 +107,7 @@ async function handle(m,sender){
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){
   if(m.action==='list')return {...await listedJobs(),state:await read()};
-  if(m.action==='open')return openJob(m.id,m.auto!==false);
+  if(m.action==='open')return openJob(m.id,m.auto!==false,true);
   if(m.action==='dashboard'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard});}
   if(m.action==='environment'){if(!environments[m.value])throw Error('Unknown environment');const s=await read();if(Object.keys(s.records).length)throw Error('Use a separate browser profile for another server while applications are tracked');await chrome.storage.local.set({environment:m.value,enabled:false,queue:[]});return {};}
   if(m.action==='stop'){const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;}await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});return {};}

@@ -213,7 +213,7 @@ async function persistAndReplaySubmission(button,form){
 }
 async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted)await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
 // Refresh paused forms without reopening them or clicking any navigation button.
-let savedRefreshBusy=false;
+let savedRefreshBusy=false,lastRefreshSignature='';
 const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions]);
 async function refreshPausedAnswers(){
  if(!started||!stopped||busy||savedRefreshBusy||attempted||submissionRecording||siteIssue())return;
@@ -221,7 +221,9 @@ async function refreshPausedAnswers(){
  try{
   const state=await send('state');if(state.attempted){attempted=true;return;}if(!state.refreshEnabled)return;
   const latest=await send('packet');if(latest.job.attempted){attempted=true;return;}
-  if(answerSnapshot(latest)===answerSnapshot(packet))return;
+  const formSignature=signature();
+  if(answerSnapshot(latest)===answerSnapshot(packet)&&formSignature===lastRefreshSignature)return;
+  lastRefreshSignature=formSignature;
   packet=latest;busy=true;attemptedCustom=new WeakMap();
   // Only fill already saved answers here. AI preparation runs through the existing
   // bounded server worker; partial answer updates never advance or submit a form.

@@ -77,3 +77,12 @@ test('paused forms sync partial saved answers, preserve edits, respect stop and 
  w.document.querySelector('input').value='';enabled=false;answers['Another question']='Changed';await sync();assert.equal(w.document.querySelector('input').value,'');
  enabled=true;attempted=true;await sync();assert.equal(w.document.querySelector('input').value,'');assert.equal(clicks,0);w.close();
 });
+test('a manually opened delayed form fills when controls appear without changing saved answers',async()=>{
+ const {JSDOM}=require('jsdom'),dom=new JSDOM('<main>Loading application</main>',{runScripts:'outside-only',url:'https://jobs.lever.co/example/test'}),w=dom.window;
+ const timers=[];let clicks=0;Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});w.HTMLElement.prototype.getClientRects=function(){return [{}]};w.setInterval=(fn,ms)=>{timers.push({fn,ms});return timers.length};w.clearInterval=()=>{};
+ w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){return {ok:true,data:m.action==='packet'?{job:{title:'Fixture'},profile:{email:'test@example.test'},answers:{}}:m.action==='state'?{automatic:false,refreshEnabled:true,attempted:false}:{}};}}};
+ w.eval(read('extension/policy.js'));w.eval(read('extension/content.js'));await wait(40);
+ const sync=timers.find(t=>t.ms===30000).fn;await sync();
+ w.document.querySelector('main').innerHTML='<form><label>Email<input required type="email"></label><button type="button">Submit application</button></form>';w.document.querySelector('button').onclick=()=>clicks++;
+ await sync();assert.equal(w.document.querySelector('input').value,'test@example.test');assert.equal(clicks,0);w.close();
+});

@@ -16,7 +16,7 @@ async function api(path,method='GET',data){
  throw Error('Open ApplyPilot and sign in to sync this browser.');
 }
 async function listedJobs(){
- const data=await api('/jobs'),operations=await api('/operations');
+ const [data,operations]=await Promise.all([api('/jobs'),api('/operations')]);
  const evidence=new Map((operations.applications||[]).map(j=>[j.id,j]));
  return {...data,jobs:data.jobs.map(j=>({...j,evidence:evidence.get(j.id)}))};
 }
@@ -179,8 +179,8 @@ async function handle(m,sender){
 // Serialize storage mutations across messages, alarms and tab events.
 let chain=Promise.resolve();
 function serial(fn){const result=chain.then(fn);chain=result.catch(()=>{});return result;}
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{serial(()=>handle(m,sender)).then(data=>reply({ok:true,data})).catch(e=>reply({ok:false,error:e.message}));return true;});
-chrome.alarms.onAlarm.addListener(a=>{if(a.name==='queue')serial(tick).catch(()=>{});});
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{(['list','dashboard-status'].includes(m.action)?handle(m,sender):serial(()=>handle(m,sender))).then(data=>reply({ok:true,data})).catch(e=>reply({ok:false,error:e.message}));return true;});
+chrome.alarms.onAlarm.addListener(a=>{if(a.name==='queue')return serial(tick).catch(()=>{});});
 chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:!s.userPaused,error:'Browser restarted. Existing unfinished applications remain paused; new eligible jobs continue automatically.'});}));
 chrome.runtime.onInstalled.addListener(()=>serial(initialize));
 chrome.tabs.onRemoved.addListener(id=>serial(async()=>{const s=await read();for(const r of Object.values(s.records))if(r.tabId===id){r.tabId=null;r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records});await tick();}).catch(()=>{}));

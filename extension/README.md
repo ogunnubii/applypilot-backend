@@ -1,10 +1,12 @@
-Version 0.6.14 records distinct manual Submit clicks with stable IDs, retries only failed tracking requests, and never blocks or repeats employer submission actions. French-language form exclusion follows the account preference.
+Version 0.6.15 lets the job list and connection checks respond independently of long form and AI operations. Popup requests time out with a retry message instead of showing Loading indefinitely.
 
-Version 0.6.14: autofill-only mode fills new fields as they appear and refreshes saved answers. You control Next and Submit. Native Submit clicks are never cancelled or replayed; repeated manual clicks remain available. Tracking failure does not block the employer form. Earlier release notes describing click interception are superseded.
+Version 0.6.15 records distinct manual Submit clicks with stable IDs, retries only failed tracking requests, and never blocks or repeats employer submission actions. French-language form exclusion follows the account preference.
+
+Version 0.6.15: autofill-only mode fills new fields as they appear and refreshes saved answers. You control Next and Submit. Native Submit clicks are never cancelled or replayed; repeated manual clicks remain available. Tracking failure does not block the employer form. Earlier release notes describing click interception are superseded.
 
 # ApplyPilot Local for Windows Chrome and Edge
 
-Version 0.6.14 recognizes combined first-and-last-name prompts from your saved full name. It also fixes saved-answer refill stalls when reopening an existing form, prioritizes visible field labels over generic input identifiers, and reconnects forms that loaded before they were linked. It preserves approved answers when unapproved captures disagree, waits briefly for delayed employer forms, and gives Gemini enough time to return an answer. Existing edits and submission-attempt guards remain intact. Final Submit stays with you. Update the existing extension folder and reload the same installation to retain its records.
+Version 0.6.15 recognizes combined first-and-last-name prompts from your saved full name. It also fixes saved-answer refill stalls when reopening an existing form, prioritizes visible field labels over generic input identifiers, and reconnects forms that loaded before they were linked. It preserves approved answers when unapproved captures disagree, waits briefly for delayed employer forms, and gives Gemini enough time to return an answer. Existing edits and submission-attempt guards remain intact. Final Submit stays with you. Update the existing extension folder and reload the same installation to retain its records.
 
 1. Start the local backend using `../start-local.ps1 -Install`, or deploy the updated hosted backend/dashboard.
 2. In your usual signed-in browser profile, open `chrome://extensions` or `edge://extensions`, enable Developer mode, click Load unpacked, and select this directory.

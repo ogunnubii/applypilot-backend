@@ -23,7 +23,7 @@
   }
 
   const aliases={
-   name:['full name','your full name','name','your name'],first:['first name','given name'],last:['last name','family name','surname'],
+   name:['full name','your full name','name','your name','first and last name','your first and last name','first & last name','your first & last name'],first:['first name','given name'],last:['last name','family name','surname'],
    email:['email','email address','your email','your email address'],phone:['phone','phone number','telephone','telephone number','mobile','mobile phone','mobile number','contact number','contact phone number','primary phone number'],
    location:['location','current location'],city:['location city','city','current city','city of residence','town','town city','city town'],country:['country','country of residence','current country','residence country'],
    region:['state','province','state province','province state'],postal:['postal code','zip code','zip postal code'],

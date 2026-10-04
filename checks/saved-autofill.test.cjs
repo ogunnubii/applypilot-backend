@@ -5,7 +5,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
 
 test('visible field labels win over generic metadata and genuine saved conflicts remain blank',async()=>{
  const {JSDOM}=require('jsdom');
- const dom=new JSDOM('<form><label>First name<input id="name" required></label><label>Last name<input name="name" id="last" required></label><label>City<input id="city" required></label><label>Email<input id="email" required></label><button type="button">Submit application</button></form>',{runScripts:'outside-only',url:'https://jobs.lever.co/example/test'}),w=dom.window;
+ const dom=new JSDOM('<form><label>First name<input id="name" required></label><label>Last name<input name="name" id="last" required></label><label>City<input id="city" required></label><label>Email<input id="email" required></label><label>First and last name<input id="combined-name" required></label><button type="button">Submit application</button></form>',{runScripts:'outside-only',url:'https://jobs.lever.co/example/test'}),w=dom.window;
  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});w.HTMLElement.prototype.getClientRects=function(){return [{}]};w.setInterval=()=>0;
  let listener,linked=false,attempted=false,clicks=0;const messages=[];
  w.document.querySelector('button').onclick=()=>clicks++;
@@ -14,6 +14,7 @@ test('visible field labels win over generic metadata and genuine saved conflicts
  assert.equal(w.document.querySelector('#name').value,'');linked=true;
  await new Promise(resolve=>listener({action:'fill'},{},resolve));
  assert.equal(w.document.querySelector('#name').value,'Test');assert.equal(w.document.querySelector('#last').value,'Applicant');assert.equal(w.document.querySelector('#email').value,'test@example.test');assert.equal(w.document.querySelector('#city').value,'');
+ assert.equal(w.document.querySelector('#combined-name').value,'Test Applicant');
  assert.equal(clicks,0);assert(!messages.some(m=>m.action==='attempt'));
  // A newly observed server attempt must prevent even a refill, not just Submit.
  w.document.querySelector('#email').value='';attempted=true;
@@ -53,4 +54,13 @@ test('a delayed employer form is filled after loading and still waits for manual
  w.document.querySelector('main').innerHTML='<form><label>Email<input required type="email"></label><button type="button">Submit application</button></form>';let clicks=0;w.document.querySelector('button').onclick=()=>clicks++;
  for(const fn of [...timers])await fn();
  assert.equal(w.document.querySelector('input').value,'test@example.test');assert.equal(clicks,0);assert(messages.some(m=>m.action==='progress'&&/Ready to submit/.test(m.message)));w.close();
+});
+
+test('combined name prompts use approved name facts without matching another person',()=>{
+ const context={};vm.runInNewContext(read('extension/policy.js'),context);const policy=context.ApplyPilotPolicy;
+ for(const q of ['First and last name','Your first & last name','Please enter your first and last name'])assert.equal(policy.knownAnswer(q,{name:'Test Applicant'},{}),'Test Applicant');
+ assert.equal(policy.knownAnswer('First and last name',{name:'Test Applicant'},{'Full name':'Approved Applicant'}),'Approved Applicant');
+ assert.equal(policy.knownAnswer('First and last name',{name:'Test Applicant'},{'Full name':'One Applicant','Your name':'Other Applicant'}),null);
+ for(const q of ['First name','Last name'])assert.notEqual(policy.fieldKind(q),'name');
+ for(const q of ['Manager first and last name','Referral first and last name','Electronic signature: first and last name'])assert.equal(policy.knownAnswer(q,{name:'Test Applicant'},{}),null);
 });

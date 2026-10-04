@@ -123,9 +123,9 @@ async function handle(m,sender){
   if(matches.length===1){const tabs=await chrome.tabs.query({});if(tabs.filter(t=>P.sameApplication(t.url,matches[0].url)).length===1){b=matches[0];b.tabId=sender.tab.id;b.auto=false;await saveRecord(b);}}
  }
  if(!b||sender.frameId!==0)throw Error('This tab is not linked to an active ApplyPilot application.');
- if(m.action==='packet'){const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);return {...packet,automatic:b.auto&&!b.attempted};}
+ if(m.action==='packet'){const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);return {...packet,automatic:b.auto&&!b.attempted,autofillOnly:true};}
  if(m.action==='attention-position'){const {jobs}=await listedJobs(),waiting=P.attentionOrder(jobs),index=waiting.findIndex(j=>j.id===b.id);return {position:index<0?0:index+1,total:waiting.length};}
- if(m.action==='state')return {attempted:b.attempted,automatic:b.auto&&!b.attempted,refreshEnabled:!!s.enabled&&!s.userPaused&&!b.attempted,phase:b.phase};
+ if(m.action==='state')return {attempted:b.attempted,automatic:b.auto&&!b.attempted,autofillOnly:true,refreshEnabled:!!s.enabled&&!s.userPaused,phase:b.phase};
  if(m.action==='assistance'){b.assisted=true;await saveRecord(b);return api('/jobs/'+b.id+'/local/assistance','POST',{kind:'human'});}
  if(m.action==='answer'){if(b.attempted)throw Error('Submission already started.');return api('/jobs/'+b.id+'/local/answer','POST',{question:m.question,choices:m.choices,answerFormat:m.answerFormat});}
  if(m.action==='research-answer')return api('/jobs/'+b.id+'/local/research-answer','POST',{question:m.question});

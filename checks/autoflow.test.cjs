@@ -1,7 +1,7 @@
 const {test}=require('node:test');
 const fs=require('node:fs'),path=require('node:path');
 const sources=Object.fromEntries(["draft-provenance.js","answer-drafts.js","form-answer.js","paused-fact-fill.js","saved-answer-recovery.js","hosted-form.js","local-policy.js","automatic-answer.js","employer-limits.js","application-pipeline.js","application-dedup.js","assistant-page.html","assistant-client.js","extension/background.js","extension/content.js","extension/policy.js","work-eligibility.js","discovery.js","operation-evidence.js","continuation-queue.js","answer-library.js","worker.js","job-intelligence.js","matching.js","db.js","server.js","public-answer-fill.js","google-research.js","research-consent.js","resume-editor.js","web/setup.html","web/setup.js","extension/popup.js","extension/popup.html"].map(file=>[file,fs.readFileSync(path.join(__dirname,'..',file),'utf8')]));
-test("routine preparation stops at Submit and a trusted click is durably recorded once",()=>(async()=>{
+test("routine preparation observes native submit clicks without blocking retries or recording failures",()=>(async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict'),{implForWrapper}=require('../node_modules/jsdom/lib/generated/idl/utils.js'),{fireAnEvent}=require('../node_modules/jsdom/lib/jsdom/living/helpers/events.js'),MouseEvent=require('../node_modules/jsdom/lib/generated/idl/MouseEvent.js');
  const wait=()=>new Promise(r=>setTimeout(r,250));
  async function scenario(extra='',{denied=false,initialAttempt=false,automatic=true,receipt=false}={}){
@@ -10,7 +10,7 @@ test("routine preparation stops at Submit and a trusted click is durably recorde
   w.HTMLElement.prototype.getClientRects=function(){return this.type==='hidden'||this.closest('[hidden]')?[]:[{}]};
   const messages=[],timers=[];let attempted=initialAttempt,clicks=0;
   w.setInterval=fn=>{timers.push(fn);return timers.length};w.clearInterval=()=>{};
-  w.document.getElementById('submit').onclick=()=>{assert(attempted,'intent must precede click');clicks++;if(receipt)w.document.querySelector('form').innerHTML='<p>Thank you for applying</p>';};
+  w.document.getElementById('submit').onclick=()=>{clicks++;if(receipt)w.document.querySelector('form').innerHTML='<p>Thank you for applying</p>';};
   w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Fixture',attempted},profile:{name:'Applicant'},answers:{},resume:{name:'resume.pdf',base64:''}}};if(m.action==='state')return {ok:true,data:{attempted,automatic:automatic&&!attempted}};if(m.action==='attempt'){if(denied)return {ok:false,error:'transport uncertain'};assert(!attempted);attempted=true;}return {ok:true,data:{}};}}};
   w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);for(let n=0;n<80&&!messages.some(m=>m.action==='progress'&&m.blocked||m.action==='site-error')&&!initialAttempt;n++)await new Promise(r=>setTimeout(r,25));await wait();
   const trustedClick=async()=>{const button=w.document.getElementById('submit');if(button)fireAnEvent('click',implForWrapper(button),MouseEvent,{bubbles:true,cancelable:true,isTrusted:true});await wait();};
@@ -19,8 +19,8 @@ test("routine preparation stops at Submit and a trusted click is durably recorde
  }
  let f=await scenario('',{receipt:true});assert.equal(f.clicks,0,'automation must leave final Submit untouched');assert(!f.messages.some(m=>m.action==='attempt'));assert(f.messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')),JSON.stringify(f.messages));
  await f.trustedClick();assert.equal(f.clicks,1);assert.equal(f.messages.filter(m=>m.action==='attempt').length,1);await f.trustedClick();assert.equal(f.clicks,1,'the same trusted action is never replayed twice');await f.runTimers();assert(f.messages.some(m=>m.action==='receipt'));f.close();
- f=await scenario('',{denied:true});await f.trustedClick();assert.equal(f.clicks,0,'navigation stays paused when durable attempt recording fails');assert.equal(f.messages.filter(m=>m.action==='attempt').length,1);f.close();
- f=await scenario('',{initialAttempt:true});await f.trustedClick();assert.equal(f.clicks,0,'an already-recorded attempt cannot be submitted again');f.close();
+ f=await scenario('',{denied:true});await f.trustedClick();assert.equal(f.clicks,1,'tracking failure must not cancel the native click');assert.equal(f.messages.filter(m=>m.action==='attempt').length,1);f.close();
+ f=await scenario('',{initialAttempt:true});await f.trustedClick();assert.equal(f.clicks,1,'the user can click again after a recorded attempt');await f.trustedClick();assert.equal(f.clicks,2);assert.equal(f.messages.filter(m=>m.action==='attempt').length,0);f.close();
  for(const extra of ['<footer>By submitting you provide consent for a criminal record check.</footer>','<footer>Agreement to Arbitrate and privacy policy.</footer>']){f=await scenario(extra);assert(f.messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')),'static footer boilerplate must not block routine preparation');f.close();}
  for(const extra of ['<label>Unknown fact<input required></label>','<div class="g-recaptcha"></div>','<input type="password">','<label><input type="checkbox" required>I certify these statements are accurate</label>','<label>Gender<select required><option value="">Choose</option></select></label>']){f=await scenario(extra);assert(!f.messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')),extra);assert(!f.messages.some(m=>m.action==='attempt'));f.close();}
  return 'PASS extension: prepare-only final step, one durable trusted attempt, receipt confirmation, footer-safe checks, and required unknown/CAPTCHA/login/legal/demographic blocks';
@@ -214,7 +214,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.11",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.12",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -511,7 +511,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.11'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.12'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{

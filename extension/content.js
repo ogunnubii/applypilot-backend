@@ -3,7 +3,7 @@ const P=globalThis.ApplyPilotPolicy;
 if(globalThis.__applypilotAgentLoaded)return;globalThis.__applypilotAgentLoaded=true;
 let packet,bar,note,started=false,initialReceipt=false,attempted=false,timer,busy=false,stopped=false,lastStep='',stepAt=0,submitAt=0,pageWaitAt=Date.now();
 const aiTried=new Map(),aiIssues=new Map();
-let assistanceSent=false,submissionRecording=false,replayingSubmission=false;
+let assistanceSent=false,submissionRecording=false;
 const norm=P.normalize;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const visible=e=>!!e?.isConnected&&!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).display!=='none';
@@ -174,7 +174,7 @@ async function fill(){
  if(!packet)packet=await send('packet');attempted=attempted||!!packet.job.attempted;if(!bar)mount();
  let total=0;
  for(let pass=0;pass<4;pass++){
-  if(attempted)break;
+  if(attempted&&(!packet.autofillOnly||receipt()))break;
   let filled=await fillPass();total+=filled;
   const prepared=await prepareMissingAnswers();
   if(prepared){const added=await fillPass();filled+=added;total+=added;}
@@ -193,7 +193,7 @@ async function advance(){
  const state=await send('state');attempted=attempted||state.attempted;const issue=siteIssue();if(issue){stopped=true;clearInterval(timer);const result=await send('site-error',{code:issue.code,empty:controls().length===0&&!document.querySelector('form'),initial:lastStep===''});note.textContent=result.message;return;}
  const text=receipt();if(text&&!initialReceipt&&attempted){await send('receipt',{receipt:text});note.textContent='Employer receipt verified. Application submitted.';stopped=true;clearInterval(timer);return;}
  if(attempted){if(!submitAt)submitAt=Date.now();if(Date.now()-submitAt>30000)await report('Submission uncertain. Check the employer receipt before retrying.');return;}
- const check=review();if(check.fields.length){const issue=check.fields.map(q=>aiIssues.get(q)).find(Boolean);if(issue)check.reason+=' · '+issue;}if(!state.automatic){note.textContent=check.reason||'Saved details filled. Review the employer form and click Submit.';await report(note.textContent,check.fields,!!check.reason);if(!attempted){stopped=true;clearInterval(timer);}return;}if(check.reason)return report(check.reason,check.fields);if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
+ const check=review();if(check.fields.length){const issue=check.fields.map(q=>aiIssues.get(q)).find(Boolean);if(issue)check.reason+=' · '+issue;}if(!state.automatic||state.autofillOnly){note.textContent=check.reason||'Saved details filled. Review the employer form and click Submit.';await report(note.textContent,check.fields,!!check.reason);if(!attempted){stopped=true;clearInterval(timer);}return;}if(check.reason)return report(check.reason,check.fields);if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
  const signatureNow=signature();if(lastStep===signatureNow){if(Date.now()-stepAt>15000)await report('This step did not advance. Check employer validation.');return;}
  const bs=buttons(),submit=bs.filter(isSubmitAction),next=bs.filter(isNextAction);
  if(!controls().length&&!bs.some(b=>isSubmitAction(b)||isNextAction(b)||/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(b)))&&Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer form to load…';return;}
@@ -205,34 +205,44 @@ async function advance(){
  const apply=bs.filter(e=>/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(e)));if(!controls().length&&apply.length===1&&lastStep===''){await send('step');lastStep=signatureNow;stepAt=Date.now();apply[0].click();return;}await report('Application action is unfamiliar or ambiguous. Continue manually.');
 }
 function startReceiptMonitor(){stopped=false;clearInterval(timer);timer=setInterval(monitor,2500);}
-async function persistAndReplaySubmission(button,form){
- if(submissionRecording||attempted)return;submissionRecording=true;
- try{await send('capture',{fields:formAnswers()}).catch(()=>{});await send('attempt',{before:bodyText(),human:true});attempted=true;submitAt=Date.now();note.textContent='Submission recorded. Waiting for employer confirmation.';startReceiptMonitor();replayingSubmission=true;if(button)button.click();else if(form?.requestSubmit)form.requestSubmit();else if(form)HTMLFormElement.prototype.submit.call(form);}
- catch(error){stopped=true;clearInterval(timer);note.textContent='Submit paused because ApplyPilot could not record the attempt: '+error.message+'. Keep this page open and review it in ApplyPilot.';await send('progress',{fields:[],message:note.textContent,blocked:true}).catch(()=>{});}
- finally{replayingSubmission=false;if(attempted)submissionRecording=false;}
+async function observeManualSubmission(){
+ if(submissionRecording||attempted)return;
+ submissionRecording=true;attempted=true;submitAt=Date.now();
+ // Observe the user's native action; never cancel, replay, or synthesize Submit.
+ startReceiptMonitor();
+ try{await send('attempt',{before:bodyText(),human:true});}
+ catch(error){attempted=false;if(note)note.textContent='Your click was sent to the employer. ApplyPilot could not record it: '+error.message+'. Check the employer confirmation.';}
+ finally{submissionRecording=false;}
 }
-async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted)await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
+async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted||(packet?.autofillOnly&&!receipt()))await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
 // Refresh paused forms without reopening them or clicking any navigation button.
-let savedRefreshBusy=false,lastRefreshSignature='';
+let savedRefreshBusy=false,lastRefreshSignature='',formChanged=false,formChangeTimer;
 const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions]);
 async function refreshPausedAnswers(){
- if(!started||!stopped||busy||savedRefreshBusy||attempted||submissionRecording||siteIssue())return;
+ if(!started||!stopped||busy||savedRefreshBusy||submissionRecording||siteIssue()||receipt())return;
  savedRefreshBusy=true;busy=true;
  try{
-  const state=await send('state');if(state.attempted){attempted=true;return;}if(!state.refreshEnabled)return;
-  const latest=await send('packet');if(latest.job.attempted){attempted=true;return;}
+  const state=await send('state');if(state.attempted){attempted=true;if(!state.autofillOnly)return;}if(!state.refreshEnabled)return;
+  const latest=await send('packet');if(latest.job.attempted){attempted=true;if(!latest.autofillOnly)return;}
   const formSignature=signature();
-  if(answerSnapshot(latest)===answerSnapshot(packet)&&formSignature===lastRefreshSignature)return;
-  lastRefreshSignature=formSignature;
+  if(answerSnapshot(latest)===answerSnapshot(packet)&&formSignature===lastRefreshSignature&&!formChanged)return;
+  lastRefreshSignature=formSignature;formChanged=false;
   packet=latest;busy=true;attemptedCustom=new WeakMap();
-  // Only fill already saved answers here. AI preparation runs through the existing
-  // bounded server worker; partial answer updates never advance or submit a form.
-  await fillPass();const check=review();
+  // Autofill-only refresh uses saved facts and bounded AI preparation; it never
+  // advances or submits a form, and preserves existing field values.
+  if(packet.autofillOnly)await fill();else await fillPass();const check=review();
   await report(check.reason||'Ready to submit - all supported fields are filled. Review the form, then click Submit.',check.fields,true);
  }catch{/* Keep the existing form and edits intact when the connection is unavailable. */}
  finally{busy=false;savedRefreshBusy=false;}
 }
-if(!siteIssue())setInterval(refreshPausedAnswers,30000);
+if(!siteIssue()){
+ setInterval(refreshPausedAnswers,30000);
+ new MutationObserver(changes=>{
+  if(!changes.some(c=>!bar?.contains(c.target)&&[...c.addedNodes,...c.removedNodes].some(n=>n!==bar)))return;
+  formChanged=true;clearTimeout(formChangeTimer);
+  formChangeTimer=setTimeout(()=>{if(packet?.autofillOnly)refreshPausedAnswers();},750);
+ }).observe(document.body,{subtree:true,childList:true});
+}
 async function resumeFill(){
  if(busy)throw Error('Form preparation is already running. Wait for it to finish.');busy=true;clearInterval(timer);pageWaitAt=Date.now();
  try{packet=await send('packet');attempted=attempted||!!packet.job.attempted||!!(await send('state')).attempted;
@@ -243,10 +253,13 @@ async function resumeFill(){
 async function begin(){try{await resumeFill();}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched and can be linked later. */}}
 for(const type of ['input','change'])document.addEventListener(type,e=>{if(started&&e.isTrusted&&!bar?.contains(e.target)&&e.target.matches?.('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]'))recordAssistance();},true);
 document.addEventListener('click',e=>{
- const b=e.target.closest?.('button,input[type="submit"],[role="button"]');if(!started||!e.isTrusted||!b||bar?.contains(b))return;recordAssistance();if(!isSubmitAction(b)||replayingSubmission)return;e.preventDefault();e.stopImmediatePropagation();if(attempted||submissionRecording){if(note)note.textContent='This submission action was already recorded. Check the employer receipt before trying again.';return;}persistAndReplaySubmission(b,b.form||b.closest('form'));
+ const b=e.target.closest?.('button,input[type="submit"],[role="button"]');if(!started||!e.isTrusted||!b||bar?.contains(b))return;
+ recordAssistance();if(isSubmitAction(b)&&(!b.form||b.form.checkValidity()))void observeManualSubmission();
 },true);
 document.addEventListener('submit',e=>{
- if(!started||!e.isTrusted||replayingSubmission)return;const form=e.target,submitter=e.submitter&&isSubmitAction(e.submitter)?e.submitter:buttons().find(b=>b.form===form&&isSubmitAction(b));if(!submitter)return;e.preventDefault();e.stopImmediatePropagation();recordAssistance();if(attempted||submissionRecording){if(note)note.textContent='This submission action was already recorded. Check the employer receipt before trying again.';return;}persistAndReplaySubmission(submitter,form);
+ if(!started||!e.isTrusted)return;
+ const form=e.target,submitter=e.submitter&&isSubmitAction(e.submitter)?e.submitter:buttons().find(b=>b.form===form&&isSubmitAction(b));
+ if(submitter){recordAssistance();void observeManualSubmission();}
 },true);
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.action==='fill'){resumeFill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}});
 begin();

@@ -86,3 +86,18 @@ test('a manually opened delayed form fills when controls appear without changing
  w.document.querySelector('main').innerHTML='<form><label>Email<input required type="email"></label><button type="button">Submit application</button></form>';w.document.querySelector('button').onclick=()=>clicks++;
  await sync();assert.equal(w.document.querySelector('input').value,'test@example.test');assert.equal(clicks,0);w.close();
 });
+test('autofill-only fills new controls and never intercepts repeated manual submit clicks',async()=>{
+ const {JSDOM}=require('jsdom'),dom=new JSDOM('<form><label>Email<input required type="email"></label><button type="button">Continue</button><button type="submit">Submit application</button></form>',{runScripts:'outside-only',url:'https://jobs.lever.co/example/test'}),w=dom.window;
+ const handlers={},messages=[];let clicks=0,serverAttempted=false;
+ const listen=w.document.addEventListener.bind(w.document);w.document.addEventListener=(type,fn,...args)=>{if(['click','submit'].includes(type))handlers[type]=fn;return listen(type,fn,...args);};
+ Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});w.HTMLElement.prototype.getClientRects=()=>[{}];w.setInterval=()=>0;w.clearInterval=()=>{};
+ w.document.querySelector('button').onclick=()=>clicks++;
+ w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='attempt')serverAttempted=true;return {ok:true,data:m.action==='packet'?{job:{title:'Fixture',attempted:serverAttempted},autofillOnly:true,profile:{email:'test@example.test',phone:'123'},answers:{}}:m.action==='state'?{automatic:true,autofillOnly:true,refreshEnabled:true,attempted:serverAttempted}:{}};}}};
+ w.eval(read('extension/policy.js'));w.eval(read('extension/content.js'));await wait(50);
+ assert.equal(w.document.querySelector('input').value,'test@example.test');assert.equal(clicks,0);assert(!messages.some(m=>m.action==='step'));
+ w.document.querySelector('form').insertAdjacentHTML('beforeend','<label>Phone<input id="late-phone"></label>');
+ await wait(1200);assert.equal(w.document.querySelector('#late-phone').value,'123');
+ const button=w.document.querySelector('[type=submit]');const ev={target:button,isTrusted:true,preventDefault(){throw Error('Must not cancel user click')},stopImmediatePropagation(){throw Error('Must not block employer handler')}};
+ handlers.click(ev);handlers.click(ev);handlers.submit({...ev,target:button.form,submitter:button});await wait(30);
+ handlers.click(ev);await wait(30);assert.equal(messages.filter(m=>m.action==='attempt').length,1,'repeated native clicks do not inflate application counts');assert.equal(clicks,0);w.close();
+});

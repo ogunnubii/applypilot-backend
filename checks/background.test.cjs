@@ -65,3 +65,8 @@ test('Dashboard can focus an existing application without restarting it; foreign
 });
 
 test('Automatic submission intent is rejected before any server or record mutation',async()=>{const h=harness();await h.send('open',{id:'a',auto:true});const result=await h.send('attempt',{before:'Application form'},h.sender('a'));assert(!result.ok);assert(!h.shared.store.records.a.attempted);assert(!h.shared.calls.some(c=>c.route.endsWith('/attempt')));});
+
+test('manual open reuses the exact employer tab and brings its window forward',async()=>{
+ const h=harness();await h.send('open',{id:'a',auto:true});const tab=h.shared.tabs.find(t=>t.id===h.shared.store.records.a.tabId);tab.windowId=7;tab.active=false;
+ const before=h.shared.tabs.length;await h.send('open',{id:'a',auto:false});assert.equal(h.shared.tabs.length,before);assert.equal(tab.active,true);assert.equal(h.shared.store.records.a.auto,false);
+});

@@ -25,3 +25,13 @@ test('read requests prefer active dashboards and skip a frozen tab without retry
  const ctx=vm.createContext({chrome,URL,importScripts(){},ApplyPilotPolicy:{},setTimeout:fn=>setTimeout(fn,1),clearTimeout});vm.runInContext(fs.readFileSync('extension/background.js','utf8')+';globalThis.fetchJobs=()=>api("/jobs");',ctx);
  assert.deepEqual(Array.from((await ctx.fetchJobs()).jobs),[]);assert.deepEqual(calls,[2,1]);
 });
+
+test('popup buttons distinguish foreground fill, prevent repeat requests, and show local errors and holds',async()=>{
+ const {JSDOM}=require('jsdom');const dom=new JSDOM(fs.readFileSync('extension/popup.html','utf8'),{runScripts:'outside-only'}),w=dom.window;
+ let finish;const calls=[];w.ApplyPilotPolicy={attentionOrder:()=>[],supported:()=>true};w.chrome={runtime:{sendMessage:async m=>{calls.push(m);if(m.action==='list')return {ok:true,data:{state:{enabled:true,queue:[]},jobs:[{id:'good',status:'queued',title:'Good',company:'Example'},{id:'hold',status:'queued',title:'Held',employer_hold:{message:'Employer application limit reached'},url:'https://jobs.lever.co/example/held'}]}};return new Promise(resolve=>{finish=resolve;});}}};
+ w.eval(fs.readFileSync('extension/popup.js','utf8'));await new Promise(r=>setImmediate(r));
+ const row=w.document.querySelector('[data-job-id="good"]'),buttons=row.querySelectorAll('button');buttons[1].click();assert.equal(calls.at(-1).auto,false);assert(buttons[0].disabled&&buttons[1].disabled);assert.match(row.textContent,/Opening this application/);buttons[1].click();assert.equal(calls.filter(c=>c.action==='open').length,1);
+ finish({ok:false,error:'This application belongs to another browser'});await new Promise(r=>setImmediate(r));assert.match(row.querySelector('[role=status]').textContent,/another browser/);assert(!buttons[1].disabled);
+ buttons[0].click();assert.equal(calls.at(-1).auto,true);finish({ok:true,data:{opened:true}});await new Promise(r=>setImmediate(r));assert.match(row.textContent,/Preparation started/);
+ const held=w.document.querySelector('[data-job-id="hold"]');assert([...held.querySelectorAll('button')].every(b=>b.disabled));assert.match(held.textContent,/Employer application limit/);assert(held.querySelector('a'));w.close();
+});

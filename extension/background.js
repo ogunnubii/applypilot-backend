@@ -12,7 +12,7 @@ async function api(path,method='GET',data){
    const token=sessionStorage.getItem('applypilot-token');if(!token)return {error:'Sign in to ApplyPilot first.'};
    try{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(/\/local\/(?:answer|research-answer)$/.test(path)?60000:15000),headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','X-ApplyPilot-Device':device},body:method==='GET'?undefined:JSON.stringify(data)});const d=await r.json();return r.ok?{data:d}:{error:d.error||'Request failed',status:r.status};}catch{return {error:'Cannot reach ApplyPilot. Keep the dashboard open and retry.'};}
   },args:[env.api,path,method,data??null,state.device]});
-  result=method==='GET'?await Promise.race([execution,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Dashboard tab did not respond.')),5000);})]):await execution;
+  result=await Promise.race([execution,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(method==='GET'?'Dashboard tab did not respond.':'ApplyPilot did not acknowledge this request. Refresh the dashboard and check the application before retrying.')),method==='GET'?5000:/\/local\/(?:answer|research-answer)$/.test(path)?65000:20000);})]);
   }catch(error){if(method!=='GET')throw error;lastError=error;continue;}finally{clearTimeout(timer);}
   const r=result[0]?.result;if(r?.data)return r.data;if(r?.error!=='Sign in to ApplyPilot first.')throw Object.assign(Error(r?.error||'Dashboard unavailable'),{status:r?.status});
  }
@@ -39,7 +39,7 @@ async function openJob(id,auto=true,focus=false){
  await saveRecord(record);
  await api('/jobs/'+id+'/local/assistance','POST',{kind:record.safeInitialLoad?'tracking':'partial'});
  if(!tab){tab=await chrome.tabs.create({url:'about:blank',active:focus||!auto});record.tabId=tab.id;await saveRecord(record);let url=packet.job.url;if(/^jobs(\.eu)?\.lever\.co$/.test(new URL(url).hostname)&&!url.endsWith('/apply'))url=url.replace(/\/$/,'')+'/apply';await chrome.tabs.update(tab.id,{url});}
- else{record.tabId=tab.id;await saveRecord(record);if(focus||!auto)await chrome.tabs.update(tab.id,{active:true});chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']})).catch(()=>{});}
+ else{record.tabId=tab.id;await saveRecord(record);if(focus||!auto){await chrome.tabs.update(tab.id,{active:true});if(Number.isInteger(tab.windowId))await chrome.windows.update(tab.windowId,{focused:true});}chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']})).catch(()=>{});}
  return {opened:true,attempted:record.attempted};
 }
 function eligible(j,s){
@@ -120,7 +120,7 @@ async function handle(m,sender){
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){
   if(m.action==='list')return {...await listedJobs(),state:await read()};
-  if(m.action==='open')return openJob(m.id,m.auto!==false,true);
+  if(m.action==='open')return openJob(m.id,m.auto!==false,m.auto===false);
   if(m.action==='dashboard'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard});}
   if(m.action==='environment'){if(!environments[m.value])throw Error('Unknown environment');const s=await read();if(Object.keys(s.records).length)throw Error('Use a separate browser profile for another server while applications are tracked');await chrome.storage.local.set({environment:m.value,enabled:false,queue:[]});return {};}
   if(m.action==='stop'){const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;}await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});return {};}
@@ -182,7 +182,7 @@ async function handle(m,sender){
 // Serialize storage mutations across messages, alarms and tab events.
 let chain=Promise.resolve();
 function serial(fn){const result=chain.then(fn);chain=result.catch(()=>{});return result;}
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{(['list','dashboard-status'].includes(m.action)?handle(m,sender):serial(()=>handle(m,sender))).then(data=>reply({ok:true,data})).catch(e=>reply({ok:false,error:e.message}));return true;});
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{(['list','dashboard-status','state','attention-position','answer','research-answer'].includes(m.action)?handle(m,sender):serial(()=>handle(m,sender))).then(data=>reply({ok:true,data})).catch(e=>reply({ok:false,error:e.message}));return true;});
 chrome.alarms.onAlarm.addListener(a=>{if(a.name==='queue')return serial(tick).catch(()=>{});});
 chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:!s.userPaused,error:'Browser restarted. Existing unfinished applications remain paused; new eligible jobs continue automatically.'});}));
 chrome.runtime.onInstalled.addListener(()=>serial(initialize));

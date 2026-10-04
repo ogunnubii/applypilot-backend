@@ -1,3 +1,4 @@
+import {excludesFrench,archiveFrench} from './language-policy.js';
 import {employerHold} from './employer-limits.js';
 import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
 import {priorApplication} from './application-dedup.js';
@@ -12,6 +13,7 @@ export function pipelineEnabled(db,userId){
  return !!db.prepare('SELECT auto_queue_found FROM pipeline_preferences WHERE user_id=?').get(userId)?.auto_queue_found;
 }
 export function queueFoundApplications(db,userId,{applicantId=null}={}){
+ archiveFrench(db,userId);
  const result={queued:0,held:0,duplicates:0,applications:[]},at=new Date().toISOString();
  const record=(job,type,message)=>db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(job.id,at,type,message);
  const policyFor=job=>typeof companyApplicationPolicy==='function'?companyApplicationPolicy(db,job.applicant_id,job):{allowed:true};
@@ -63,7 +65,7 @@ export function queueFoundApplications(db,userId,{applicantId=null}={}){
  }catch(error){db.exec('ROLLBACK');throw error;}
 }
 export function pipelineStatus(db,userId){
- return {enabled:pipelineEnabled(db,userId),found:db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_id=? AND status='saved'").get(userId).n};
+ return {excludeFrench:excludesFrench(db,userId),enabled:pipelineEnabled(db,userId),found:db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_id=? AND status='saved'").get(userId).n};
 }
 export function setPipeline(db,userId,enabled){
  if(typeof enabled!=='boolean')throw Error('Choose whether found jobs should queue automatically.');

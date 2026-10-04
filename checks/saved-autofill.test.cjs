@@ -99,5 +99,13 @@ test('autofill-only fills new controls and never intercepts repeated manual subm
  await wait(1200);assert.equal(w.document.querySelector('#late-phone').value,'123');
  const button=w.document.querySelector('[type=submit]');const ev={target:button,isTrusted:true,preventDefault(){throw Error('Must not cancel user click')},stopImmediatePropagation(){throw Error('Must not block employer handler')}};
  handlers.click(ev);handlers.click(ev);handlers.submit({...ev,target:button.form,submitter:button});await wait(30);
- handlers.click(ev);await wait(30);assert.equal(messages.filter(m=>m.action==='attempt').length,1,'repeated native clicks do not inflate application counts');assert.equal(clicks,0);w.close();
+ handlers.click(ev);await wait(30);assert.equal(messages.filter(m=>m.action==='attempt').length,3,'each distinct click is recorded; its submit event is not duplicated');assert.equal(new Set(messages.filter(m=>m.action==='attempt').map(m=>m.clickId)).size,3);assert.equal(clicks,0);w.close();
+});
+test('submission tracking retries stored messages with the same ID without operating employer tabs',async()=>{
+ const payload={url:'https://jobs.lever.co/example/test',before:'Application',human:true,clickId:'click-1'};
+ const state={records:{j:{id:'j',pendingClicks:{'click-1':payload}}},device:'fixture'};let fail=true;const calls=[];
+ const noOp={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v)}},tabs:{query:async()=>[{id:1}],onRemoved:noOp},runtime:{onMessage:noOp,onStartup:noOp,onInstalled:noOp},alarms:{onAlarm:noOp},scripting:{executeScript:async request=>{calls.push(request.args.slice(1,4));return [{result:fail?{error:'offline',status:503}:{data:{ok:true,clicks:1}}}];}}};
+ const context={chrome,URL,Date,importScripts(){},ApplyPilotPolicy:{}};vm.runInNewContext(read('extension/background.js')+';globalThis.retryRecords=retrySubmissionRecords;',context);
+ await context.retryRecords();assert(state.records.j.pendingClicks['click-1']);fail=false;await context.retryRecords();
+ assert.equal(Object.keys(state.records.j.pendingClicks).length,0);assert.equal(calls.length,2);assert.equal(calls[0][0],'/jobs/j/local/attempt');assert.deepEqual(calls[0][2],calls[1][2]);assert.equal(calls[1][2].clickId,'click-1');
 });

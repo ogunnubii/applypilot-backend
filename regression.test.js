@@ -198,7 +198,8 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({...intent,human:false})})).status,409);
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({...intent,human:false,automatic:true})})).status,409);
   assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify(intent)})).status,200);
-  assert.equal((await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify(intent)})).status,409);
+  const repeat=await (await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify(intent)})).json();assert.equal(repeat.duplicate,true);assert.equal(repeat.clicks,1);
+  const retry=await (await fetch(endpoint+'attempt',{method:'POST',headers,body:JSON.stringify({...intent,clickId:'retry-2'})})).json();assert.equal(retry.clicks,2);assert.equal(retry.confirmed,false);
   assert.equal((await (await fetch(endpoint+'claim',{method:'POST',headers,body:'{}'})).json()).attempted,true);
   assert.equal((await fetch(endpoint+'submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Thank you for applying',url:'https://jobs.lever.co/example/other',afterSubmit:true})})).status,400);
   assert.equal((await fetch(endpoint+'submitted',{method:'POST',headers,body:JSON.stringify({receipt:'Thank you for applying',url:'https://jobs.lever.co/example/def',afterSubmit:true})})).status,200);

@@ -92,5 +92,17 @@
    return (Array.isArray(jobs)?jobs:[]).filter(job=>needsInput(job)&&job.id&&!seen.has(job.id)&&seen.add(job.id)).sort((a,b)=>(Date.parse(a.created_at)||0)-(Date.parse(b.created_at)||0)||String(a.id).localeCompare(String(b.id)));
   }
 
-  globalThis.ApplyPilotPolicy = Object.freeze({needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
+const languagePlain=v=>String(v||'').replace(/<[^>]*>/g,' ').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+function frenchApplication(job={}){
+ let metadata={};try{metadata=JSON.parse(job.job_metadata_json||'{}')}catch{}
+ const lang=String(job.language||job.formLanguage||metadata.formLanguage||'').toLowerCase();
+ if(/^fr(?:-|$)/.test(lang)||metadata.frenchApplication===true)return true;
+ const title=languagePlain(job.title),text=languagePlain([job.title,job.description,job.required_fields_json].join(' '));
+ if(/\b(?:ingenieur|ingenieure|gestionnaire|developpeur|developpeuse|administrateur|administratrice|conseiller|conseillere|technicien|technicienne)\b/.test(title))return true;
+ if(/(?:[?&](?:lang|locale|language)=fr(?:[-_][a-z]+)?(?:&|$)|\/fr(?:[-_](?:ca|fr))?\/)/i.test(job.url||''))return true;
+ const signals=['postuler','candidature','votre experience','vos competences','curriculum vitae','lettre de motivation','prenom','courriel','autorise a travailler','nous recherchons','vous serez','rejoignez'];
+ return signals.filter(s=>text.includes(s)).length>=2;
+}
+
+  globalThis.ApplyPilotPolicy = Object.freeze({frenchApplication,needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
 })();

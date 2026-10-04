@@ -1,3 +1,4 @@
+import {excludesFrench,frenchApplication,archiveFrench} from './language-policy.js';
 import {employerHold} from './employer-limits.js';
 import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
 import {pipelineEnabled,queueFoundApplications} from './application-pipeline.js';
@@ -234,6 +235,7 @@ async function executeSearch(id,userId){
    if(!cached&&detailsFetched>=12)continue;if(!cached)detailsFetched++;
    try{const detail=await cachedJSON(job.descriptionURL,3600000);job.description=detail.content||'';job.pay_input_ranges=detail.pay_input_ranges;job.publishedAt=detail.first_published||job.publishedAt;}catch(e){errors.push('Could not verify '+job.company+': '+String(e.message).slice(0,100));continue;}
   }
+  if(excludesFrench(db,userId)&&frenchApplication(job))continue;
   const metadata=jobIntelligence(job,intent,applicant.focus),existing=db.prepare('SELECT * FROM jobs WHERE applicant_id=? AND normalized_url=?').get(applicant.id,url);
   if(existing)saveMetadata(existing.id,metadata);
   if(intent.worldwideEligibility&&!metadata.eligibility.eligible)continue;
@@ -252,7 +254,7 @@ async function executeSearch(id,userId){
    .run(jobId,userId,applicant.id,String(job.title).slice(0,200),String(job.company).slice(0,200),url,url,'Source: '+job.source+(job.location?' · '+String(job.location).slice(0,100):'')+' · '+metadata.reasons.join(' · '),date,date);
   if(result.changes){saveMetadata(jobId,metadata);added++;event(jobId,'saved','Found by search: '+resolved.instruction);}
  }
- const enrichment=await refreshTrackedJobs(userId,applicant,intent);errors.push(...enrichment.errors);
+ const enrichment=await refreshTrackedJobs(userId,applicant,intent);archiveFrench(db,userId);errors.push(...enrichment.errors);
  // The account-wide pipeline includes every found role, regardless of ranking. Prior attempts remain protected.
  if(pipelineEnabled(db,userId))queued+=queueFoundApplications(db,userId,{applicantId:applicant.id}).queued;
  else if(search.auto_queue&&applicant.consent&&applicant.email&&applicant.resume_path){

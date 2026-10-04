@@ -44,7 +44,17 @@ function eligible(j,s){
  return j.execution_mode==='local'&&P.supported(j.url)&&!j.local_attempt_at&&!r?.attempted&&!['Unconfirmed submission','Submission in progress','Sensitive action'].includes(j.challenge)&&
  (j.status==='queued'&&!r)&&!Object.values(s.records).some(other=>other.siteCooldownUntil>Date.now()&&new URL(other.url).hostname===new URL(j.url).hostname);
 }
+async function retrySubmissionRecords(){
+ const s=await read();let sent=0;
+ for(const b of Object.values(s.records))for(const [id,payload] of Object.entries(b.pendingClicks||{})){
+  if(sent++>=3)return;
+  try{await api('/jobs/'+b.id+'/local/attempt','POST',payload);delete b.pendingClicks[id];await saveRecord(b);}
+  catch(e){if(e.status&&e.status<500&&e.status!==429){delete b.pendingClicks[id];b.recordError=e.message;await saveRecord(b);}return;}
+ }
+}
 async function tick(){
+ await retrySubmissionRecords();
+
  const s=await read();if(!s.enabled)return;
  const active=Object.values(s.records).find(r=>r.auto&&['ready','verifying'].includes(r.phase));
  if(active){
@@ -134,7 +144,8 @@ async function handle(m,sender){
   const automatic=m.automatic===true&&b.auto===true;
   if(m.human!==true&&!automatic)throw Error('Automation was stopped. Review the employer form manually.');
   b.attempted=true;b.phase='verifying';b.touched=Date.now();await saveRecord(b);
-  try{await api('/jobs/'+b.id+'/local/attempt','POST',{url:sender.url,before:m.before,human:m.human===true,humanAssisted:!!b.assisted,automatic});}catch(e){b.auto=false;b.phase='blocked';await saveRecord(b);throw e;}return {};
+  const clickId=m.clickId||'legacy',payload={url:sender.url,before:String(m.before||'').slice(0,20000),human:m.human===true,clickId,humanAssisted:!!b.assisted,automatic};b.pendingClicks=b.pendingClicks||{};b.pendingClicks[clickId]=payload;await saveRecord(b);
+  try{const result=await api('/jobs/'+b.id+'/local/attempt','POST',payload);delete b.pendingClicks[clickId];await saveRecord(b);return result;}catch(e){b.auto=false;b.phase='blocked';if(e.status&&e.status<500&&e.status!==429)delete b.pendingClicks[clickId];await saveRecord(b);throw e;}
  }
  if(m.action==='step'){if(!b.auto)throw Error('Automation was stopped');if((b.steps||0)>=15)throw Error('Step limit reached. Continue manually.');await api('/jobs/'+b.id+'/local/step','POST',{});b.steps=(b.steps||0)+1;await saveRecord(b);return {};}
  if(m.action==='form-opened'){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;await saveRecord(b);return {};}
@@ -154,7 +165,7 @@ async function handle(m,sender){
  if(m.action==='progress'){
   if(Number(m.filled)>0){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;}
   b.touched=Date.now();if(m.blocked){b.phase='blocked';b.auto=false;}await saveRecord(b);
-  const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,filled:m.filled});if(m.blocked)await tick();return result;
+  const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,filled:m.filled,formLanguage:m.formLanguage});if(m.blocked)await tick();return result;
  }
  if(m.action==='capture')return api('/jobs/'+b.id+'/local/capture','POST',{fields:m.fields});
  if(m.action==='remember')return api('/jobs/'+b.id+'/answers','PUT',{question:m.question,answer:m.answer,remember:true});

@@ -3,7 +3,7 @@ const P=globalThis.ApplyPilotPolicy;
 if(globalThis.__applypilotAgentLoaded)return;globalThis.__applypilotAgentLoaded=true;
 let packet,bar,note,started=false,initialReceipt=false,attempted=false,timer,busy=false,stopped=false,lastStep='',stepAt=0,submitAt=0,pageWaitAt=Date.now();
 const aiTried=new Map(),aiIssues=new Map();
-let assistanceSent=false,submissionRecording=false;
+let assistanceSent=false,submissionRecording=false,lastNativeSubmitClickAt=0;
 const norm=P.normalize;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const visible=e=>!!e?.isConnected&&!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).display!=='none';
@@ -173,6 +173,7 @@ async function prepareMissingAnswers(){
 async function fill(){
  if(!packet)packet=await send('packet');attempted=attempted||!!packet.job.attempted;if(!bar)mount();
  let total=0;
+ if(packet.excludeFrench&&P.frenchApplication({title:packet.job.title,language:document.documentElement.lang,required_fields_json:JSON.stringify(controls().map(label))})){stopped=true;clearInterval(timer);note.textContent='French-language application excluded by your preference.';await send('progress',{blocked:true,fields:controls().map(label),formLanguage:'fr',message:note.textContent});return 0;}
  for(let pass=0;pass<4;pass++){
   if(attempted&&(!packet.autofillOnly||receipt()))break;
   let filled=await fillPass();total+=filled;
@@ -206,11 +207,11 @@ async function advance(){
 }
 function startReceiptMonitor(){stopped=false;clearInterval(timer);timer=setInterval(monitor,2500);}
 async function observeManualSubmission(){
- if(submissionRecording||attempted)return;
+ const clickId=crypto.randomUUID();
  submissionRecording=true;attempted=true;submitAt=Date.now();
  // Observe the user's native action; never cancel, replay, or synthesize Submit.
  startReceiptMonitor();
- try{await send('attempt',{before:bodyText(),human:true});}
+ try{await send('attempt',{before:bodyText(),human:true,clickId});}
  catch(error){attempted=false;if(note)note.textContent='Your click was sent to the employer. ApplyPilot could not record it: '+error.message+'. Check the employer confirmation.';}
  finally{submissionRecording=false;}
 }
@@ -254,12 +255,12 @@ async function begin(){try{await resumeFill();}catch(e){if(packet){if(!bar)mount
 for(const type of ['input','change'])document.addEventListener(type,e=>{if(started&&e.isTrusted&&!bar?.contains(e.target)&&e.target.matches?.('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]'))recordAssistance();},true);
 document.addEventListener('click',e=>{
  const b=e.target.closest?.('button,input[type="submit"],[role="button"]');if(!started||!e.isTrusted||!b||bar?.contains(b))return;
- recordAssistance();if(isSubmitAction(b)&&(!b.form||b.form.checkValidity()))void observeManualSubmission();
+ recordAssistance();if(isSubmitAction(b)&&(!b.form||b.form.checkValidity())){lastNativeSubmitClickAt=Date.now();void observeManualSubmission();}
 },true);
 document.addEventListener('submit',e=>{
  if(!started||!e.isTrusted)return;
  const form=e.target,submitter=e.submitter&&isSubmitAction(e.submitter)?e.submitter:buttons().find(b=>b.form===form&&isSubmitAction(b));
- if(submitter){recordAssistance();void observeManualSubmission();}
+ if(submitter&&Date.now()-lastNativeSubmitClickAt>1000){recordAssistance();void observeManualSubmission();}
 },true);
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.action==='fill'){resumeFill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}});
 begin();

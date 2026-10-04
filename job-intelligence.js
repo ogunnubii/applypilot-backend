@@ -1,3 +1,4 @@
+import {frenchApplication} from './language-policy.js';
 import {matchAssessment} from './matching.js';
 import {workEligibility} from './work-eligibility.js';
 const plain=v=>String(v||'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/<[^>]*>/g,' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
@@ -33,7 +34,7 @@ export function jobIntelligence(job,intent,focus='',date=Date.now()){
  const match=matchAssessment(job,intent,focus),eligibility=workEligibility(job),published=Date.parse(job.publishedAt||''),fresh=Number.isFinite(published)&&published<=date&&date-published<7*86400000;
  const remote=job.remote===true||/\bremote\b/i.test(job.location||''),preference=eligibility.eligible?(eligibility.kind==='worldwide-remote'?10:remote?8:6):0;
  const score=Math.max(0,Math.min(100,Math.round((match.score||0)*.85+preference+(fresh?5:0))));
- return {version:1,score,strong:!!match.strong,matched:!!match.matched,location:plain(job.location).slice(0,200),remote,employmentType:plain(job.employmentType).slice(0,80),eligibility,pay:compensation(job),publishedAt:Number.isFinite(published)?new Date(published).toISOString():null,checkedAt:new Date(date).toISOString(),available:true,reasons:[match.strong?'Strong role match':match.matched?'Related role match':'Outside current role preferences',eligibility.reason,...(fresh?['Published in the last 7 days']:[])],sourceUrl:job.url};
+ return {version:1,frenchApplication:frenchApplication(job),score,strong:!!match.strong,matched:!!match.matched,location:plain(job.location).slice(0,200),remote,employmentType:plain(job.employmentType).slice(0,80),eligibility,pay:compensation(job),publishedAt:Number.isFinite(published)?new Date(published).toISOString():null,checkedAt:new Date(date).toISOString(),available:true,reasons:[match.strong?'Strong role match':match.matched?'Related role match':'Outside current role preferences',eligibility.reason,...(fresh?['Published in the last 7 days']:[])],sourceUrl:job.url};
 }
 export function metadataFor(job){try{return JSON.parse(job.job_metadata_json||'{}')}catch{return {};}}
 export function nextApplicationEligible(job){

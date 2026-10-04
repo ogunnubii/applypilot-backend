@@ -19,3 +19,9 @@ test('popup timeout exits Loading, allows retry, and ignores a stale response',a
  assert.match(w.document.querySelector('#jobs').textContent,/New job/);
  responses[0]({ok:true,data:{state:{queue:[]},jobs:[]}});await new Promise(r=>setImmediate(r));assert.match(w.document.querySelector('#jobs').textContent,/New job/);w.close();
 });
+
+test('read requests prefer active dashboards and skip a frozen tab without retrying writes',async()=>{
+ const noop={addListener(){}};let calls=[];const chrome={storage:{local:{get:async()=>({device:'fixture'})}},tabs:{query:async()=>[{id:1,active:false},{id:2,active:true}],onRemoved:noop},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop},alarms:{onAlarm:noop},scripting:{executeScript:async({target})=>{calls.push(target.tabId);if(target.tabId===2)return new Promise(()=>{});return [{result:{data:{jobs:[]}}}];}}};
+ const ctx=vm.createContext({chrome,URL,importScripts(){},ApplyPilotPolicy:{},setTimeout:fn=>setTimeout(fn,1),clearTimeout});vm.runInContext(fs.readFileSync('extension/background.js','utf8')+';globalThis.fetchJobs=()=>api("/jobs");',ctx);
+ assert.deepEqual(Array.from((await ctx.fetchJobs()).jobs),[]);assert.deepEqual(calls,[2,1]);
+});

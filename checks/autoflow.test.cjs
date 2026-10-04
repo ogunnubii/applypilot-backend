@@ -65,7 +65,7 @@ test("browser queue reliability",()=>(async()=>{
  const state={records:{broken:{id:'broken',auto:true,phase:'ready',touched:0,url:'https://jobs.lever.co/example/a'}},queue:[],enabled:true};
  const noOp={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v)}},tabs:{get:async()=>{gets++;throw Error('missing tab');},query:async q=>{queries.push(q);return [{id:4}];},onRemoved:noOp},scripting:{executeScript:async({args})=>[{result:{data:args[1]==='/jobs'?{jobs:[]}:{ok:true}}}]},runtime:{onMessage:noOp,onStartup:noOp,onInstalled:noOp},alarms:{onAlarm:noOp}};
  const context={chrome,URL,console,Date,crypto:require('node:crypto').webcrypto,importScripts(){},ApplyPilotPolicy:{sameApplication:()=>false,supported:()=>true}};
- vm.runInNewContext(sources['extension/background.js']+';globalThis.testTick=tick;',context);await context.testTick();
+ vm.runInNewContext(sources['extension/background.js']+';globalThis.testTick=tick;',Object.assign(context,{setTimeout,clearTimeout}));await context.testTick();
  assert.equal(gets,0,'missing tab ID must never reach chrome.tabs.get');assert.equal(state.records.broken.auto,false);
  assert(queries.some(q=>q.url?.includes('https://marvelous-vitality-production-c2d8.up.railway.app/*')));
  return 'PASS background: missing tab IDs safely paused; authenticated Railway tabs included for sync';
@@ -116,7 +116,7 @@ test('exact saved answers fill required ARIA radio and checkbox controls using a
  assert(messages.some(m=>m.action==='capture'&&m.fields.some(f=>f.question==='Preferred work arrangement'&&f.answer==='Remote')&&m.fields.some(f=>f.question==='Receive product updates'&&f.answer==='Yes')));assert(messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')));assert(!messages.some(m=>m.action==='attempt'));w.close();
 });
 test('extension application identity collapses localized ATS aliases',()=>{
- const assert=require('node:assert/strict'),vm=require('node:vm'),ctx={URL};vm.runInNewContext(sources['extension/policy.js'],ctx);const same=ctx.ApplyPilotPolicy.sameApplication;
+ const assert=require('node:assert/strict'),vm=require('node:vm'),ctx={URL};vm.runInNewContext(sources['extension/policy.js'],Object.assign(ctx,{setTimeout,clearTimeout}));const same=ctx.ApplyPilotPolicy.sameApplication;
  assert(same('https://job-boards.greenhouse.io/acme/jobs/42?lang=fr&gh_src=mail','https://boards.greenhouse.io/acme/jobs/42?locale=en'));
  assert(same('https://acme.wd5.myworkdayjobs.com/fr-CA/Careers/job/Toronto/Engineer_R123?source=LinkedIn','https://acme.wd5.myworkdayjobs.com/en-US/Careers/job/Toronto/Engineer_R123'));
 });
@@ -154,7 +154,7 @@ test('dashboard resume rejects attempted applications and other origins',async()
  const state={automaticDefault:true,device:'00000000-0000-0000-0000-000000000001',enabled:true,records:{j:{id:'j',attempted:true,phase:'blocked'}},queue:[]};
  const noop={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop},alarms:{get:async()=>({}),onAlarm:noop},tabs:{onRemoved:noop}};
  const context={chrome,URL,console,Date,crypto:require('node:crypto').webcrypto,importScripts(){},ApplyPilotPolicy:{}};
- vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;',context);
+ vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;',Object.assign(context,{setTimeout,clearTimeout}));
  await assert.rejects(()=>context.testHandle({action:'resume-existing',id:'j'},{tab:{id:1},frameId:0,url:'https://malicious.example/'}),/Untrusted/);
  await assert.rejects(()=>context.testHandle({action:'resume-existing',id:'j'},{tab:{id:1},frameId:0,url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),/cannot automatically restart/);
  assert.equal(state.records.j.attempted,true);
@@ -215,7 +215,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.15",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.16",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -256,7 +256,7 @@ test('stalled browser sessions are separated from filling and receipt filters ex
 });
 
 test('employer error pages are classified without mistaking job descriptions for errors',async()=>{
- const assert=require('node:assert/strict'),vm=require('node:vm'),ctx={URL};vm.runInNewContext(sources['extension/policy.js'],ctx);
+ const assert=require('node:assert/strict'),vm=require('node:vm'),ctx={URL};vm.runInNewContext(sources['extension/policy.js'],Object.assign(ctx,{setTimeout,clearTimeout}));
  const f=ctx.ApplyPilotPolicy.employerPageIssue;
  assert.equal(f({title:'Greenhouse',text:"Error 503\nService Unavailable\nWe're a little lost in the weeds right now."}).code,503);
  for(const status of [500,502,503,504])assert.equal(f({status}).retryable,true);
@@ -289,7 +289,7 @@ test('employer retry uses one delayed GET only for a new empty page, and honours
   const url='https://job-boards.greenhouse.io/example/jobs/42',state={records:{j:{id:'j',url,tabId:3,auto:true,phase:'ready',touched:clock,safeInitialLoad:true,...changes}},enabled,automaticDefault:true,device:'fixture',queue:[]},updates=[],requests=[];
   const noop={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop,getURL:p=>'chrome-extension://fixture/'+p},alarms:{get:async()=>({}),onAlarm:noop},tabs:{get:async()=>({id:3,url}),update:async(id,options)=>{updates.push({id,...options});},query:async()=>[{id:1}],onRemoved:noop},scripting:{executeScript:async({args})=>{requests.push(args);return [{result:{data:args[1]==='/jobs'?{jobs:[]}:args[1].endsWith('/packet')?{job:{attempted:!!state.serverAttempted}}:{ok:true}}}];}}};
   const ctx={chrome,URL,console,Date:Clock,crypto:require('node:crypto').webcrypto,importScripts(){}};
-  vm.runInNewContext(sources['extension/policy.js'],ctx);vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;globalThis.testTick=tick;globalThis.testEligible=eligible;',ctx);
+  vm.runInNewContext(sources['extension/policy.js'],Object.assign(ctx,{setTimeout,clearTimeout}));vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;globalThis.testTick=tick;globalThis.testEligible=eligible;',Object.assign(ctx,{setTimeout,clearTimeout}));
   const sender={tab:{id:3},url,frameId:0};
   return {state,updates,requests,ctx,send:(m={})=>ctx.testHandle({action:'site-error',code:503,empty:true,initial:true,...m},sender),advance:async()=>{clock+=61000;await ctx.testTick();},url};
  }
@@ -312,7 +312,7 @@ test('employer retry uses one delayed GET only for a new empty page, and honours
 });
 
 test('hosted worker stops an HTTP 503 before inspecting or submitting a form and releases its browser',async()=>{
- const assert=require('node:assert/strict'),vm=require('node:vm'),ctx={URL};vm.runInNewContext(sources['extension/policy.js'],ctx);
+ const assert=require('node:assert/strict'),vm=require('node:vm'),ctx={URL};vm.runInNewContext(sources['extension/policy.js'],Object.assign(ctx,{setTimeout,clearTimeout}));
  let status='running',challenge=null,closed=false,gotoCount=0;const events=[];
  const db={prepare(sql){return {get(){if(sql.includes('FROM applicants'))return {id:'p',user_id:'u',consent:1,email:'applicant@example.test',resume_path:'fixture.pdf',answers_json:'{}'};return {status,challenge};},run(...values){if(sql.startsWith('UPDATE jobs SET status=')){status=values[0];challenge=values[1];}}};}};
  const page={setDefaultTimeout(){},goto:async()=>{gotoCount++;return {status:()=>503};},waitForTimeout:async()=>{},locator(selector){if(selector==='body')return {innerText:async()=>'Error 503\nService Unavailable'};if(selector==='form,input:visible,textarea:visible,select:visible')return {count:async()=>0};throw Error('Must not inspect/fill an error page: '+selector);},isClosed:()=>false};
@@ -502,7 +502,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  const jobs=[{id:'first',status:'paused',created_at:'2026-01-01'},{id:'second',status:'local_browser',created_at:'2026-01-02'},{id:'done',status:'submitted',local_phase:'blocked'}];
  const noOp={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},tabs:{query:async()=>[{id:4}],onRemoved:noOp},scripting:{executeScript:async({args})=>[{result:{data:args[1]==='/jobs'?{jobs}:{applications:[{id:'second',stalled:true}]}}}]},runtime:{getURL:p=>'chrome-extension://fixture/'+p,onMessage:noOp,onStartup:noOp,onInstalled:noOp},alarms:{get:async()=>({}),onAlarm:noOp}};
  const c={chrome,URL,console,Date,crypto:require('node:crypto').webcrypto,importScripts(){}};
- vm.runInNewContext(sources['extension/policy.js'],c);vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;',c);
+ vm.runInNewContext(sources['extension/policy.js'],Object.assign(c,{setTimeout,clearTimeout}));vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;',Object.assign(c,{setTimeout,clearTimeout}));
  const popup=await c.testHandle({action:'list'},{url:'chrome-extension://fixture/popup.html'});
  assert.equal(popup.jobs.find(j=>j.id==='second').evidence.stalled,true);
  const result=await c.testHandle({action:'attention-position'},{tab:{id:8},frameId:0,url:'https://jobs.lever.co/example/second'});
@@ -512,7 +512,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.15'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.16'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{
@@ -655,7 +655,7 @@ test('completion groups preserve a ranked browser pipeline including already que
  const jobs=[{id:'low',match_score:10,status:'queued',execution_mode:'local',url:'https://jobs.lever.co/x/low'},{id:'high',match_score:90,status:'queued',execution_mode:'local',url:'https://jobs.lever.co/x/high'}];
  const noop={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v)}},tabs:{onRemoved:noop},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop},alarms:{onAlarm:noop}};
  const context={chrome,URL,console,Date,importScripts(){},ApplyPilotPolicy:{supported:()=>true},fixtureJobs:jobs,opened};
- vm.runInNewContext(sources['extension/background.js']+';api=async()=>({jobs:fixtureJobs});openJob=async(id)=>opened.push(id);globalThis.testTick=tick;',context);
+ vm.runInNewContext(sources['extension/background.js']+';api=async()=>({jobs:fixtureJobs});openJob=async(id)=>opened.push(id);globalThis.testTick=tick;',Object.assign(context,{setTimeout,clearTimeout}));
  await context.testTick();assert.deepEqual(opened,['high']);assert.deepEqual(Array.from(state.queue),['low']);
 });
 
@@ -718,7 +718,7 @@ test('hosted worker records an explicit employer application limit without filli
 });
 
 test('common profile prompt wording resolves exact approved facts without widening question scope',()=>{
- const vm=require('node:vm'),assert=require('node:assert/strict'),c={};vm.runInNewContext(sources['extension/policy.js'],c);const p=c.ApplyPilotPolicy;
+ const vm=require('node:vm'),assert=require('node:assert/strict'),c={};vm.runInNewContext(sources['extension/policy.js'],Object.assign(c,{setTimeout,clearTimeout}));const p=c.ApplyPilotPolicy;
  for(const q of ['Please provide a link to your LinkedIn profile','What is your LinkedIn profile URL?','Please enter your LinkedIn URL','Share your GitHub profile']){
   assert.equal(p.knownAnswer(q,{}, {'LinkedIn Profile':'https://linkedin.com/in/example','GitHub':'https://github.com/example'}),q.includes('GitHub')?'https://github.com/example':'https://linkedin.com/in/example');
  }

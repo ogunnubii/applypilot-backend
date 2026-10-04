@@ -39,7 +39,7 @@ test('focus-existing releases the message queue so the form can fetch its saved 
  scripting:{executeScript:async()=>[{result:{data:{job:{id:'j'},answers:{City:'Toronto'}}}}]},
  runtime:{onMessage:{addListener(fn){listener=fn;}},onStartup:noOp,onInstalled:noOp,getURL:s=>'chrome-extension://fixture/'+s},alarms:{get:async()=>true,onAlarm:noOp}};
  const context={chrome,URL,Date,crypto:require('node:crypto').webcrypto,importScripts(){},ApplyPilotPolicy:{sameApplication:(a,b)=>a===b}};
- vm.runInNewContext(read('extension/background.js'),context);
+ vm.runInNewContext(read('extension/background.js'),Object.assign(context,{setTimeout,clearTimeout}));
  const result=await Promise.race([new Promise(resolve=>listener({action:'focus-existing',id:'j'},{tab:{id:1},frameId:0,url:'https://marvelous-vitality-production-c2d8.up.railway.app/'},resolve)),wait(1000).then(()=>({timeout:true}))]);
  assert.equal(result.timeout,undefined,'focus must not wait on its own serialized packet request');assert(result.ok);
  await wait(30);assert(packetReceived,'the content script received the saved-answer packet');
@@ -57,7 +57,7 @@ test('a delayed employer form is filled after loading and still waits for manual
 });
 
 test('combined name prompts use approved name facts without matching another person',()=>{
- const context={};vm.runInNewContext(read('extension/policy.js'),context);const policy=context.ApplyPilotPolicy;
+ const context={};vm.runInNewContext(read('extension/policy.js'),Object.assign(context,{setTimeout,clearTimeout}));const policy=context.ApplyPilotPolicy;
  for(const q of ['First and last name','Your first & last name','Please enter your first and last name'])assert.equal(policy.knownAnswer(q,{name:'Test Applicant'},{}),'Test Applicant');
  assert.equal(policy.knownAnswer('First and last name',{name:'Test Applicant'},{'Full name':'Approved Applicant'}),'Approved Applicant');
  assert.equal(policy.knownAnswer('First and last name',{name:'Test Applicant'},{'Full name':'One Applicant','Your name':'Other Applicant'}),null);
@@ -105,7 +105,7 @@ test('submission tracking retries stored messages with the same ID without opera
  const payload={url:'https://jobs.lever.co/example/test',before:'Application',human:true,clickId:'click-1'};
  const state={records:{j:{id:'j',pendingClicks:{'click-1':payload}}},device:'fixture'};let fail=true;const calls=[];
  const noOp={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v)}},tabs:{query:async()=>[{id:1}],onRemoved:noOp},runtime:{onMessage:noOp,onStartup:noOp,onInstalled:noOp},alarms:{onAlarm:noOp},scripting:{executeScript:async request=>{calls.push(request.args.slice(1,4));return [{result:fail?{error:'offline',status:503}:{data:{ok:true,clicks:1}}}];}}};
- const context={chrome,URL,Date,importScripts(){},ApplyPilotPolicy:{}};vm.runInNewContext(read('extension/background.js')+';globalThis.retryRecords=retrySubmissionRecords;',context);
+ const context={chrome,URL,Date,importScripts(){},ApplyPilotPolicy:{}};vm.runInNewContext(read('extension/background.js')+';globalThis.retryRecords=retrySubmissionRecords;',Object.assign(context,{setTimeout,clearTimeout}));
  await context.retryRecords();assert(state.records.j.pendingClicks['click-1']);fail=false;await context.retryRecords();
  assert.equal(Object.keys(state.records.j.pendingClicks).length,0);assert.equal(calls.length,2);assert.equal(calls[0][0],'/jobs/j/local/attempt');assert.deepEqual(calls[0][2],calls[1][2]);assert.equal(calls[1][2].clickId,'click-1');
 });

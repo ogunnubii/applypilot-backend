@@ -5,15 +5,18 @@ const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.
 async function api(path,method='GET',data){
  const state=await read(),env=environments[state.environment]||environments.hosted;
  const origins=[env.dashboard,env.pagesDashboard,env.legacyDashboard].filter(Boolean).map(url=>new URL(url).origin+'/*');
- const tabs=await chrome.tabs.query({url:origins});
+ const tabs=(await chrome.tabs.query({url:origins})).sort((a,b)=>Number(!!b.active)-Number(!!a.active));
+ let lastError; 
  for(const tab of tabs){
-  const result=await chrome.scripting.executeScript({target:{tabId:tab.id},func:async(base,path,method,data,device)=>{
+  let timer,result;try{const execution=chrome.scripting.executeScript({target:{tabId:tab.id},func:async(base,path,method,data,device)=>{
    const token=sessionStorage.getItem('applypilot-token');if(!token)return {error:'Sign in to ApplyPilot first.'};
    try{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(/\/local\/(?:answer|research-answer)$/.test(path)?60000:15000),headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','X-ApplyPilot-Device':device},body:method==='GET'?undefined:JSON.stringify(data)});const d=await r.json();return r.ok?{data:d}:{error:d.error||'Request failed',status:r.status};}catch{return {error:'Cannot reach ApplyPilot. Keep the dashboard open and retry.'};}
   },args:[env.api,path,method,data??null,state.device]});
+  result=method==='GET'?await Promise.race([execution,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Dashboard tab did not respond.')),5000);})]):await execution;
+  }catch(error){if(method!=='GET')throw error;lastError=error;continue;}finally{clearTimeout(timer);}
   const r=result[0]?.result;if(r?.data)return r.data;if(r?.error!=='Sign in to ApplyPilot first.')throw Object.assign(Error(r?.error||'Dashboard unavailable'),{status:r?.status});
  }
- throw Error('Open ApplyPilot and sign in to sync this browser.');
+ throw lastError||Error('Open ApplyPilot and sign in to sync this browser.');
 }
 async function listedJobs(){
  const [data,operations]=await Promise.all([api('/jobs'),api('/operations')]);

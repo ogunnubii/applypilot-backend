@@ -143,7 +143,7 @@ async function fillPass(){
  count+=await fillRoleRadios(fields);
  const files=[...document.querySelectorAll('input[type="file"]')].filter(e=>!e.disabled&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
  if(files.length===1&&!files[0].files.length&&packet.resume?.base64){const r=packet.resume,bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0)),dt=new DataTransfer();dt.items.add(new File([bytes],r.name,{type:r.name.endsWith('.pdf')?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));files[0].files=dt.files;files[0].dispatchEvent(new Event('input',{bubbles:true}));files[0].dispatchEvent(new Event('change',{bubbles:true}));count++;}
- note.textContent=count+' fields filled.';if(count)await send('progress',{fields:[],message:'Filled '+count+' fields on the employer form.',blocked:false,filled:count});return count;
+ if(count)note.textContent=count+' additional fields filled.';if(count)await send('progress',{fields:[],message:'Filled '+count+' fields on the employer form.',blocked:false,filled:count});return count;
 }
 // AI results are application-only and are never allowed to overwrite a user's edit.
 async function prepareMissingAnswers(){
@@ -193,7 +193,7 @@ const isNextAction=e=>/^(?:next(?: step)?|continue(?: application)?|save\s*(?:&|
 async function advance(){
  const state=await send('state');attempted=attempted||state.attempted;const issue=siteIssue();if(issue){stopped=true;clearInterval(timer);const result=await send('site-error',{code:issue.code,empty:controls().length===0&&!document.querySelector('form'),initial:lastStep===''});note.textContent=result.message;return;}
  const text=receipt();if(text&&!initialReceipt&&attempted){await send('receipt',{receipt:text});note.textContent='Employer receipt verified. Application submitted.';stopped=true;clearInterval(timer);return;}
- if(attempted){if(!submitAt)submitAt=Date.now();if(Date.now()-submitAt>30000)await report('Submission uncertain. Check the employer receipt before retrying.');return;}
+ if(attempted){if(!submitAt)submitAt=Date.now();note.textContent=Date.now()-submitAt>30000?'Submission uncertain. Check the employer receipt before retrying.':'Awaiting employer confirmation. Your Submit click is not yet a confirmed submission.';return;}
  const check=review();if(check.fields.length){const issue=check.fields.map(q=>aiIssues.get(q)).find(Boolean);if(issue)check.reason+=' · '+issue;}if(!state.automatic||state.autofillOnly){note.textContent=check.reason||'Saved details filled. Review the employer form and click Submit.';await report(note.textContent,check.fields,!!check.reason);if(!attempted){stopped=true;clearInterval(timer);}return;}if(check.reason)return report(check.reason,check.fields);if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
  const signatureNow=signature();if(lastStep===signatureNow){if(Date.now()-stepAt>15000)await report('This step did not advance. Check employer validation.');return;}
  const bs=buttons(),submit=bs.filter(isSubmitAction),next=bs.filter(isNextAction);
@@ -208,19 +208,19 @@ async function advance(){
 function startReceiptMonitor(){stopped=false;clearInterval(timer);timer=setInterval(monitor,2500);}
 async function observeManualSubmission(){
  const clickId=crypto.randomUUID();
- submissionRecording=true;attempted=true;submitAt=Date.now();
+ submissionRecording=true;attempted=true;submitAt=Date.now();if(note)note.textContent='Awaiting employer confirmation. Your Submit click is not yet a confirmed submission.';
  // Observe the user's native action; never cancel, replay, or synthesize Submit.
  startReceiptMonitor();
  try{await send('attempt',{before:bodyText(),human:true,clickId});}
- catch(error){attempted=false;if(note)note.textContent='Your click was sent to the employer. ApplyPilot could not record it: '+error.message+'. Check the employer confirmation.';}
+ catch(error){if(note)note.textContent='Your click was sent to the employer. ApplyPilot could not record it: '+error.message+'. Check the employer confirmation.';}
  finally{submissionRecording=false;}
 }
-async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted||(packet?.autofillOnly&&!receipt()))await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
+async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted)await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
 // Refresh paused forms without reopening them or clicking any navigation button.
 let savedRefreshBusy=false,lastRefreshSignature='',formChanged=false,formChangeTimer;
 const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions]);
 async function refreshPausedAnswers(){
- if(!started||!stopped||busy||savedRefreshBusy||submissionRecording||siteIssue()||receipt())return;
+ if(!started||!stopped||busy||savedRefreshBusy||submissionRecording||attempted||siteIssue()||receipt())return;
  savedRefreshBusy=true;busy=true;
  try{
   const state=await send('state');if(state.attempted){attempted=true;if(!state.autofillOnly)return;}if(!state.refreshEnabled)return;

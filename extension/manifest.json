@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ApplyPilot Local",
-  "version": "0.6.13",
+  "version": "0.6.14",
   "description": "Autofill supported application fields from your saved facts. You control navigation and every Submit click.",
   "minimum_chrome_version": "120",
   "permissions": [

@@ -27,7 +27,9 @@ test('French exclusion archives active work only, retains attempts and isolates 
 test('manual retry records are idempotent per click and never confirm or inflate application totals',()=>{
  const {db,add}=fixture();try{
  add('j','Engineer');let job=db.prepare("SELECT * FROM jobs WHERE id='j'").get();
+ db.prepare("UPDATE jobs SET required_fields_json='[\"Old missing question\"]' WHERE id='j'").run();
  assert.equal(recordManualSubmit(db,job,'click-1').clicks,1);
+ assert.equal(db.prepare("SELECT required_fields_json FROM jobs WHERE id='j'").get().required_fields_json,'[]');
  job=db.prepare("SELECT * FROM jobs WHERE id='j'").get();const first=job.local_attempt_at;
  assert.equal(recordManualSubmit(db,job,'click-1').duplicate,true);
  assert.equal(recordManualSubmit(db,job,'click-2').clicks,2);

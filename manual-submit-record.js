@@ -5,7 +5,7 @@ export function recordManualSubmit(db,job,clickId='legacy',humanAssisted=false){
  try{
  const added=db.prepare('INSERT OR IGNORE INTO manual_submit_clicks(job_id,click_id,at) VALUES(?,?,?)').run(job.id,clickId,at);
  if(added.changes){
- db.prepare("UPDATE jobs SET local_attempt_at=COALESCE(local_attempt_at,?),local_phase='verifying',challenge='Submission in progress',updated_at=? WHERE id=? AND status='local_browser'").run(at,at,job.id);
+ db.prepare("UPDATE jobs SET local_attempt_at=COALESCE(local_attempt_at,?),local_phase='verifying',required_fields_json='[]',challenge='Submission in progress',updated_at=? WHERE id=? AND status='local_browser'").run(at,at,job.id);
  const count=db.prepare('SELECT COUNT(*) AS n FROM manual_submit_clicks WHERE job_id=?').get(job.id).n;
  const event=(type,message)=>db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(job.id,at,type,message);
  if(humanAssisted&&!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='human_assistance'").get(job.id))event('human_assistance','Applicant assisted with the employer form.');

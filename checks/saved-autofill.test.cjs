@@ -64,3 +64,16 @@ test('combined name prompts use approved name facts without matching another per
  for(const q of ['First name','Last name'])assert.notEqual(policy.fieldKind(q),'name');
  for(const q of ['Manager first and last name','Referral first and last name','Electronic signature: first and last name'])assert.equal(policy.knownAnswer(q,{name:'Test Applicant'},{}),null);
 });
+
+test('paused forms sync partial saved answers, preserve edits, respect stop and never navigate',async()=>{
+ const {JSDOM}=require('jsdom'),dom=new JSDOM('<form><label>Favorite tool<textarea required></textarea></label><label>Another question<input required></label><button type="button">Continue</button></form>',{runScripts:'outside-only',url:'https://jobs.lever.co/example/test'}),w=dom.window;
+ const timers=[];let answers={},attempted=false,enabled=true,clicks=0;
+ Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});w.HTMLElement.prototype.getClientRects=function(){return [{}]};w.setInterval=(fn,ms)=>{timers.push({fn,ms});return timers.length};w.clearInterval=()=>{};w.document.querySelector('button').onclick=()=>clicks++;
+ w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){return {ok:true,data:m.action==='packet'?{job:{title:'Fixture',attempted},profile:{},answers:{...answers}}:m.action==='state'?{automatic:true,refreshEnabled:enabled,attempted}:{}};}}};
+ w.eval(read('extension/policy.js'));w.eval(read('extension/content.js'));await wait(40);
+ const sync=timers.find(t=>t.ms===30000).fn;
+ answers={'Favorite tool':'Terraform'};await sync();assert.equal(w.document.querySelector('textarea').value,'Terraform');assert.equal(w.document.querySelector('input').value,'');assert.equal(clicks,0);
+ w.document.querySelector('textarea').value='My edited answer';answers={'Favorite tool':'Kubernetes','Another question':'Saved answer'};await sync();assert.equal(w.document.querySelector('textarea').value,'My edited answer');assert.equal(w.document.querySelector('input').value,'Saved answer');assert.equal(clicks,0);
+ w.document.querySelector('input').value='';enabled=false;answers['Another question']='Changed';await sync();assert.equal(w.document.querySelector('input').value,'');
+ enabled=true;attempted=true;await sync();assert.equal(w.document.querySelector('input').value,'');assert.equal(clicks,0);w.close();
+});

@@ -16,7 +16,7 @@ async function fixture(html,{automatic=true,answers={},initialAttempt=false,befo
  before(w);
  w.eval(fs.readFileSync(path.join(root,'extension/policy.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'extension/content.js'),'utf8'));
  // Wait for preparation to finish its conditional-control settling pass.
- for(let n=0;n<100&&!messages.some(m=>m.action==='progress'&&m.blocked||m.action==='step'||m.action==='receipt')&&!timers.length;n++)await settle();
+ for(let n=0;n<100&&!messages.some(m=>m.action==='progress'&&m.blocked||m.action==='step'||m.action==='receipt');n++)await settle();
  return {w,messages,timers,close:()=>w.close(),tick:async()=>{for(const fn of [...timers])await fn();await settle();}};
 }
 test('Unknown required facts block, while exact saved facts fill and existing edits survive',async()=>{
@@ -58,9 +58,9 @@ test('Conflicting aliases do not guess and authorization does not transfer betwe
  try{assert.equal(f.w.document.getElementById('city').value,'');assert.equal(f.w.document.getElementById('visa').value,'');assert(!f.messages.some(m=>m.action==='attempt'));}finally{f.close();}
 });
 
-test('Blocked forms stop polling; manual refill obtains newly saved profile data',async()=>{
+test('Blocked forms only check refresh permission; manual refill obtains newly saved profile data',async()=>{
  const f=await fixture('<form><label>Phone<input id="phone"></label><label>Unknown fact<input required></label></form>');
- try{const before=f.messages.length;await f.tick();await f.tick();assert.equal(f.messages.length,before,'blocked tabs must not flood the extension');const button=[...f.w.document.querySelectorAll('button')].find(b=>b.textContent==='Fill available answers');await button.onclick();assert.equal(f.messages.filter(m=>m.action==='packet').length,2,'manual fill refreshes stale packet');}finally{f.close();}
+ try{const before=f.messages.length;await f.tick();await f.tick();assert(f.messages.slice(before).every(m=>m.action==='state'),'paused tabs must not fill or report when refresh is disabled');assert(f.messages.length-before<=3,'paused checks stay bounded');const button=[...f.w.document.querySelectorAll('button')].find(b=>b.textContent==='Fill available answers');await button.onclick();assert.equal(f.messages.filter(m=>m.action==='packet').length,2,'manual fill refreshes stale packet');}finally{f.close();}
 });
 test('Actual Grafana labels resolve explicit location parts and Toronto time zone',async()=>{
  const f=await fixture('<form></form>',{automatic:false});

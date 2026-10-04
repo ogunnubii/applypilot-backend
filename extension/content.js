@@ -212,6 +212,25 @@ async function persistAndReplaySubmission(button,form){
  finally{replayingSubmission=false;if(attempted)submissionRecording=false;}
 }
 async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted)await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
+// Refresh paused forms without reopening them or clicking any navigation button.
+let savedRefreshBusy=false;
+const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions]);
+async function refreshPausedAnswers(){
+ if(!started||!stopped||busy||savedRefreshBusy||attempted||submissionRecording||siteIssue())return;
+ savedRefreshBusy=true;busy=true;
+ try{
+  const state=await send('state');if(state.attempted){attempted=true;return;}if(!state.refreshEnabled)return;
+  const latest=await send('packet');if(latest.job.attempted){attempted=true;return;}
+  if(answerSnapshot(latest)===answerSnapshot(packet))return;
+  packet=latest;busy=true;attemptedCustom=new WeakMap();
+  // Only fill already saved answers here. AI preparation runs through the existing
+  // bounded server worker; partial answer updates never advance or submit a form.
+  await fillPass();const check=review();
+  await report(check.reason||'Ready to submit - all supported fields are filled. Review the form, then click Submit.',check.fields,true);
+ }catch{/* Keep the existing form and edits intact when the connection is unavailable. */}
+ finally{busy=false;savedRefreshBusy=false;}
+}
+if(!siteIssue())setInterval(refreshPausedAnswers,30000);
 async function resumeFill(){
  if(busy)throw Error('Form preparation is already running. Wait for it to finish.');busy=true;clearInterval(timer);pageWaitAt=Date.now();
  try{packet=await send('packet');attempted=attempted||!!packet.job.attempted||!!(await send('state')).attempted;

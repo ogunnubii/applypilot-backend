@@ -1,7 +1,7 @@
 (()=>{
 const P=globalThis.ApplyPilotPolicy;
 if(globalThis.__applypilotAgentLoaded)return;globalThis.__applypilotAgentLoaded=true;
-let packet,bar,note,started=false,initialReceipt=false,attempted=false,timer,busy=false,stopped=false,lastStep='',stepAt=0,submitAt=0;
+let packet,bar,note,started=false,initialReceipt=false,attempted=false,timer,busy=false,stopped=false,lastStep='',stepAt=0,submitAt=0,pageWaitAt=Date.now();
 const aiTried=new Map(),aiIssues=new Map();
 let assistanceSent=false,submissionRecording=false,replayingSubmission=false;
 const norm=P.normalize;
@@ -16,13 +16,13 @@ const labelText=e=>{if(!e)return '';const c=e.cloneNode(true);c.querySelectorAll
 function referencedText(e,attribute){return compact((e.getAttribute(attribute)||'').split(/\s+/).filter(Boolean).map(id=>document.getElementById(id)?.textContent||'').join(' '));}
 function questionContainer(e){return e.closest?.('[data-automation-id*="formField"],[data-automation-id*="question"],.application-question,[class*="application-question"],[class*="form-field"],[class*="formField"],[role="radiogroup"],[role="group"],fieldset');}
 function normalizeDescriptor(value){return norm(value).replace(/\b(?:optional|required)\b/g,'').replace(/\s+/g,' ').trim();}
-function descriptors(e){
+function descriptors(e,metadata=true){
  const values=[],add=value=>{value=compact(value);if(value&&normalizeDescriptor(value)!=='required field'&&!values.some(v=>normalizeDescriptor(v)===normalizeDescriptor(value)))values.push(value);};
  const group=e.closest?.('fieldset,[role="radiogroup"],[role="group"]');
  if(e.type==='radio'||controlRole(e)==='radio'){add(group?.querySelector?.(':scope > legend')?.textContent);add(group&&referencedText(group,'aria-labelledby'));add(group?.getAttribute?.('aria-label'));}
  add(labelText(e.labels?.[0]||e.closest?.('label')));add(referencedText(e,'aria-labelledby'));add(e.getAttribute?.('aria-label'));
  const container=questionContainer(e);add(container?.querySelector?.('.application-label,[data-automation-id*="label"],[class*="question-label"],[class*="field-label"]')?.textContent);
- if(!values.length)add(labelText(container));if(!values.length)add(referencedText(e,'aria-describedby'));add(e.placeholder);add(e.name);add(e.id);
+ if(!values.length)add(labelText(container));if(!values.length)add(referencedText(e,'aria-describedby'));if(metadata){add(e.placeholder);add(e.name);add(e.id);}
  return values.length?values:['Required field'];
 }
 const label=e=>descriptors(e)[0].slice(0,240);
@@ -37,7 +37,11 @@ function setValue(e,value){
  Object.getOwnPropertyDescriptor(proto,'value').set.call(e,value);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));
 }
 function answer(e){
- const questions=descriptors(e);if(questions.some(protectedQuestion))return null;
+ const allQuestions=descriptors(e);if(allQuestions.some(protectedQuestion))return null;
+ const visibleQuestions=descriptors(e,false).filter(q=>q!=='Required field');
+ // Prefer the employer's actual question. Generic ids such as "name" must
+ // not turn First name into a conflicting Full name answer.
+ const questions=visibleQuestions.length?visibleQuestions:allQuestions;
  // A generic id/name must not override conflicting saved aliases from the
  // visible question (for example, City=Toronto and Current city=Ottawa).
  const kinds=[...new Set(questions.map(P.fieldKind).filter(Boolean))];
@@ -98,7 +102,7 @@ async function updateAttentionPosition(){
 function mount(){
  document.getElementById('applypilot-local-controls')?.remove();bar=document.createElement('aside');bar.id='applypilot-local-controls';bar.style.cssText='position:fixed;bottom:16px;right:16px;max-width:360px;z-index:2147483647;background:#12253b;color:white;padding:16px;border-radius:12px;box-shadow:0 3px 18px #0008;font:14px system-ui';
  const heading=document.createElement('strong');heading.textContent='ApplyPilot · '+packet.job.title;note=document.createElement('p');note.setAttribute('role','status');
- const refill=document.createElement('button');refill.textContent='Fill available answers';refill.onclick=async()=>{try{await recordAssistance();packet=null;attemptedCustom=new WeakMap();await fill();await advance();}catch(e){note.textContent=e.message;}};
+ const refill=document.createElement('button');refill.textContent='Fill available answers';refill.onclick=async()=>{try{await recordAssistance();await resumeFill();}catch(e){note.textContent=e.message;}};
  const save=document.createElement('button');save.textContent='Remember an answer';save.onclick=async()=>{await recordAssistance();const question=prompt('Exact question to remember for this applicant:');if(!question)return;if(protectedQuestion(question)){note.textContent='Complete sensitive statements directly with the employer.';return;}const value=prompt('Your truthful answer (reused only for this exact question):');if(value===null||!value.trim())return;try{await send('remember',{question,answer:value});packet=null;await fill();note.textContent='Answer saved for this applicant.';}catch(e){note.textContent=e.message;}};
  const capture=document.createElement('button');capture.textContent='Save form answers to library';capture.onclick=async()=>{capture.disabled=true;try{await recordAssistance();const r=await send('capture',{fields:formAnswers()});note.textContent=r.saved+' answers saved. Review them in the dashboard Answer library. Nothing was submitted.';}catch(e){note.textContent='Could not save answers: '+e.message;}finally{capture.disabled=false;}};
  bar.append(heading,note,refill,save,capture);document.body.append(bar);updateAttentionPosition();
@@ -167,7 +171,7 @@ async function prepareMissingAnswers(){
 // Let conditional controls settle and fill newly revealed fields before calling
 // a step blocked. Each pass uses a fresh DOM and never clicks navigation/Submit.
 async function fill(){
- if(!packet)packet=await send('packet');if(!bar)mount();
+ if(!packet)packet=await send('packet');attempted=attempted||!!packet.job.attempted;if(!bar)mount();
  let total=0;
  for(let pass=0;pass<4;pass++){
   if(attempted)break;
@@ -192,6 +196,7 @@ async function advance(){
  const check=review();if(check.fields.length){const issue=check.fields.map(q=>aiIssues.get(q)).find(Boolean);if(issue)check.reason+=' · '+issue;}if(!state.automatic){note.textContent=check.reason||'Saved details filled. Review the employer form and click Submit.';await report(note.textContent,check.fields,!!check.reason);if(!attempted){stopped=true;clearInterval(timer);}return;}if(check.reason)return report(check.reason,check.fields);if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
  const signatureNow=signature();if(lastStep===signatureNow){if(Date.now()-stepAt>15000)await report('This step did not advance. Check employer validation.');return;}
  const bs=buttons(),submit=bs.filter(isSubmitAction),next=bs.filter(isNextAction);
+ if(!controls().length&&!bs.some(b=>isSubmitAction(b)||isNextAction(b)||/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(b)))&&Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer form to load…';return;}
  if(submit.length===1&&next.length===0){
   if(!controls().length&&!document.querySelector('form'))return report('Cannot identify the final application form.');await send('capture',{fields:formAnswers()});const finalCheck=review();if(finalCheck.reason)return report(finalCheck.reason,finalCheck.fields);
   const finalButtons=buttons(),finalSubmit=finalButtons.filter(isSubmitAction);if(finalSubmit.length!==1||finalButtons.some(isNextAction))return report('The form changed before final review. Review this step.');return report('Ready to submit — all supported fields are filled. Review the form, then click Submit.',[],true);
@@ -207,7 +212,14 @@ async function persistAndReplaySubmission(button,form){
  finally{replayingSubmission=false;if(attempted)submissionRecording=false;}
 }
 async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted)await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
-async function begin(){try{packet=await send('packet');attempted=!!packet.job.attempted||(await send('state')).attempted;initialReceipt=!!receipt()&&!attempted;started=true;await fill();await advance();if(!stopped)timer=setInterval(monitor,2500);}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched. */}}
+async function resumeFill(){
+ if(busy)throw Error('Form preparation is already running. Wait for it to finish.');busy=true;clearInterval(timer);pageWaitAt=Date.now();
+ try{packet=await send('packet');attempted=attempted||!!packet.job.attempted||!!(await send('state')).attempted;
+  if(!started){initialReceipt=!!receipt()&&!attempted;started=true;}
+  stopped=false;attemptedCustom=new WeakMap();await fill();await advance();if(!stopped)timer=setInterval(monitor,2500);
+ }finally{busy=false;}
+}
+async function begin(){try{await resumeFill();}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched and can be linked later. */}}
 for(const type of ['input','change'])document.addEventListener(type,e=>{if(started&&e.isTrusted&&!bar?.contains(e.target)&&e.target.matches?.('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]'))recordAssistance();},true);
 document.addEventListener('click',e=>{
  const b=e.target.closest?.('button,input[type="submit"],[role="button"]');if(!started||!e.isTrusted||!b||bar?.contains(b))return;recordAssistance();if(!isSubmitAction(b)||replayingSubmission)return;e.preventDefault();e.stopImmediatePropagation();if(attempted||submissionRecording){if(note)note.textContent='This submission action was already recorded. Check the employer receipt before trying again.';return;}persistAndReplaySubmission(b,b.form||b.closest('form'));
@@ -215,6 +227,6 @@ document.addEventListener('click',e=>{
 document.addEventListener('submit',e=>{
  if(!started||!e.isTrusted||replayingSubmission)return;const form=e.target,submitter=e.submitter&&isSubmitAction(e.submitter)?e.submitter:buttons().find(b=>b.form===form&&isSubmitAction(b));if(!submitter)return;e.preventDefault();e.stopImmediatePropagation();recordAssistance();if(attempted||submissionRecording){if(note)note.textContent='This submission action was already recorded. Check the employer receipt before trying again.';return;}persistAndReplaySubmission(submitter,form);
 },true);
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.action==='fill'){packet=null;attemptedCustom=new WeakMap();fill().then(async()=>{stopped=false;clearInterval(timer);await advance();if(!stopped)timer=setInterval(monitor,2500);reply({ok:true});}).catch(e=>reply({error:e.message}));return true;}});
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.action==='fill'){resumeFill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}});
 begin();
 })();

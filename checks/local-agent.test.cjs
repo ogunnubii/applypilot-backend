@@ -14,7 +14,9 @@ async function fixture(html,{automatic=true,answers={},initialAttempt=false,befo
  w.setInterval=fn=>{timers.push(fn);return timers.length;};w.clearInterval=()=>{};
  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:packet};if(m.action==='state')return {ok:true,data:{attempted,automatic:auto&&!attempted}};if(m.action==='attempt'){assert(!attempted,'attempt must not repeat');attempted=true;}if(m.action==='progress'&&m.blocked)auto=false;return {ok:true,data:{}};}}};
  before(w);
- w.eval(fs.readFileSync(path.join(root,'extension/policy.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'extension/content.js'),'utf8'));await settle();
+ w.eval(fs.readFileSync(path.join(root,'extension/policy.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'extension/content.js'),'utf8'));
+ // Wait for preparation to finish its conditional-control settling pass.
+ for(let n=0;n<100&&!messages.some(m=>m.action==='progress'&&m.blocked||m.action==='step'||m.action==='receipt')&&!timers.length;n++)await settle();
  return {w,messages,timers,close:()=>w.close(),tick:async()=>{for(const fn of [...timers])await fn();await settle();}};
 }
 test('Unknown required facts block, while exact saved facts fill and existing edits survive',async()=>{
@@ -58,7 +60,7 @@ test('Conflicting aliases do not guess and authorization does not transfer betwe
 
 test('Blocked forms stop polling; manual refill obtains newly saved profile data',async()=>{
  const f=await fixture('<form><label>Phone<input id="phone"></label><label>Unknown fact<input required></label></form>');
- try{const before=f.messages.length;await f.tick();await f.tick();assert.equal(f.messages.length,before,'blocked tabs must not flood the extension');const button=[...f.w.document.querySelectorAll('button')].find(b=>b.textContent==='Fill saved answers');await button.onclick();assert.equal(f.messages.filter(m=>m.action==='packet').length,2,'manual fill refreshes stale packet');}finally{f.close();}
+ try{const before=f.messages.length;await f.tick();await f.tick();assert.equal(f.messages.length,before,'blocked tabs must not flood the extension');const button=[...f.w.document.querySelectorAll('button')].find(b=>b.textContent==='Fill available answers');await button.onclick();assert.equal(f.messages.filter(m=>m.action==='packet').length,2,'manual fill refreshes stale packet');}finally{f.close();}
 });
 test('Actual Grafana labels resolve explicit location parts and Toronto time zone',async()=>{
  const f=await fixture('<form></form>',{automatic:false});

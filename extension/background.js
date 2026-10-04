@@ -9,7 +9,7 @@ async function api(path,method='GET',data){
  for(const tab of tabs){
   const result=await chrome.scripting.executeScript({target:{tabId:tab.id},func:async(base,path,method,data,device)=>{
    const token=sessionStorage.getItem('applypilot-token');if(!token)return {error:'Sign in to ApplyPilot first.'};
-   try{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','X-ApplyPilot-Device':device},body:method==='GET'?undefined:JSON.stringify(data)});const d=await r.json();return r.ok?{data:d}:{error:d.error||'Request failed',status:r.status};}catch{return {error:'Cannot reach ApplyPilot. Keep the dashboard open and retry.'};}
+   try{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(/\/local\/(?:answer|research-answer)$/.test(path)?60000:15000),headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','X-ApplyPilot-Device':device},body:method==='GET'?undefined:JSON.stringify(data)});const d=await r.json();return r.ok?{data:d}:{error:d.error||'Request failed',status:r.status};}catch{return {error:'Cannot reach ApplyPilot. Keep the dashboard open and retry.'};}
   },args:[env.api,path,method,data??null,state.device]});
   const r=result[0]?.result;if(r?.data)return r.data;if(r?.error!=='Sign in to ApplyPilot first.')throw Object.assign(Error(r?.error||'Dashboard unavailable'),{status:r?.status});
  }
@@ -99,7 +99,10 @@ async function handle(m,sender){
   if(!Number.isInteger(record?.tabId))throw Error('The original employer tab is no longer open. Open ApplyPilot Local to review this application before restarting it.');
   const tab=await chrome.tabs.get(record.tabId).catch(()=>null);
   if(!tab||!P.sameApplication(tab.url,record.url))throw Error('The original employer form is no longer available. Open ApplyPilot Local to review it; no application was restarted.');
-  await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});await chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']}));return {focused:true};
+  await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});
+  // Filling requests its packet through this same serialized message queue.
+  // Release the queue before waiting on content-script work to avoid deadlock.
+  chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']})).catch(e=>chrome.storage.local.set({error:'Could not refill the employer form: '+e.message}));return {focused:true};
  }
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){

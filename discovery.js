@@ -163,7 +163,7 @@ const defaultBoards=['braze','cloudflare','canonical','gitlab','datadog','grafan
 // Current public boards with a high concentration of infrastructure,
 // reliability, cloud and support work. They are added only for searches in
 // that role family and share a one-minute feed cache.
-const infrastructureBoards=['marble.ai','acquird','homebase','ashby','remarcable-inc','top-hat','lightspeedhq','hopper','baseten','hiive'].map(x=>'https://jobs.ashbyhq.com/'+encodeURIComponent(x));
+const infrastructureBoards=['marble.ai','acquird','homebase','ashby','remarcable-inc','top-hat','lightspeedhq','hopper','baseten','hiive','n8n'].map(x=>'https://jobs.ashbyhq.com/'+encodeURIComponent(x)).concat('https://job-boards.greenhouse.io/anthropic');
 function curatedBoards(intent,focus=''){
  const text=[...intent.roles,focus].join(' ').toLowerCase();
  return /\b(devops|site reliability|sre|platform|cloud|infrastructure|systems?|sysadmin|network|noc|support|build|release|ci\/cd|production)\b/.test(text)?infrastructureBoards:[];

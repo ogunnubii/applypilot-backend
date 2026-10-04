@@ -45,7 +45,8 @@ export function reusableAnswers(db,p){
   const k=group(r.question);if(!groups.has(k))groups.set(k,[]);groups.get(k).push([r.question,r.answer]);
  }
  const result=Object.create(null);
- for(const r of rows){const entries=groups.get(group(r.question));if(entries)entries.push([r.question,r.answer]);}
+ // Unapproved captures and answers explicitly excluded from reuse must not
+ // suppress approved profile facts. Conflicts among approved facts still pause.
  for(const entries of groups.values()){if(new Set(entries.map(([,a])=>normalize(a))).size!==1)continue;for(const [q,a]of entries)result[q]=a;}
  return result;
 }

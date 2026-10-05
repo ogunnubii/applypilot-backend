@@ -70,3 +70,13 @@ test('manual open reuses the exact employer tab and brings its window forward',a
  const h=harness();await h.send('open',{id:'a',auto:true});const tab=h.shared.tabs.find(t=>t.id===h.shared.store.records.a.tabId);tab.windowId=7;tab.active=false;
  const before=h.shared.tabs.length;await h.send('open',{id:'a',auto:false});assert.equal(h.shared.tabs.length,before);assert.equal(tab.active,true);assert.equal(h.shared.store.records.a.auto,false);
 });
+
+test('matching embedded Greenhouse frame gets its packet and unrelated frames remain rejected',async()=>{
+ const h=harness();h.jobs[0].url='https://job-boards.greenhouse.io/trivago/jobs/8794953002';await h.send('open',{id:'a',auto:false});
+ const tab=h.shared.tabs.find(t=>t.id===h.shared.store.records.a.tabId);tab.url='https://careers.trivago.com/apply/?gh_jid=8794953002';
+ const sender={tab:{id:tab.id,url:tab.url},frameId:4,url:'https://job-boards.greenhouse.io/embed/job_app?for=trivago&token=8794953002'};
+ assert((await h.send('packet',{},sender)).ok);assert.equal(h.shared.store.records.a.frameId,4);
+ assert(!(await h.send('packet',{}, {...sender,tab:{...sender.tab,url:'https://evil.example/'}})).ok);
+ assert(!(await h.send('packet',{}, {...sender,url:sender.url.replace('trivago','other')})).ok);
+ await h.send('open',{id:'a',auto:false});assert.equal(h.shared.tabs.filter(t=>t.url.includes('8794953002')).length,1,'reuse parent without duplicating application');
+});

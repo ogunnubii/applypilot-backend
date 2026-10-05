@@ -39,7 +39,7 @@ async function openJob(id,auto=true,focus=false){
  await saveRecord(record);
  await api('/jobs/'+id+'/local/assistance','POST',{kind:record.safeInitialLoad?'tracking':'partial'});
  if(!tab){tab=await chrome.tabs.create({url:'about:blank',active:focus||!auto});record.tabId=tab.id;await saveRecord(record);let url=packet.job.url;if(/^jobs(\.eu)?\.lever\.co$/.test(new URL(url).hostname)&&!url.endsWith('/apply'))url=url.replace(/\/$/,'')+'/apply';await chrome.tabs.update(tab.id,{url});}
- else{record.tabId=tab.id;await saveRecord(record);if(focus||!auto){await chrome.tabs.update(tab.id,{active:true});if(Number.isInteger(tab.windowId))await chrome.windows.update(tab.windowId,{focused:true});}chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']})).catch(()=>{});}
+ else{record.tabId=tab.id;await saveRecord(record);if(focus||!auto){await chrome.tabs.update(tab.id,{active:true});if(Number.isInteger(tab.windowId))await chrome.windows.update(tab.windowId,{focused:true});}chrome.tabs.sendMessage(tab.id,{action:'fill'},{frameId:record?.frameId||0}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[record?.frameId||0]},files:['policy.js','content.js']})).catch(()=>{});}
  return {opened:true,attempted:record.attempted};
 }
 function eligible(j,s){
@@ -131,12 +131,12 @@ async function handle(m,sender){
  }
  const s=await read();
  let b=Object.values(s.records).find(r=>r.tabId===sender.tab?.id&&P.sameApplication(sender.url,r.url));
- if(!b&&m.action==='packet'){
+ if(!b&&m.action==='packet'&&(sender.frameId===0||P.trustedFrame?.(sender,sender.url)===true)){
   const matches=Object.values(s.records).filter(r=>P.sameApplication(sender.url,r.url));
   if(matches.length===1){const tabs=await chrome.tabs.query({});if(tabs.filter(t=>P.sameApplication(t.url,matches[0].url)).length===1){b=matches[0];b.tabId=sender.tab.id;b.auto=false;await saveRecord(b);}}
  }
- if(!b||sender.frameId!==0)throw Error('This tab is not linked to an active ApplyPilot application.');
- if(m.action==='packet'){const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);return {...packet,automatic:b.auto&&!b.attempted,autofillOnly:true};}
+ if(!b||!(sender.frameId===0||P.trustedFrame?.(sender,b.url)===true))throw Error('This tab is not linked to an active ApplyPilot application.');
+ if(m.action==='packet'){b.frameId=sender.frameId;const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);return {...packet,automatic:b.auto&&!b.attempted,autofillOnly:true};}
  if(m.action==='attention-position'){const {jobs}=await listedJobs(),waiting=P.attentionOrder(jobs),index=waiting.findIndex(j=>j.id===b.id);return {position:index<0?0:index+1,total:waiting.length};}
  if(m.action==='state')return {attempted:b.attempted,automatic:b.auto&&!b.attempted,autofillOnly:true,refreshEnabled:!!s.enabled&&!s.userPaused,phase:b.phase};
  if(m.action==='assistance'){b.assisted=true;await saveRecord(b);return api('/jobs/'+b.id+'/local/assistance','POST',{kind:'human'});}

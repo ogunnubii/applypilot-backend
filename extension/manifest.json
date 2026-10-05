@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ApplyPilot Local",
-  "version": "0.6.17",
+  "version": "0.6.18",
   "description": "Autofill supported application fields from your saved facts. You control navigation and every Submit click.",
   "minimum_chrome_version": "120",
   "permissions": [
@@ -22,7 +22,8 @@
     "https://*.bamboohr.com/*",
     "https://*.recruitee.com/*",
     "https://applypilot-jobs.pages.dev/*",
-    "https://marvelous-vitality-production-c2d8.up.railway.app/*"
+    "https://marvelous-vitality-production-c2d8.up.railway.app/*",
+    "https://careers.trivago.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -48,7 +49,8 @@
         "policy.js",
         "content.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     },
     {
       "matches": [

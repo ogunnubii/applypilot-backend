@@ -2,10 +2,23 @@
 (() => {
   const domains = ['greenhouse.io','lever.co','myworkdayjobs.com','workdayjobs.com','ashbyhq.com','smartrecruiters.com','workable.com','bamboohr.com','recruitee.com'];
   const normalize = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[?]/g,'').replace(/[*✱]/g, '').replace(/\s+/g, ' ').trim();
+  function greenhouseIdentity(url){
+    try{const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443')return null;
+      if(u.hostname==='careers.trivago.com'&&/^\/apply\/?$/.test(u.pathname)&&u.searchParams.getAll('gh_jid').length===1&&/^\d+$/.test(u.searchParams.get('gh_jid')))return 'https://boards.greenhouse.io/trivago/jobs/'+u.searchParams.get('gh_jid');
+      if(!['boards.greenhouse.io','job-boards.greenhouse.io'].includes(u.hostname))return null;
+      if(/^\/embed\/job_app\/?$/.test(u.pathname)&&u.searchParams.getAll('for').length===1&&u.searchParams.getAll('token').length===1&&/^[a-z0-9_-]+$/i.test(u.searchParams.get('for'))&&/^\d+$/.test(u.searchParams.get('token')))return 'https://boards.greenhouse.io/'+u.searchParams.get('for')+'/jobs/'+u.searchParams.get('token');
+      if(/^\/[a-z0-9_-]+\/jobs\/\d+\/?$/i.test(u.pathname))return 'https://boards.greenhouse.io'+u.pathname.replace(/\/$/,'');
+    }catch{}return null;
+  }
+  function trustedFrame(sender,url){
+    if(sender.frameId===0)return sameApplication(sender.url,url);
+    try{const u=new URL(sender.url);return Number.isInteger(sender.frameId)&&sender.frameId>0&&/^\/embed\/job_app\/?$/.test(u.pathname)&&!!greenhouseIdentity(sender.url)&&sameApplication(sender.url,url)&&sameApplication(sender.tab?.url,url);}catch{return false;}
+  }
   function supported(url) {
-    try { const u = new URL(url); return u.protocol === 'https:' && !u.username && !u.password && (!u.port || u.port === '443') && domains.some(d => u.hostname === d || u.hostname.endsWith('.'+d)); } catch { return false; }
+    try { const u = new URL(url); return u.protocol === 'https:' && !u.username && !u.password && (!u.port || u.port === '443') && (domains.some(d => u.hostname === d || u.hostname.endsWith('.'+d))||u.hostname==='careers.trivago.com'&&!!greenhouseIdentity(url)); } catch { return false; }
   }
   function identity(url) {
+    const canonical=greenhouseIdentity(url);if(canonical)return canonical;
     const u = new URL(url); u.hash = '';
     u.hostname = u.hostname.replace('job-boards.greenhouse.io','boards.greenhouse.io');
     if (/(?:^|\.)(?:myworkdayjobs|workdayjobs)\.com$/i.test(u.hostname)) u.pathname = u.pathname.replace(/^\/[a-z]{2}(?:-[a-z]{2})?(?=\/)/i,'');
@@ -104,5 +117,5 @@ function frenchApplication(job={}){
  return signals.filter(s=>text.includes(s)).length>=2;
 }
 
-  globalThis.ApplyPilotPolicy = Object.freeze({frenchApplication,needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
+  globalThis.ApplyPilotPolicy = Object.freeze({greenhouseIdentity,trustedFrame,frenchApplication,needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
 })();

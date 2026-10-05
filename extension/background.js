@@ -2,19 +2,28 @@ importScripts('policy.js');
 const P=globalThis.ApplyPilotPolicy;
 const environments={hosted:{dashboard:'https://marvelous-vitality-production-c2d8.up.railway.app/',pagesDashboard:'https://applypilot-jobs.pages.dev/',legacyDashboard:'https://applypilot-jobs.netlify.app/',api:'https://marvelous-vitality-production-c2d8.up.railway.app/api'},local:{dashboard:'http://localhost:8080/assistant',api:'http://localhost:8080/api'}};
 const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','error','automaticDefault','userPaused'])});
+let responsiveDashboardId;
 async function api(path,method='GET',data){
  const state=await read(),env=environments[state.environment]||environments.hosted;
  const origins=[env.dashboard,env.pagesDashboard,env.legacyDashboard].filter(Boolean).map(url=>new URL(url).origin+'/*');
- const tabs=(await chrome.tabs.query({url:origins})).sort((a,b)=>Number(!!b.active)-Number(!!a.active));
+ const tabs=(await chrome.tabs.query({url:origins})).sort((a,b)=>Number(!!b.active)-Number(!!a.active)||Number(b.id===responsiveDashboardId)-Number(a.id===responsiveDashboardId)||(b.lastAccessed||0)-(a.lastAccessed||0));
  let lastError; 
  for(const tab of tabs){
+  if(method!=='GET'){
+   // Probe responsiveness before a write. A frozen tab can be skipped safely here;
+   // once a write is dispatched it is never replayed through another dashboard.
+   let probeTimer;try{
+    const probe=await Promise.race([chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>({ready:!!sessionStorage.getItem('applypilot-token')})}),new Promise((_,reject)=>{probeTimer=setTimeout(()=>reject(Error('Dashboard tab did not respond.')),5000);})]);
+    if(!probe[0]?.result?.ready){lastError=Error('Sign in to ApplyPilot first.');continue;}
+   }catch(error){lastError=error;continue;}finally{clearTimeout(probeTimer);}
+  }
   let timer,result;try{const execution=chrome.scripting.executeScript({target:{tabId:tab.id},func:async(base,path,method,data,device)=>{
    const token=sessionStorage.getItem('applypilot-token');if(!token)return {error:'Sign in to ApplyPilot first.'};
    try{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(/\/local\/(?:answer|research-answer)$/.test(path)?60000:15000),headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','X-ApplyPilot-Device':device},body:method==='GET'?undefined:JSON.stringify(data)});const d=await r.json();return r.ok?{data:d}:{error:d.error||'Request failed',status:r.status};}catch{return {error:'Cannot reach ApplyPilot. Keep the dashboard open and retry.'};}
   },args:[env.api,path,method,data??null,state.device]});
   result=await Promise.race([execution,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(method==='GET'?'Dashboard tab did not respond.':'ApplyPilot did not acknowledge this request. Refresh the dashboard and check the application before retrying.')),method==='GET'?5000:/\/local\/(?:answer|research-answer)$/.test(path)?65000:20000);})]);
   }catch(error){if(method!=='GET')throw error;lastError=error;continue;}finally{clearTimeout(timer);}
-  const r=result[0]?.result;if(r?.data)return r.data;if(r?.error!=='Sign in to ApplyPilot first.')throw Object.assign(Error(r?.error||'Dashboard unavailable'),{status:r?.status});
+  const r=result[0]?.result;if(r?.data){responsiveDashboardId=tab.id;return r.data;}if(r?.error!=='Sign in to ApplyPilot first.')throw Object.assign(Error(r?.error||'Dashboard unavailable'),{status:r?.status});
  }
  throw lastError||Error('Open ApplyPilot and sign in to sync this browser.');
 }
@@ -115,7 +124,7 @@ async function handle(m,sender){
   await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});
   // Filling requests its packet through this same serialized message queue.
   // Release the queue before waiting on content-script work to avoid deadlock.
-  chrome.tabs.sendMessage(tab.id,{action:'fill'}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['policy.js','content.js']})).catch(e=>chrome.storage.local.set({error:'Could not refill the employer form: '+e.message}));return {focused:true};
+  chrome.tabs.sendMessage(tab.id,{action:'fill'},{frameId:record.frameId||0}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[record.frameId||0]},files:['policy.js','content.js']})).catch(e=>chrome.storage.local.set({error:'Could not refill the employer form: '+e.message}));return {focused:true};
  }
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){

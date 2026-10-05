@@ -35,3 +35,17 @@ test('popup buttons distinguish foreground fill, prevent repeat requests, and sh
  buttons[0].click();assert.equal(calls.at(-1).auto,true);finish({ok:true,data:{opened:true}});await new Promise(r=>setImmediate(r));assert.match(row.textContent,/Preparation started/);
  const held=w.document.querySelector('[data-job-id="hold"]');assert([...held.querySelectorAll('button')].every(b=>b.disabled));assert.match(held.textContent,/Employer application limit/);assert(held.querySelector('a'));w.close();
 });
+
+test('writes skip a frozen dashboard before dispatch and never replay an uncertain write',async()=>{
+ const noop={addListener(){}};const calls=[];let failWrite=false;
+ const chrome={storage:{local:{get:async()=>({device:'fixture'})}},tabs:{query:async()=>[{id:1,active:true},{id:2}],onRemoved:noop},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop},alarms:{onAlarm:noop},scripting:{executeScript:async({target,args})=>{calls.push({id:target.tabId,write:!!args});if(!args)return target.tabId===1?new Promise(()=>{}):[{result:{ready:true}}];return failWrite?new Promise(()=>{}):[{result:{data:{saved:true}}}];}}};
+ const ctx=vm.createContext({chrome,URL,importScripts(){},ApplyPilotPolicy:{},setTimeout:fn=>setTimeout(fn,1),clearTimeout});vm.runInContext(fs.readFileSync('extension/background.js','utf8')+';globalThis.save=()=>api("/jobs/a/local/progress","POST",{});',ctx);
+ assert.equal((await ctx.save()).saved,true);assert.deepEqual(calls,[{id:1,write:false},{id:2,write:false},{id:2,write:true}]);
+ calls.length=0;failWrite=true;await assert.rejects(ctx.save(),/did not acknowledge/);assert.equal(calls.filter(c=>c.write).length,1,'a dispatched write must never be replayed');
+});
+
+test('the responsive dashboard remains preferred when employer tab becomes active',async()=>{
+ const noop={addListener(){}};const calls=[];const chrome={storage:{local:{get:async()=>({device:'fixture'})}},tabs:{query:async()=>[{id:1},{id:2}],onRemoved:noop},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop},alarms:{onAlarm:noop},scripting:{executeScript:async({target})=>{calls.push(target.tabId);if(target.tabId===1)return new Promise(()=>{});return [{result:{data:{jobs:[]}}}];}}};
+ const ctx=vm.createContext({chrome,URL,importScripts(){},ApplyPilotPolicy:{},setTimeout:fn=>setTimeout(fn,1),clearTimeout});vm.runInContext(fs.readFileSync('extension/background.js','utf8')+';globalThis.fetchJobs=()=>api("/jobs");',ctx);
+ await ctx.fetchJobs();await ctx.fetchJobs();assert.deepEqual(calls,[1,2,2]);
+});

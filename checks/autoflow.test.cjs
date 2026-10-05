@@ -63,7 +63,7 @@ const cases=[
 test("browser queue reliability",()=>(async()=>{
  const assert=require('node:assert/strict'),vm=require('node:vm');let gets=0,queries=[];
  const state={records:{broken:{id:'broken',auto:true,phase:'ready',touched:0,url:'https://jobs.lever.co/example/a'}},queue:[],enabled:true};
- const noOp={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v)}},tabs:{get:async()=>{gets++;throw Error('missing tab');},query:async q=>{queries.push(q);return [{id:4}];},onRemoved:noOp},scripting:{executeScript:async({args})=>[{result:{data:args[1]==='/jobs'?{jobs:[]}:{ok:true}}}]},runtime:{onMessage:noOp,onStartup:noOp,onInstalled:noOp},alarms:{onAlarm:noOp}};
+ const noOp={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v)}},tabs:{get:async()=>{gets++;throw Error('missing tab');},query:async q=>{queries.push(q);return [{id:4}];},onRemoved:noOp},scripting:{executeScript:async({args})=>!args?[{result:{ready:true}}]:[{result:{data:args[1]==='/jobs'?{jobs:[]}:{ok:true}}}]},runtime:{onMessage:noOp,onStartup:noOp,onInstalled:noOp},alarms:{onAlarm:noOp}};
  const context={chrome,URL,console,Date,crypto:require('node:crypto').webcrypto,importScripts(){},ApplyPilotPolicy:{sameApplication:()=>false,supported:()=>true}};
  vm.runInNewContext(sources['extension/background.js']+';globalThis.testTick=tick;',Object.assign(context,{setTimeout,clearTimeout}));await context.testTick();
  assert.equal(gets,0,'missing tab ID must never reach chrome.tabs.get');assert.equal(state.records.broken.auto,false);
@@ -215,7 +215,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.18",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.19",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -287,7 +287,7 @@ test('employer retry uses one delayed GET only for a new empty page, and honours
  function scenario(changes={},enabled=true){
   let clock=1000000;class Clock extends Date{static now(){return clock;}}
   const url='https://job-boards.greenhouse.io/example/jobs/42',state={records:{j:{id:'j',url,tabId:3,auto:true,phase:'ready',touched:clock,safeInitialLoad:true,...changes}},enabled,automaticDefault:true,device:'fixture',queue:[]},updates=[],requests=[];
-  const noop={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop,getURL:p=>'chrome-extension://fixture/'+p},alarms:{get:async()=>({}),onAlarm:noop},tabs:{get:async()=>({id:3,url}),update:async(id,options)=>{updates.push({id,...options});},query:async()=>[{id:1}],onRemoved:noop},scripting:{executeScript:async({args})=>{requests.push(args);return [{result:{data:args[1]==='/jobs'?{jobs:[]}:args[1].endsWith('/packet')?{job:{attempted:!!state.serverAttempted}}:{ok:true}}}];}}};
+  const noop={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},runtime:{onMessage:noop,onStartup:noop,onInstalled:noop,getURL:p=>'chrome-extension://fixture/'+p},alarms:{get:async()=>({}),onAlarm:noop},tabs:{get:async()=>({id:3,url}),update:async(id,options)=>{updates.push({id,...options});},query:async()=>[{id:1}],onRemoved:noop},scripting:{executeScript:async({args})=>{if(!args)return [{result:{ready:true}}];requests.push(args);return [{result:{data:args[1]==='/jobs'?{jobs:[]}:args[1].endsWith('/packet')?{job:{attempted:!!state.serverAttempted}}:{ok:true}}}];}}};
   const ctx={chrome,URL,console,Date:Clock,crypto:require('node:crypto').webcrypto,importScripts(){}};
   vm.runInNewContext(sources['extension/policy.js'],Object.assign(ctx,{setTimeout,clearTimeout}));vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;globalThis.testTick=tick;globalThis.testEligible=eligible;',Object.assign(ctx,{setTimeout,clearTimeout}));
   const sender={tab:{id:3},url,frameId:0};
@@ -500,7 +500,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  const assert=require('node:assert/strict'),vm=require('node:vm');
  const state={automaticDefault:true,device:'fixture',records:{second:{id:'second',tabId:8,url:'https://jobs.lever.co/example/second'}},queue:[],enabled:false};
  const jobs=[{id:'first',status:'paused',created_at:'2026-01-01'},{id:'second',status:'local_browser',created_at:'2026-01-02'},{id:'done',status:'submitted',local_phase:'blocked'}];
- const noOp={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},tabs:{query:async()=>[{id:4}],onRemoved:noOp},scripting:{executeScript:async({args})=>[{result:{data:args[1]==='/jobs'?{jobs}:{applications:[{id:'second',stalled:true}]}}}]},runtime:{getURL:p=>'chrome-extension://fixture/'+p,onMessage:noOp,onStartup:noOp,onInstalled:noOp},alarms:{get:async()=>({}),onAlarm:noOp}};
+ const noOp={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},tabs:{query:async()=>[{id:4}],onRemoved:noOp},scripting:{executeScript:async({args})=>!args?[{result:{ready:true}}]:[{result:{data:args[1]==='/jobs'?{jobs}:{applications:[{id:'second',stalled:true}]}}}]},runtime:{getURL:p=>'chrome-extension://fixture/'+p,onMessage:noOp,onStartup:noOp,onInstalled:noOp},alarms:{get:async()=>({}),onAlarm:noOp}};
  const c={chrome,URL,console,Date,crypto:require('node:crypto').webcrypto,importScripts(){}};
  vm.runInNewContext(sources['extension/policy.js'],Object.assign(c,{setTimeout,clearTimeout}));vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;',Object.assign(c,{setTimeout,clearTimeout}));
  const popup=await c.testHandle({action:'list'},{url:'chrome-extension://fixture/popup.html'});
@@ -512,7 +512,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.18'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.19'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{

@@ -5,6 +5,7 @@ function harness(shared={}){
  const events={},jobs=[{id:'a',status:'queued',execution_mode:'local',url:'https://jobs.lever.co/org/a',title:'Fixture A'},{id:'b',status:'queued',execution_mode:'local',url:'https://jobs.ashbyhq.com/org/b',title:'Fixture B'}];
  const listener=name=>({addListener(fn){events[name]=fn;}});
  const chrome={windows:{update:async()=>{}},storage:{local:{get:async()=>structuredClone(shared.store),set:async value=>Object.assign(shared.store,structuredClone(value)),setAccessLevel:async()=>{}}},alarms:{get:async()=>({name:'queue'}),create:async()=>{},onAlarm:listener('alarm')},runtime:{getURL:p=>'chrome-extension://fixture/'+p,onMessage:listener('message'),onStartup:listener('startup'),onInstalled:listener('installed')},tabs:{query:async ({url}={})=>shared.tabs.filter(t=>!url||t.url.startsWith('https://applypilot-jobs.netlify.app/')),get:async id=>{const t=shared.tabs.find(t=>t.id===id);if(!t)throw Error('No tab');return t;},create:async props=>{const t={id:shared.tabs.length+1,...props};shared.tabs.push(t);return t;},update:async(id,props)=>Object.assign(shared.tabs.find(t=>t.id===id),props),sendMessage:async()=>({ok:true}),onRemoved:listener('removed')},scripting:{executeScript:async({args})=>{
+  if(!args)return [{result:{ready:true}}];
   const [,route,method,data,device]=args;shared.calls.push({route,method,data,device});
   if(route==='/jobs')return [{result:{data:{jobs}}}];
   const [,id,action]=route.match(/\/jobs\/([^/]+)\/local\/(.*)/)||[];

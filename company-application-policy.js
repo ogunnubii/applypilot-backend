@@ -5,14 +5,6 @@ const OUTCOMES=new Set(['submitted','interview','rejected','offer']);
 const LIMIT_ERROR='Same-company application limit reached';
 const DUPLICATE_ERROR='Exact requisition already started';
 
-function bounded(value,fallback,min,max){
- if(value===undefined||value===null||String(value).trim()==='')return fallback;
- const parsed=Number(value);
- return Number.isFinite(parsed)?Math.max(min,Math.min(max,Math.trunc(parsed))):fallback;
-}
-export const companyApplicationLimit=(env=process.env)=>bounded(env.SAME_COMPANY_APPLICATION_LIMIT,5,1,50);
-export const companyApplicationWindowDays=(env=process.env)=>bounded(env.SAME_COMPANY_WINDOW_DAYS,60,1,365);
-
 function atsKey(job){
  try{
   const u=new URL(job.url),parts=u.pathname.split('/').filter(Boolean),host=u.hostname.toLowerCase();
@@ -33,23 +25,17 @@ function keysJSON(job){return JSON.stringify(companyApplicationKeys(job));}
 function overlap(left,right){
  try{const b=new Set(JSON.parse(String(right||'[]')));return JSON.parse(String(left||'[]')).some(key=>b.has(key));}catch{return false;}
 }
-function cutoff(now,days){return new Date(now-days*86400000).toISOString();}
 function started(job){return ['running','local_browser'].includes(job.status)||OUTCOMES.has(job.status)||Number(job.attempts)>0||!!job.local_attempt_at||!!job.confirmation;}
 function appendNote(notes,message){const value=String(notes||'');return value.includes('Same-company limit reached:')?value:[value,message].filter(Boolean).join(' · ');}
 
-export function companyApplicationPolicy(db,applicantId,job,{env=process.env,now=Date.now()}={}){
- const limit=companyApplicationLimit(env),windowDays=companyApplicationWindowDays(env),keys=companyApplicationKeys(job);
+export function companyApplicationPolicy(db,applicantId,job){
+ // Application history prevents repeating a requisition. Applying to a different
+ // role at the same company is not a block; actual employer holds are separate.
  const own=job?.id&&db.prepare('SELECT * FROM company_application_activity WHERE job_id=?').get(job.id);
- if(own)return {allowed:true,count:0,limit,windowDays,remaining:limit,resume:true};
+ if(own)return {allowed:true,resume:true};
  const exact=job?.normalized_url&&db.prepare('SELECT job_id FROM company_application_activity WHERE applicant_id=? AND normalized_url=? AND job_id!=? LIMIT 1').get(applicantId,job.normalized_url,job.id||'');
- if(exact)return {allowed:false,duplicate:true,count:0,limit,windowDays,remaining:0,message:'This exact requisition was already started and will not be opened again.'};
- if(!keys.length)return {allowed:true,count:0,limit,windowDays,remaining:limit};
- const rows=db.prepare('SELECT job_id,company_keys,started_at FROM company_application_activity WHERE applicant_id=? AND job_id!=? AND (started_at IS NULL OR started_at>=?)').all(applicantId,job?.id||'',cutoff(now,windowDays));
- const encoded=JSON.stringify(keys),matching=rows.filter(row=>overlap(row.company_keys,encoded)),count=matching.length;
- const dated=matching.map(row=>Date.parse(row.started_at)).filter(Number.isFinite).sort((a,b)=>a-b);
- const expiring=count-limit+1;
- const nextEligibleAt=count>=limit&&dated.length>=expiring?new Date(dated[expiring-1]+windowDays*86400000+1).toISOString():null;
- return {allowed:count<limit,count,limit,windowDays,remaining:Math.max(0,limit-count),nextEligibleAt,message:`Same-company limit reached: ${limit} applications per rolling ${windowDays} days. This requisition is done for now and hidden from active work until a slot opens.`};
+ if(exact)return {allowed:false,duplicate:true,message:'This exact requisition was already started and will not be opened again.'};
+ return {allowed:true};
 }
 
 export function deferForCompanyLimit(db,job,policy,{at=new Date().toISOString()}={}){
@@ -72,26 +58,27 @@ export function markExactRequisitionDuplicate(db,job,policy,{at=new Date().toISO
 
 export function isCompanyApplicationPolicyError(error){return new RegExp(LIMIT_ERROR+'|'+DUPLICATE_ERROR,'i').test(String(error?.message||error));}
 
-export function registerCompanyApplicationPolicyFunctions(db,{env=process.env}={}){
+export function registerCompanyApplicationPolicyFunctions(db){
  db.function('application_company_keys',{deterministic:true},(company,url)=>keysJSON({company,url}));
  db.function('company_keys_overlap',{deterministic:true},(left,right)=>Number(overlap(left,right)));
- db.function('company_policy_limit',{deterministic:true},()=>companyApplicationLimit(env));
- db.function('company_policy_cutoff',()=>cutoff(Date.now(),companyApplicationWindowDays(env)));
+ // Legacy triggers may run during startup before installation removes them.
+ // Comparing their counts to NULL disables only the retired blanket quota.
+ db.function('company_policy_limit',{deterministic:true},()=>null);
+ db.function('company_policy_cutoff',()=>new Date(0).toISOString());
 }
 
-export function installCompanyApplicationPolicy(db,{env=process.env}={}){
+export function installCompanyApplicationPolicy(db){
  db.exec(`CREATE TABLE IF NOT EXISTS company_application_activity(
   job_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,applicant_id TEXT NOT NULL,company TEXT NOT NULL,
   company_keys TEXT NOT NULL,normalized_url TEXT NOT NULL,reserved_at TEXT NOT NULL,started_at TEXT
  );CREATE INDEX IF NOT EXISTS company_activity_applicant ON company_application_activity(applicant_id,started_at);CREATE UNIQUE INDEX IF NOT EXISTS company_activity_exact ON company_application_activity(applicant_id,normalized_url);`);
- registerCompanyApplicationPolicyFunctions(db,{env});
+ registerCompanyApplicationPolicyFunctions(db);
  const exact="EXISTS(SELECT 1 FROM company_application_activity a WHERE a.applicant_id=NEW.applicant_id AND a.job_id!=NEW.id AND a.normalized_url=NEW.normalized_url)";
- const full="(SELECT COUNT(*) FROM company_application_activity a WHERE a.applicant_id=NEW.applicant_id AND a.job_id!=NEW.id AND (a.started_at IS NULL OR a.started_at>=company_policy_cutoff()) AND company_keys_overlap(a.company_keys,application_company_keys(NEW.company,NEW.url)))>=company_policy_limit()";
  db.exec(`
+ DROP TRIGGER IF EXISTS company_policy_insert_limit;
+ DROP TRIGGER IF EXISTS company_policy_update_limit;
  CREATE TRIGGER IF NOT EXISTS company_policy_insert_exact BEFORE INSERT ON jobs WHEN (NEW.status IN ('queued','running','local_browser','submitted','interview','rejected','offer') OR NEW.attempts>0 OR NEW.local_attempt_at IS NOT NULL) AND ${exact} BEGIN SELECT RAISE(ABORT,'${DUPLICATE_ERROR}'); END;
- CREATE TRIGGER IF NOT EXISTS company_policy_insert_limit BEFORE INSERT ON jobs WHEN NEW.status IN ('queued','running','local_browser') AND ${full} BEGIN SELECT RAISE(ABORT,'${LIMIT_ERROR}'); END;
  CREATE TRIGGER IF NOT EXISTS company_policy_update_exact BEFORE UPDATE OF status,attempts,local_attempt_at ON jobs WHEN (NEW.status IN ('queued','running','local_browser','submitted','interview','rejected','offer') OR NEW.attempts>0 OR NEW.local_attempt_at IS NOT NULL) AND ${exact} BEGIN SELECT RAISE(ABORT,'${DUPLICATE_ERROR}'); END;
- CREATE TRIGGER IF NOT EXISTS company_policy_update_limit BEFORE UPDATE OF status ON jobs WHEN NEW.status IN ('queued','running','local_browser') AND ${full} BEGIN SELECT RAISE(ABORT,'${LIMIT_ERROR}'); END;
  CREATE TRIGGER IF NOT EXISTS company_policy_insert_activity AFTER INSERT ON jobs WHEN NEW.status IN ('queued','running','local_browser','submitted','interview','rejected','offer') OR NEW.attempts>0 OR NEW.local_attempt_at IS NOT NULL BEGIN
   INSERT INTO company_application_activity(job_id,user_id,applicant_id,company,company_keys,normalized_url,reserved_at,started_at) VALUES(NEW.id,NEW.user_id,NEW.applicant_id,NEW.company,application_company_keys(NEW.company,NEW.url),NEW.normalized_url,NEW.updated_at,CASE WHEN NEW.status IN ('running','local_browser','submitted','interview','rejected','offer') OR NEW.attempts>0 OR NEW.local_attempt_at IS NOT NULL THEN NEW.updated_at END);
  END;
@@ -116,7 +103,7 @@ export function installCompanyApplicationPolicy(db,{env=process.env}={}){
  try{
   const seed=(job,isStarted)=>{
    if(db.prepare('SELECT 1 FROM company_application_activity WHERE job_id=?').get(job.id))return;
-   const policy=companyApplicationPolicy(db,job.applicant_id,job,{env});
+   const policy=companyApplicationPolicy(db,job.applicant_id,job);
    if(!isStarted&&!policy.allowed){
     if(policy.duplicate)markExactRequisitionDuplicate(db,job,policy);
     else deferForCompanyLimit(db,job,policy);
@@ -130,8 +117,7 @@ export function installCompanyApplicationPolicy(db,{env=process.env}={}){
     if(!isStarted)markExactRequisitionDuplicate(db,job,{message:'This exact requisition was already started and will not be opened again.'});
    }
   };
-  // Started work is durable history and cannot be undone. Seed it first so
-  // only the earliest untouched reservations can consume the remaining slots.
+  // Keep started work first when reconciling aliases of the same requisition.
   for(const job of rows.filter(started))seed(job,true);
   for(const job of rows.filter(job=>!started(job)))seed(job,false);
   db.exec('COMMIT');

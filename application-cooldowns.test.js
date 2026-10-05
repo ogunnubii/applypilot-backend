@@ -28,16 +28,12 @@ test('unknown employer reset dates stay deferred instead of claiming a reset',()
  const db=fixture();db.prepare('INSERT INTO employer_limits VALUES(?,?,?,?,?)').run('u','p','ashby:ashby',null,'Limit reached');
  assert.equal(applicationCooldown(db,job('a'),{now}).until,null);db.close();
 });
-test('same-company cooldown expires at the required slot and never releases an undated reservation by guesswork',()=>{
+test('past applications at a company never hide a different unblocked role',()=>{
  const db=fixture(),put=db.prepare('INSERT INTO company_application_activity VALUES(?,?,?,?,?,?)');
- for(let n=0;n<5;n++)put.run('past'+n,'u','p','["ashby:ashby"]','unique'+n,'2026-10-01T12:00:00.000Z');
- const candidate=job('new'),policy=companyApplicationPolicy(db,'p',candidate,{now});
- assert.equal(policy.nextEligibleAt,'2026-11-30T12:00:00.001Z');
- assert.equal(applicationCooldown(db,candidate,{now}).kind,'workspace');
- assert.equal(applicationCooldown(db,candidate,{now:Date.parse(policy.nextEligibleAt)}),null);
- db.exec('UPDATE company_application_activity SET started_at=NULL');
- assert.equal(applicationCooldown(db,candidate,{now}).until,null);
- assert.equal(applicationCooldown(db,job('past1'),{now}),null,'existing work can be resumed');db.close();
+ for(let n=0;n<12;n++)put.run('past'+n,'u','p','["ashby:ashby"]','unique'+n,n%2?null:'2026-10-01T12:00:00.000Z');
+ const candidate=job('new');assert.equal(companyApplicationPolicy(db,'p',candidate).allowed,true);
+ assert.equal(applicationCooldown(db,candidate,{now}),null);
+ assert.equal(splitApplicationCooldowns(db,'u',[candidate],{now}).deferred.length,0);db.close();
 });
 test('hiding hold actions preserves filled, attempted, and confirmed totals without modifying the snapshot',()=>{
  const snapshot={totals:{active:1,blocked:1,stalled:0,awaiting:1,worked:2,confirmed:1},applications:[{id:'held',blocked:true,awaiting:true,worked:true,attempted:true},{id:'active',active:true},{id:'done',confirmed:true,worked:true}]};

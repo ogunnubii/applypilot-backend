@@ -121,7 +121,7 @@ async function refresh(force=false){
  const signature=JSON.stringify([current,externalRecords]);
  if(!force&&(signature===lastSignature||$('#jobs').contains(document.activeElement)||$('#jobs').querySelector('[data-dirty="true"],details[open]')))return;
  lastSignature=signature;$('#jobs').replaceChildren();
- const attention=globalThis.ApplyPilotPolicy.attentionOrder(current.filter(pendingSubmission)),attentionPositions=new Map(attention.map((j,i)=>[j.id,i+1]));
+ const attention=globalThis.ApplyPilotPolicy.attentionOrder(current.filter(needsMyAttention)),attentionPositions=new Map(attention.map((j,i)=>[j.id,i+1]));
  const blocked=j=>globalThis.ApplyPilotPolicy.needsInput(j);
  const rank=j=>preparationStage(j)==='ready'?-1:blocked(j)?0:1+['local_browser','running','queued','saved','submitted','interview','rejected','offer'].indexOf(j.status);
  const updated=j=>Number.isFinite(Date.parse(j.updated_at))?Date.parse(j.updated_at):0;
@@ -205,10 +205,10 @@ async function refresh(force=false){
 
  compactJobCards();applyFilters();
  const linked=document.getElementById(location.hash.slice(1));
- if(linked?.classList.contains('job')&&(location.search.includes('view=settings')||linked.dataset.pending==='true')){linked.hidden=false;linked.style.outline='3px solid #74ad91';const details=linked.querySelector('details');if(details)details.open=true;if(!linked.dataset.focused){linked.scrollIntoView?.({block:'center'});linked.dataset.focused='true';}}
+ if(linked?.classList.contains('job')&&(location.search.includes('view=settings')||linked.dataset.pending==='true'&&['ready','answers','employer','review'].includes(linked.dataset.preparation))){linked.hidden=false;linked.style.outline='3px solid #74ad91';const details=linked.querySelector('details');if(details)details.open=true;if(!linked.dataset.focused){linked.scrollIntoView?.({block:'center'});linked.dataset.focused='true';}}
 }
 function renderMissingAnswers(jobs){
- if(!location.search.includes('view=settings'))jobs=jobs.filter(pendingSubmission);
+ if(!location.search.includes('view=settings'))jobs=jobs.filter(needsMyAttention);
  let section=$('#missing-answers');
  if(section?.dataset.dirty==='true')return;
  const signature=JSON.stringify(jobs.map(j=>[j.id,j.status,j.challenge,j.required_fields_json,j.answers_json,j.draft_needs,j.handoff_available,j.application_only_questions,j.local_phase,j.local_attempt_at,j.continuation?.state]));
@@ -288,7 +288,7 @@ $('#auth').onsubmit=async e=>{e.preventDefault();try{token=(await api('/login','
 $('#logout').onclick=()=>{clearSession();location.reload()};
 for(const a of document.querySelectorAll('[data-profile-link]'))a.href=(location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pages.dev'))?'/setup.html':'/setup';
 let activeHandoff=null,remoteBusy=false,remoteTimer=null,currentFilter='pending';
-function applyFilters(){const q=$('#job-search').value.toLowerCase().trim();let shown=0;for(const card of $('#jobs').children){const state=card.dataset.state;const focusAllowed=location.search.includes('view=settings')||card.dataset.pending==='true';const match=currentFilter==='pending'&&card.dataset.pending==='true'||currentFilter==='active'&&!['submitted','interview','rejected','offer'].includes(state)||currentFilter==='all'||currentFilter===state||currentFilter==='needs'&&(card.dataset.blocked==='true'||card.dataset.stalled==='true'||['paused','needs_review'].includes(state))||currentFilter==='applying'&&card.dataset.active==='true'||currentFilter==='blocked'&&card.dataset.blocked==='true'||currentFilter==='stalled'&&card.dataset.stalled==='true'||currentFilter==='receipt'&&card.dataset.confirmed==='true'||currentFilter==='worked'&&card.dataset.worked==='true'||currentFilter==='local'&&card.dataset.local==='true'||currentFilter.startsWith('completion-')&&card.dataset.completion===currentFilter.slice(11)||currentFilter.startsWith('prep-')&&card.dataset.preparation===currentFilter.slice(5);card.hidden=!(focusAllowed&&match&&card.dataset.search.includes(q));if(!card.hidden)shown++;}$('#empty-state').hidden=shown>0;const count=$('#visible-job-count');if(count)count.textContent=shown+' shown';const title=$('#application-list-title');if(title)title.textContent=({pending:'Jobs yet to be submitted','prep-ready':'Ready for your Submit click',awaiting:'Attempted — check employer receipt',receipt:'Employer-confirmed submissions',interview:'Interviews',worked:'Forms filled or attempted',all:'All application records'})[currentFilter]||'Applications';for(const button of document.querySelectorAll('[data-home-filter]'))button.setAttribute('aria-pressed',String(button.dataset.homeFilter===currentFilter));}
+function applyFilters(){const q=$('#job-search').value.toLowerCase().trim();let shown=0;for(const card of $('#jobs').children){const state=card.dataset.state;const focusAllowed=location.search.includes('view=settings')||card.dataset.pending==='true'&&['ready','answers','employer','review'].includes(card.dataset.preparation);const match=currentFilter==='pending'&&card.dataset.pending==='true'||currentFilter==='active'&&!['submitted','interview','rejected','offer'].includes(state)||currentFilter==='all'||currentFilter===state||currentFilter==='needs'&&(card.dataset.blocked==='true'||card.dataset.stalled==='true'||['paused','needs_review'].includes(state))||currentFilter==='applying'&&card.dataset.active==='true'||currentFilter==='blocked'&&card.dataset.blocked==='true'||currentFilter==='stalled'&&card.dataset.stalled==='true'||currentFilter==='receipt'&&card.dataset.confirmed==='true'||currentFilter==='worked'&&card.dataset.worked==='true'||currentFilter==='local'&&card.dataset.local==='true'||currentFilter.startsWith('completion-')&&card.dataset.completion===currentFilter.slice(11)||currentFilter.startsWith('prep-')&&card.dataset.preparation===currentFilter.slice(5);card.hidden=!(focusAllowed&&match&&card.dataset.search.includes(q));if(!card.hidden)shown++;}$('#empty-state').hidden=shown>0;const count=$('#visible-job-count');if(count)count.textContent=shown+' shown';const title=$('#application-list-title');if(title)title.textContent=({pending:location.search.includes('view=settings')?'Jobs yet to be submitted':'Jobs needing your attention','prep-ready':'Ready for your Submit click',awaiting:'Attempted — check employer receipt',receipt:'Employer-confirmed submissions',interview:'Interviews',worked:'Forms filled or attempted',all:'All application records'})[currentFilter]||'Applications';for(const button of document.querySelectorAll('[data-home-filter]'))button.setAttribute('aria-pressed',String(button.dataset.homeFilter===currentFilter));}
 $('#job-search').oninput=applyFilters;
 for(const b of document.querySelectorAll('[data-filter]'))b.onclick=()=>{currentFilter=b.dataset.filter;for(const other of document.querySelectorAll('[data-filter]'))other.setAttribute('aria-pressed',String(other===b));applyFilters()};
 $('#refresh-jobs').onclick=async()=>{const b=$('#refresh-jobs');b.disabled=true;try{await refresh(true)}catch(e){$('#notice').textContent=e.message}finally{b.disabled=false}};
@@ -752,6 +752,7 @@ function placeWorkspacePanel(node){
  const target=$(node.id==='career-overview'?'#interview-panel-body':node.id==='ai-status'?'#ai-status-slot':'#workspace-tools-body')||$('#workspace');
  if(node.parentElement!==target)target.append(node);
 }
+function needsMyAttention(job){return pendingSubmission(job)&&['ready','answers','employer','review'].includes(preparationStage(job));}
 function pendingSubmission(job){
  return !!job&&!job.employer_hold&&job.metadata?.available!==false&&!['archived','duplicate','submitted','interview','rejected','offer'].includes(job.status)&&!job.evidence?.confirmed&&preparationStage(job)!=='awaiting';
 }
@@ -766,7 +767,7 @@ function renderHomeSummary(snapshot,jobs,interviews){
  const rows=[
   ['Confirmed submissions',totals?totals.confirmed||0:'—','receipt','Employer receipt evidence only'],
   ['Forms filled / attempted',totals?totals.worked||0:'—','worked','Filled forms and attempts are not confirmed submissions'],
-  ['Yet to submit',unique.filter(pendingSubmission).length,'pending','Excludes recorded attempts and completed applications'],
+  [location.search.includes('view=settings')?'Yet to submit':'Need your attention',unique.filter(location.search.includes('view=settings')?pendingSubmission:needsMyAttention).length,'pending','Forms waiting for your answer, review or final Submit'],
   ['Ready for my Submit',unique.filter(j=>pendingSubmission(j)&&preparationStage(j)==='ready').length,'prep-ready','Filled forms waiting for your final click'],
   ['Awaiting receipt',totals?totals.awaiting||0:'—','awaiting','An attempt was recorded; check the employer receipt before retrying'],
   ['Interviews',interviews.length,'interview','Includes interviews from other sources']

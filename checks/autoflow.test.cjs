@@ -808,9 +808,10 @@ test('focused homepage shows pending jobs, keeps attempts separate and exposes u
  const data=p==='/api/jobs'?{jobs}:p==='/api/operations'?operations:p==='/api/status'?{workerOnline:true}:p==='/api/application-history'?{records:[{id:'ext',company:'Elsewhere',title:'SRE',status:'interview'}]}:p==='/api/continuations'?{requests:[]}:p==='/api/pipeline'?{enabled:true,found:0}:p==='/api/employer-limits'?{limits:[]}:p==='/api/searches'?{searches:[]}:p==='/api/work-focus'?{enabled:false}:p==='/api/activity'?{events:[]}:{};return {ok:true,json:async()=>data};};
  w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);await w.refresh(true);await new Promise(r=>setTimeout(r,30));
  const $=s=>w.document.querySelector(s),visible=()=>[...$('#jobs').children].filter(c=>!c.hidden).map(c=>c.id);
- assert.deepEqual(visible().sort(),['job-local','job-question','job-queued','job-ready']);
+ assert.deepEqual(visible().sort(),['job-local','job-question','job-ready']);
  assert.equal($('#jobs').firstElementChild.id,'external-ext');assert.equal($('#job-ready').hidden,false);
- assert.equal($('#home-summary [data-home-filter="pending"] strong').textContent,'4');
+ assert.equal($('#home-summary [data-home-filter="pending"] strong').textContent,'3');
+ assert.equal(w.getComputedStyle($('#job-search')).display,'none');assert.equal(w.getComputedStyle($('.tabs')).display,'none');
  assert.equal($('#home-summary [data-home-filter="prep-ready"] strong').textContent,'2');
  assert.equal($('#home-summary [data-home-filter="receipt"] strong').textContent,'1');
  assert.equal($('#home-summary [data-home-filter="awaiting"] strong').textContent,'1');

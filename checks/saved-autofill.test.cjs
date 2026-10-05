@@ -84,7 +84,9 @@ test('a manually opened delayed form fills when controls appear without changing
  w.eval(read('extension/policy.js'));w.eval(read('extension/content.js'));await wait(40);
  const sync=timers.find(t=>t.ms===30000).fn;await sync();
  w.document.querySelector('main').innerHTML='<form><label>Email<input required type="email"></label><button type="button">Submit application</button></form>';w.document.querySelector('button').onclick=()=>clicks++;
- await sync();assert.equal(w.document.querySelector('input').value,'test@example.test');assert.equal(clicks,0);w.close();
+ // A loading page remains active until the form appears, rather than being
+ // falsely paused as completed. Exercise its ordinary loading monitor.
+ await timers.find(t=>t.ms===2500).fn();await sync();assert.equal(w.document.querySelector('input').value,'test@example.test');assert.equal(clicks,0);w.close();
 });
 test('autofill-only fills new controls and never intercepts repeated manual submit clicks',async()=>{
  const {JSDOM}=require('jsdom'),dom=new JSDOM('<form><label>Email<input required type="email"></label><button type="button">Continue</button><button type="submit">Submit application</button></form>',{runScripts:'outside-only',url:'https://jobs.lever.co/example/test'}),w=dom.window;

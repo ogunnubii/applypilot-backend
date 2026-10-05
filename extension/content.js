@@ -190,11 +190,38 @@ function buttons(){return [...document.querySelectorAll('button,input[type="subm
 const buttonName=e=>compact(e.innerText||e.value||e.getAttribute('aria-label'));
 const isSubmitAction=e=>/^(?:submit(?: my| your| the)?(?: application)?|send(?: my| the)? application|complete application)$/i.test(buttonName(e));
 const isNextAction=e=>/^(?:next(?: step)?|continue(?: application)?|save\s*(?:&|and)\s*continue|save and next|review(?: application)?|proceed)$/i.test(buttonName(e));
+function hasApplicationFields(){return controls().some(e=>!['hidden','submit','button','reset','image','search'].includes(e.type)&&e.getAttribute('role')!=='searchbox');}
+function preparationMessage(check){
+ if(check.reason)return check.reason;
+ if(!hasApplicationFields())return 'The application form is not open yet. Open Application or Apply to begin autofill.';
+ const actions=buttons();
+ if(actions.filter(isSubmitAction).length===1&&!actions.some(isNextAction))return 'Ready to submit - all supported fields are filled. Review the form, then click Submit.';
+ return 'This step is filled. Continue to the next employer step; autofill will prepare fields as they appear.';
+}
+function applicationEntry(){
+ // Open an empty entry page, never advance a populated step. Ashby exposes
+ // both an Application tab and an Apply button; prefer its unique tab.
+ if(hasApplicationFields())return null;
+ if(location.hostname==='jobs.ashbyhq.com'){
+  const tab=document.querySelector('[role="tab"]#job-application-form');
+  if(tab&&visible(tab)&&tab.getAttribute('aria-selected')!=='true'&&!tab.disabled)return tab;
+ }
+ const entries=buttons().filter(e=>/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(e)));
+ return entries.length===1?entries[0]:null;
+}
 async function advance(){
  const state=await send('state');attempted=attempted||state.attempted;const issue=siteIssue();if(issue){stopped=true;clearInterval(timer);const result=await send('site-error',{code:issue.code,empty:controls().length===0&&!document.querySelector('form'),initial:lastStep===''});note.textContent=result.message;return;}
  const text=receipt();if(text&&!initialReceipt&&attempted){await send('receipt',{receipt:text});note.textContent='Employer receipt verified. Application submitted.';stopped=true;clearInterval(timer);return;}
  if(attempted){if(!submitAt)submitAt=Date.now();note.textContent=Date.now()-submitAt>30000?'Submission uncertain. Check the employer receipt before retrying.':'Awaiting employer confirmation. Your Submit click is not yet a confirmed submission.';return;}
- const check=review();if(check.fields.length){const issue=check.fields.map(q=>aiIssues.get(q)).find(Boolean);if(issue)check.reason+=' · '+issue;}if(!state.automatic||state.autofillOnly){note.textContent=check.reason||'Saved details filled. Review the employer form and click Submit.';await report(note.textContent,check.fields,!!check.reason);if(!attempted){stopped=true;clearInterval(timer);}return;}if(check.reason)return report(check.reason,check.fields);if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
+ const check=review();if(check.fields.length){const issue=check.fields.map(q=>aiIssues.get(q)).find(Boolean);if(issue)check.reason+=' · '+issue;}if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
+ if(!check.reason&&!hasApplicationFields()){
+  const entry=applicationEntry(),current=signature();
+  if(entry&&lastStep===''){await send('step');lastStep=current;stepAt=Date.now();pageWaitAt=Date.now();entry.click();note.textContent='Opening the employer application form.';return;}
+  if(Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer application form to load.';return;}
+  return report(preparationMessage(check),check.fields);
+ }
+ if(!state.automatic||state.autofillOnly){await report(preparationMessage(check),check.fields,true);return;}
+ if(check.reason)return report(check.reason,check.fields);
  const signatureNow=signature();if(lastStep===signatureNow){if(Date.now()-stepAt>15000)await report('This step did not advance. Check employer validation.');return;}
  const bs=buttons(),submit=bs.filter(isSubmitAction),next=bs.filter(isNextAction);
  if(!controls().length&&!bs.some(b=>isSubmitAction(b)||isNextAction(b)||/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(b)))&&Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer form to load…';return;}
@@ -232,7 +259,7 @@ async function refreshPausedAnswers(){
   // Autofill-only refresh uses saved facts and bounded AI preparation; it never
   // advances or submits a form, and preserves existing field values.
   if(packet.autofillOnly)await fill();else await fillPass();const check=review();
-  await report(check.reason||'Ready to submit - all supported fields are filled. Review the form, then click Submit.',check.fields,true);
+  await report(preparationMessage(check),check.fields,true);
  }catch{/* Keep the existing form and edits intact when the connection is unavailable. */}
  finally{busy=false;savedRefreshBusy=false;}
 }

@@ -45,8 +45,11 @@ export function companyApplicationPolicy(db,applicantId,job,{env=process.env,now
  if(exact)return {allowed:false,duplicate:true,count:0,limit,windowDays,remaining:0,message:'This exact requisition was already started and will not be opened again.'};
  if(!keys.length)return {allowed:true,count:0,limit,windowDays,remaining:limit};
  const rows=db.prepare('SELECT job_id,company_keys,started_at FROM company_application_activity WHERE applicant_id=? AND job_id!=? AND (started_at IS NULL OR started_at>=?)').all(applicantId,job?.id||'',cutoff(now,windowDays));
- const encoded=JSON.stringify(keys),count=rows.filter(row=>overlap(row.company_keys,encoded)).length;
- return {allowed:count<limit,count,limit,windowDays,remaining:Math.max(0,limit-count),message:`Same-company limit reached: ${limit} applications per rolling ${windowDays} days. This requisition will stay in Found until a slot opens.`};
+ const encoded=JSON.stringify(keys),matching=rows.filter(row=>overlap(row.company_keys,encoded)),count=matching.length;
+ const dated=matching.map(row=>Date.parse(row.started_at)).filter(Number.isFinite).sort((a,b)=>a-b);
+ const expiring=count-limit+1;
+ const nextEligibleAt=count>=limit&&dated.length>=expiring?new Date(dated[expiring-1]+windowDays*86400000+1).toISOString():null;
+ return {allowed:count<limit,count,limit,windowDays,remaining:Math.max(0,limit-count),nextEligibleAt,message:`Same-company limit reached: ${limit} applications per rolling ${windowDays} days. This requisition is done for now and hidden from active work until a slot opens.`};
 }
 
 export function deferForCompanyLimit(db,job,policy,{at=new Date().toISOString()}={}){

@@ -1,3 +1,5 @@
+Version 0.6.20 opens supported application entry tabs before autofill. Job descriptions and empty loading pages cannot become Ready for Submit. Intermediate Next steps remain manual; final Submit remains manual. Existing embedded-form and dashboard reconnection fixes are included.
+
 Version 0.6.19 fills the matching Greenhouse application embedded on trivago careers. Frame access requires the exact saved employer and job identity in both the parent page and embedded form; unrelated frames remain blocked. Existing attempts remain recorded, and final Submit stays manual.
 
 Version 0.6.19 distinguishes foreground Open & autofill from background preparation, brings existing browser windows forward, displays progress/errors beside each job, explains unavailable postings and employer limits, and keeps AI research from delaying browser controls. Final Submit remains manual.

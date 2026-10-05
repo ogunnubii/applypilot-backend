@@ -30,7 +30,7 @@ async function api(path,method='GET',data){
 async function listedJobs(){
  const [data,operations]=await Promise.all([api('/jobs'),api('/operations')]);
  const evidence=new Map((operations.applications||[]).map(j=>[j.id,j]));
- return {...data,jobs:data.jobs.map(j=>({...j,evidence:evidence.get(j.id)}))};
+ return {...data,totals:operations.totals,jobs:data.jobs.map(j=>({...j,evidence:evidence.get(j.id)}))};
 }
 async function initialize(){const s=await read();if(!s.automaticDefault)await chrome.storage.local.set({automaticDefault:true,enabled:true,userPaused:false});if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
 async function saveRecord(record){const s=await read();s.records[record.id]=record;await chrome.storage.local.set({records:s.records});}
@@ -149,7 +149,7 @@ async function handle(m,sender){
  if(m.action==='attention-position'){const {jobs}=await listedJobs(),waiting=P.attentionOrder(jobs),index=waiting.findIndex(j=>j.id===b.id);return {position:index<0?0:index+1,total:waiting.length};}
  if(m.action==='state')return {attempted:b.attempted,automatic:b.auto&&!b.attempted,autofillOnly:true,refreshEnabled:!!s.enabled&&!s.userPaused,phase:b.phase};
  if(m.action==='assistance'){b.assisted=true;await saveRecord(b);return api('/jobs/'+b.id+'/local/assistance','POST',{kind:'human'});}
- if(m.action==='answer'){if(b.attempted)throw Error('Submission already started.');return api('/jobs/'+b.id+'/local/answer','POST',{question:m.question,choices:m.choices,answerFormat:m.answerFormat});}
+ if(m.action==='answer'){if(b.attempted)throw Error('Submission already started.');return api('/jobs/'+b.id+'/local/answer','POST',{question:m.question,choices:m.choices,answerFormat:m.answerFormat,maxLength:m.maxLength,fieldHelp:m.fieldHelp});}
  if(m.action==='research-answer')return api('/jobs/'+b.id+'/local/research-answer','POST',{question:m.question});
  if(m.action==='research-used')return api('/jobs/'+b.id+'/local/research-used','POST',{questions:m.questions});
  if(m.action==='attempt'){

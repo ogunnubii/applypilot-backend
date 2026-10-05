@@ -14,7 +14,7 @@ const PROFILE_ANSWER_FIELDS=Object.freeze({city:'City',region:'Province / State'
 function savedProfileAnswers(form,existing={}){const answers={...existing};for(const [name,key]of Object.entries(PROFILE_ANSWER_FIELDS)){const value=form.elements[name]?.value.trim()||'';if(value)answers[key]=value;else delete answers[key];}const background=form.elements.background?.value.trim()||'';if(background)answers['Professional background']=background;else delete answers['Professional background'];return answers;}
 async function api(path,method='GET',data){const r=await fetch(API+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d;}
 const notice=message=>$('#message').textContent=message;
-async function load(){profiles=(await api('/applicants')).applicants;const select=$('#profiles'),chosen=select.value;select.replaceChildren(new Option('Create a new profile',''));for(const p of profiles)select.add(new Option(p.name,p.id));select.value=chosen;renderCurrentResume();}
+async function load(){profiles=(await api('/applicants')).applicants;const select=$('#profiles'),chosen=select.value;select.replaceChildren(new Option('Create a new profile',''));for(const p of profiles)select.add(new Option(p.name,p.id));select.value=chosen||(profiles.length===1?profiles[0].id:'');if(select.value)select.dispatchEvent(new Event('change'));else renderCurrentResume();}
 const rememberLogin=rememberOption($('#account'));
 $('#account').onsubmit=async e=>{e.preventDefault();try{token=(await api('/'+e.submitter.value,'POST',{...Object.fromEntries(new FormData(e.target)),remember:rememberLogin.checked})).token;saveSession(token,rememberLogin.checked);await load();notice('Signed in. Choose or create your applicant profile.');}catch(err){notice(err.message);}};
 $('#profiles').onchange=()=>{const p=profiles.find(p=>p.id===$('#profiles').value),f=$('#profile');f.reset();if(p){for(const k of ['name','email','phone','location','focus','execution_mode'])f.elements[k].value=p[k]||'';for(const [name,key]of Object.entries(PROFILE_ANSWER_FIELDS))f.elements[name].value=p.answers?.[key]||'';f.elements.consent.checked=!!p.consent;if(f.elements.ai_consent)f.elements.ai_consent.checked=!!p.ai_consent;if(f.elements.google_research_consent)f.elements.google_research_consent.checked=!!p.google_research_consent;if(f.elements.gemini_facts_consent)f.elements.gemini_facts_consent.checked=!!p.gemini_facts_consent;if(f.elements.background)f.elements.background.value=p.answers?.['Professional background']||'';}renderCurrentResume();};
@@ -34,6 +34,7 @@ for (const choice of document.querySelectorAll('[name="source-choice"]')) choice
 
 let resumeBlobUrl=null,previousResumeBlobUrl=null,resumeEditorProfile=null,resumeDraftId=null;
 function renderCurrentResume(){
+ renderExperienceLibrary().catch(error=>{if($('#experience-status'))$('#experience-status').textContent=error.message;});
  const box=$('#current-resume');if(!box)return;box.replaceChildren();const p=profiles.find(p=>p.id===$('#profiles').value);
  if(!p)return;
  const label=document.createElement('p');label.textContent=p.has_resume?'A resume is saved for '+p.name+'. Applications attach this file.':'No resume is saved for this profile.';box.append(label);
@@ -83,3 +84,17 @@ $('#save-edited-resume').onclick=async()=>{
  }catch(error){$('#resume-editor-status').textContent=error.message;button.disabled=false;}
 };
 $('#cancel-edited-resume').onclick=()=>{resumeEditorProfile=null;invalidateResumeDraft();$('#resume-editor').hidden=true;};
+
+let experienceEditing=null,experienceGeneration=0;
+async function renderExperienceLibrary(){
+ const list=$('#experience-list'),status=$('#experience-status'),form=$('#experience-form');if(!list||!form)return;
+ const id=$('#profiles').value,generation=++experienceGeneration;experienceEditing=null;form.reset();$('#experience-cancel').hidden=true;
+ if(!id){list.replaceChildren();form.hidden=true;status.textContent='Choose a saved profile above to add experience.';return;}
+ form.hidden=false;status.textContent='';const {facts=[]}=await api('/applicants/'+id+'/experience');if(generation!==experienceGeneration||id!==$('#profiles').value)return;list.replaceChildren();
+ for(const fact of facts){const row=document.createElement('details'),summary=document.createElement('summary'),text=document.createElement('p'),edit=document.createElement('button'),remove=document.createElement('button');summary.textContent=fact.title;text.textContent=fact.details;text.style.whiteSpace='pre-wrap';edit.type=remove.type='button';edit.textContent='Edit example';remove.textContent='Remove example';edit.className=remove.className='secondary';row.append(summary,text,edit,remove);list.append(row);
+ edit.onclick=()=>{experienceEditing=fact.id;form.elements.title.value=fact.title;form.elements.details.value=fact.details;form.elements.approved.checked=false;$('#experience-cancel').hidden=false;form.elements.title.focus();};
+ remove.onclick=async()=>{remove.disabled=true;try{await api('/applicants/'+id+'/experience/'+fact.id,'DELETE');await renderExperienceLibrary();status.textContent='Example removed from future drafts.';}catch(error){status.textContent=error.message;remove.disabled=false;}};
+ }
+}
+if($('#experience-form'))$('#experience-form').onsubmit=async event=>{event.preventDefault();const form=event.target,id=$('#profiles').value,button=event.submitter;if(!id)return;button.disabled=true;const body={title:form.elements.title.value,details:form.elements.details.value,approved:form.elements.approved.checked};try{await api('/applicants/'+id+'/experience'+(experienceEditing?'/'+experienceEditing:''),experienceEditing?'PUT':'POST',body);if(id!==$('#profiles').value)return;await renderExperienceLibrary();$('#experience-status').textContent='Saved. Relevant unanswered forms will be checked again using this example. Final Submit remains yours.';}catch(error){$('#experience-status').textContent=error.message;}finally{button.disabled=false;}};
+if($('#experience-cancel'))$('#experience-cancel').onclick=()=>{experienceEditing=null;$('#experience-form').reset();$('#experience-cancel').hidden=true;};

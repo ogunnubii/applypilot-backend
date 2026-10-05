@@ -126,7 +126,7 @@ async function refresh(force=false){
    const form=el('form');form.oninput=()=>{form.dataset.dirty='true'};
    const fields=[];
    if(questions.length){for(const question of [...new Set(questions)]){fields.push({question,input:field(form,question)});chatQuestionTools(form,question);}}
-   else{const q=field(form,'Question shown on the employer form');q.maxLength=240;fields.push({questionInput:q,input:field(form,'Your answer')});chatQuestionTools(form,()=>q.value)}
+   else{const q=field(form,'Question shown on the employer form');q.maxLength=4000;fields.push({questionInput:q,input:field(form,'Your answer')});chatQuestionTools(form,()=>q.value)}
    const rememberLabel=el('label'),remember=el('input');remember.type='checkbox';rememberLabel.append(remember,document.createTextNode('Remember these answers for this applicant'));form.append(rememberLabel);
    const submit=el('button','Save answers and continue');form.append(submit);
    form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;busy=true;try{const answers=Object.fromEntries(fields.map(f=>[f.question||f.questionInput.value.trim(),f.input.value.trim()]));await api('/jobs/'+job.id+'/continue','POST',{answers,remember:remember.checked});busy=false;await refresh(true);$('#notice').textContent='Answers saved. The worker will prepare the remaining supported steps and stop at final Submit.'}catch(e){msg.textContent=e.message}finally{busy=false;submit.disabled=false}};actions.append(form);
@@ -159,7 +159,7 @@ function renderMissingAnswers(jobs){
   if(human.has(job.challenge)){employerOnly++;continue;}
   let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}
   questions=[...new Set(questions)].filter(q=>typeof q==='string'&&q.trim());
-  const usable=questions.filter(q=>q.length<=240&&!/cards\[|field\d+|\b(certify|attest|signature|agree to|consent to|passport number|ssn|payment)\b/i.test(q));
+  const usable=questions.filter(q=>q.length<=4000&&!/cards\[|field\d+|\b(certify|attest|signature|agree to|consent to|passport number|ssn|payment)\b/i.test(q));
   if(!usable.length){employerOnly++;continue;}
   let savedAnswers={};try{savedAnswers=JSON.parse(job.answers_json||'{}')||{}}catch{}
   const answered=q=>typeof savedAnswers[q]==='string'&&savedAnswers[q].trim();

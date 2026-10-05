@@ -30,7 +30,7 @@ export function recoverSavedAnswers(db,{userId=null,check=policyProblem,continue
   const facts=reusableAnswers(db,p),answers=parse(j.answers_json,{});if(!answers||typeof answers!=='object'||Array.isArray(answers))continue;
   let filled=0;
   for(const q of [...new Set(questions)]){
-   if(typeof q!=='string'||q.length>240||protectedHostedQuestion(q)||String(answers[q]??'').trim())continue;
+   if(typeof q!=='string'||q.length>4000||protectedHostedQuestion(q)||String(answers[q]??'').trim())continue;
    const fact=hostedFieldAnswer({label:q},p,facts);
    const answer=fact?.answer??(canReuse(q)?savedAnswer(q,facts):null);
    if(typeof answer!=='string'||!answer.trim()||answer.length>4000)continue;

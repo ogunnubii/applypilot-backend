@@ -26,14 +26,14 @@ test('read requests prefer active dashboards and skip a frozen tab without retry
  assert.deepEqual(Array.from((await ctx.fetchJobs()).jobs),[]);assert.deepEqual(calls,[2,1]);
 });
 
-test('popup buttons distinguish foreground fill, prevent repeat requests, and show local errors and holds',async()=>{
+test('focused popup uses one working action, prevents repeat requests and hides employer holds',async()=>{
  const {JSDOM}=require('jsdom');const dom=new JSDOM(fs.readFileSync('extension/popup.html','utf8'),{runScripts:'outside-only'}),w=dom.window;
- let finish;const calls=[];w.ApplyPilotPolicy={attentionOrder:()=>[],supported:()=>true};w.chrome={runtime:{sendMessage:async m=>{calls.push(m);if(m.action==='list')return {ok:true,data:{state:{enabled:true,queue:[]},jobs:[{id:'good',status:'queued',title:'Good',company:'Example'},{id:'hold',status:'queued',title:'Held',employer_hold:{message:'Employer application limit reached'},url:'https://jobs.lever.co/example/held'}]}};return new Promise(resolve=>{finish=resolve;});}}};
+ let finish;const calls=[];w.ApplyPilotPolicy={attentionOrder:()=>[]};w.chrome={runtime:{sendMessage:async m=>{calls.push(m);if(m.action==='list')return {ok:true,data:{state:{enabled:true,queue:[]},totals:{confirmed:2,worked:4},jobs:[{id:'good',status:'queued',title:'Good',company:'Example'},{id:'done',status:'submitted',title:'Finished'},{id:'attempt',status:'local_browser',local_attempt_at:'today',title:'Attempted'},{id:'hold',status:'queued',title:'Held',employer_hold:{message:'Employer application limit reached'}}]}};return new Promise(resolve=>{finish=resolve;});}}};
  w.eval(fs.readFileSync('extension/popup.js','utf8'));await new Promise(r=>setImmediate(r));
- const row=w.document.querySelector('[data-job-id="good"]'),buttons=row.querySelectorAll('button');buttons[1].click();assert.equal(calls.at(-1).auto,false);assert(buttons[0].disabled&&buttons[1].disabled);assert.match(row.textContent,/Opening this application/);buttons[1].click();assert.equal(calls.filter(c=>c.action==='open').length,1);
- finish({ok:false,error:'This application belongs to another browser'});await new Promise(r=>setImmediate(r));assert.match(row.querySelector('[role=status]').textContent,/another browser/);assert(!buttons[1].disabled);
- buttons[0].click();assert.equal(calls.at(-1).auto,true);finish({ok:true,data:{opened:true}});await new Promise(r=>setImmediate(r));assert.match(row.textContent,/Preparation started/);
- const held=w.document.querySelector('[data-job-id="hold"]');assert([...held.querySelectorAll('button')].every(b=>b.disabled));assert.match(held.textContent,/Employer application limit/);assert(held.querySelector('a'));w.close();
+ const row=w.document.querySelector('[data-job-id="good"]'),button=row.querySelector('button');assert.equal(row.querySelectorAll('button').length,1);button.click();assert.equal(calls.at(-1).auto,false);assert(button.hidden);assert.match(row.textContent,/Opening this application/);button.click();assert.equal(calls.filter(c=>c.action==='open').length,1);
+ finish({ok:false,error:'This application belongs to another browser'});await new Promise(r=>setImmediate(r));assert.match(row.querySelector('[role=status]').textContent,/another browser/);assert(!button.hidden);
+ for(const id of ['hold','done','attempt'])assert.equal(w.document.querySelector('[data-job-id="'+id+'"]'),null);
+ assert.equal(w.document.querySelectorAll('button:disabled').length,0);assert(w.document.querySelector('#controls').hidden);assert.match(w.document.querySelector('#numbers').textContent,/2Confirmed/);w.close();
 });
 
 test('writes skip a frozen dashboard before dispatch and never replay an uncertain write',async()=>{

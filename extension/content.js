@@ -25,13 +25,14 @@ function descriptors(e,metadata=true){
  if(!values.length)add(labelText(container));if(!values.length)add(referencedText(e,'aria-describedby'));if(metadata){add(e.placeholder);add(e.name);add(e.id);}
  return values.length?values:['Required field'];
 }
-const label=e=>descriptors(e)[0].slice(0,240);
+const label=e=>descriptors(e)[0];
 async function send(action,data={}){const r=await chrome.runtime.sendMessage({action,...data});if(!r?.ok)throw Error(r?.error||'ApplyPilot connection unavailable');return r.data;}
 async function recordAssistance(){if(!started||assistanceSent)return;try{await send('assistance');assistanceSent=true;}catch{/* The boundary remains unknown if tracking cannot sync. */}}
 function bodyText(){return [...document.body.childNodes].filter(e=>e.nodeType===3||e.nodeType===1&&e!==bar&&!e.matches('script,style,noscript,template')&&visible(e)).map(e=>e.nodeType===3?e.textContent:e.innerText||'').join('\n');}
 function siteIssue(){return P.employerPageIssue({title:document.title,text:bodyText(),hasForm:controls().length>0||!!document.querySelector('form')});}
 function receipt(){return P.receipt(bodyText());}
 function setValue(e,value){
+ if(e.maxLength>0&&String(value).length>e.maxLength){fieldErrors.push(label(e)+': saved answer exceeds the employer’s character limit.');return false;}
  if(e.matches?.('[contenteditable="true"]')){e.textContent=String(value);e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:String(value)}));e.dispatchEvent(new Event('change',{bubbles:true}));return;}
  const proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;
  Object.getOwnPropertyDescriptor(proto,'value').set.call(e,value);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));
@@ -134,7 +135,7 @@ async function fillPass(){
   try{
    const role=controlRole(e),a=answer(e);if(role==='combobox'){if(a!==null&&await fillCombobox(e,a))count++;continue;}if(role==='checkbox'){if(a!==null&&await fillRoleCheckbox(e,a))count++;continue;}if(role==='radio')continue;
    if(e.tagName==='SELECT'&&e.multiple)continue;if(!e.matches('input,select,textarea,[contenteditable="true"]')||['hidden','password','file','checkbox','submit','button','radio','reset','image'].includes(e.type)||(compact(e.matches('[contenteditable="true"]')?e.textContent:e.value)&&!(e.tagName==='SELECT'&&(e.selectedOptions[0]?.disabled||/^(select|choose)(\b|\.\.\.)/i.test(compact(e.selectedOptions[0]?.textContent))))))continue;
-   if(a===null||a===undefined||a==='')continue;if(e.tagName==='SELECT'){const opts=[...e.options].filter(o=>!o.disabled&&P.optionMatches(label(e),o.textContent,a,packet.profile));if(opts.length!==1)continue;setValue(e,opts[0].value);}else setValue(e,a);count++;
+   if(a===null||a===undefined||a==='')continue;if(e.maxLength>0&&String(a).length>e.maxLength){fieldErrors.push(label(e)+': saved answer exceeds the employer’s character limit.');continue;}if(e.tagName==='SELECT'){const opts=[...e.options].filter(o=>!o.disabled&&P.optionMatches(label(e),o.textContent,a,packet.profile));if(opts.length!==1)continue;setValue(e,opts[0].value);}else setValue(e,a);count++;
   }catch{if(isRequired(e))fieldErrors.push(label(e)+' (field could not accept the saved value)');}
  }
  for(const e of fields.filter(e=>e.type==='checkbox'&&!e.checked)){const a=answer(e);if(a!==null&&/^(yes|true)$/i.test(String(a))&&!protectedQuestion(label(e))){e.click();if(e.checked)count++;}}
@@ -152,13 +153,13 @@ async function prepareMissingAnswers(){
  for(const e of controls()){
   const fields=controls(),q=label(e),key=norm(q);
   if(prepared>=12)break;
-  if(attempted||!visible(e)||controlComplete(e,fields)||descriptors(e).some(protectedQuestion)||answer(e)!==null||q==='Required field'||q.length<3||['file','password','checkbox','hidden','submit','button'].includes(e.type)||controlRole(e)==='checkbox')continue;
+  if(attempted||!visible(e)||controlComplete(e,fields)||descriptors(e).some(protectedQuestion)||answer(e)!==null||q==='Required field'||q.length<3||q.length>4000||['file','password','checkbox','hidden','submit','button'].includes(e.type)||controlRole(e)==='checkbox')continue;
   if(!e.matches('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="radio"]'))continue;
   if(aiTried.has(key)&&Date.now()-aiTried.get(key)<60000)continue;
   aiTried.set(key,Date.now());const url=location.href,question=q;note.textContent='Gemini is preparing: '+q;
   try{
    const choices=e.tagName==='SELECT'?[...e.options].filter(o=>!o.disabled&&o.value&&!/^(?:select|choose)\b/i.test(o.textContent.trim())).map(o=>o.textContent.trim()):e.type==='radio'?fields.filter(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form).map(optionText):controlRole(e)==='radio'?roleRadioGroup(e).map(optionText):[];
-   const result=await send('answer',{question,choices,answerFormat:e.type==='number'?'number':'text'}),state=await send('state');
+   const result=await send('answer',{question,choices,answerFormat:e.type==='number'?'number':'text',maxLength:e.maxLength>0?e.maxLength:4000,fieldHelp:referencedText(e,'aria-describedby').slice(0,2000)}),state=await send('state');
    if(attempted||state.attempted||location.href!==url||!visible(e)||label(e)!==question||controlComplete(e,controls()))continue;
    if(typeof result.answer==='string'&&result.answer.trim()){
     packet.answers=packet.answers||{};Object.defineProperty(packet.answers,question,{value:result.answer.trim(),enumerable:true,configurable:true,writable:true});

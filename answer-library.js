@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {sensitive} from './local-policy.js';
 import {canResearchQuestion,hasResearchDraftForQuestion} from './google-research.js';
 const {normalize,fieldKind}=globalThis.ApplyPilotPolicy;
-export const canCapture=q=>typeof q==='string'&&q.trim().length>1&&q.length<=240&&!sensitive(q)&&!/(password|one.?time|verification code|captcha|date of birth|birth date|ethnic|race|gender|disability|veteran|sexual orientation|religion|medical)/i.test(q);
+export const canCapture=q=>typeof q==='string'&&q.trim().length>1&&q.length<=4000&&!sensitive(q)&&!/(password|one.?time|verification code|captcha|date of birth|birth date|ethnic|race|gender|disability|veteran|sexual orientation|religion|medical)/i.test(q);
 const APPLICATION_ONLY=[
  /^\s*why\b/i,
  /\bwhat do you know about\b/i,

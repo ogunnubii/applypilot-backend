@@ -1,37 +1,31 @@
 const message=document.querySelector('#message'),jobs=document.querySelector('#jobs');
 async function request(action,data={}){
  let timer;const timeout=action==='open'?90000:20000;
- const r=await Promise.race([chrome.runtime.sendMessage({action,...data}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('The browser helper took too long to respond. Refresh the dashboard and check the application before retrying.')),timeout);})]).finally(()=>clearTimeout(timer));
+ const r=await Promise.race([chrome.runtime.sendMessage({action,...data}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('The browser helper took too long to respond. Refresh and try again.')),timeout);})]).finally(()=>clearTimeout(timer));
  if(!r?.ok)throw Error(r?.error||'Extension unavailable');return r.data;
 }
 let loadGeneration=0;
-function blocker(job){return job.employer_hold?.message||(job.status!=='local_browser'&&job.metadata?.available===false?'This posting is marked unavailable. Open the employer posting to review it.':'');}
+function unfinished(job){return ['saved','queued','paused','needs_review','local_browser'].includes(job.status)&&!job.employer_hold&&job.metadata?.available!==false&&!job.local_attempt_at&&!job.evidence?.confirmed&&!job.evidence?.awaiting&&!['Unconfirmed submission','Submission in progress'].includes(job.challenge);}
 async function load(){const generation=++loadGeneration;try{
  message.textContent='Loading…';const data=await request('list');if(generation!==loadGeneration)return;
- document.querySelector('#environment').value=data.state.environment||'hosted';jobs.replaceChildren();
- const attention=ApplyPilotPolicy.attentionOrder(data.jobs),positions=new Map(attention.map((job,index)=>[job.id,index+1]));
- const total=document.createElement('p');total.textContent=attention.length+' applications need your input';total.setAttribute('role','status');jobs.append(total);
- const ordered=data.jobs.filter((job,index,all)=>all.findIndex(other=>other.id===job.id)===index).sort((a,b)=>(positions.get(a.id)||Infinity)-(positions.get(b.id)||Infinity));
- for(const job of ordered.filter(j=>['saved','queued','paused','needs_review','local_browser'].includes(j.status))){
-  const article=document.createElement('article'),title=document.createElement('strong'),openButton=document.createElement('button'),auto=document.createElement('button'),status=document.createElement('p');
-  article.dataset.jobId=job.id;status.setAttribute('role','status');status.className='job-action-status';title.textContent=job.title+' · '+job.company;
-  if(positions.has(job.id)){const count=document.createElement('div');count.className='attention-position';count.textContent=positions.get(job.id)+'/'+attention.length+' · Needs your input';count.setAttribute('aria-label','Application '+positions.get(job.id)+' of '+attention.length+' needing your input');article.append(count);}
-  const reason=blocker(job);status.textContent=reason||(job.local_attempt_at?'A prior Submit click is recorded. Check the employer receipt before submitting again.':'');
-  openButton.textContent='Open & autofill';auto.textContent='Prepare automatically';openButton.disabled=!!reason;auto.disabled=!!reason||!!job.local_attempt_at;
-  async function run(automatic){
-   const before=[openButton.disabled,auto.disabled];openButton.disabled=true;auto.disabled=true;
-   status.textContent=automatic?'Preparing this application…':'Opening this application and starting autofill…';
-   try{const result=await request('open',{id:job.id,auto:automatic});status.textContent=result.attempted?'Employer form opened for review. A prior Submit click is recorded; check its receipt.':automatic?'Preparation started in a browser tab. Use Open & autofill to bring it forward.':'Employer form opened. Saved-answer filling has started; review the form before Submit.';}
-   catch(error){status.textContent=error.message;}
-   finally{[openButton.disabled,auto.disabled]=before;}
-  }
-  openButton.onclick=()=>run(false);auto.onclick=()=>run(true);
-  article.append(title,document.createElement('br'),auto,openButton,status);
-  if(reason&&ApplyPilotPolicy.supported(job.url)){const link=document.createElement('a');link.href=job.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='View employer posting';article.append(link);}
-  jobs.append(article);
+ document.querySelector('#environment').value=data.state.environment||'hosted';document.querySelector('#start').hidden=!!data.state.enabled;document.querySelector('#stop').hidden=!data.state.enabled;jobs.replaceChildren();
+ const unique=data.jobs.filter((job,index,all)=>all.findIndex(other=>other.id===job.id)===index),pending=unique.filter(unfinished),attention=ApplyPilotPolicy.attentionOrder(pending),positions=new Map(attention.map((job,index)=>[job.id,index+1]));
+ const totals=data.totals||{},numbers=document.querySelector('#numbers');numbers.replaceChildren();
+ for(const [label,value]of [['Confirmed',totals.confirmed??unique.filter(j=>j.evidence?.confirmed).length],['Forms filled / attempted',totals.worked??unique.filter(j=>j.evidence?.worked).length],['Left to complete',pending.length],['Need your input',attention.length]]){const cell=document.createElement('div'),count=document.createElement('strong'),text=document.createElement('span');cell.className='number';count.textContent=String(value);text.textContent=label;cell.append(count,text);numbers.append(cell);}
+ const ordered=pending.sort((a,b)=>(positions.get(a.id)||Infinity)-(positions.get(b.id)||Infinity)||(Number(b.match_score)||0)-(Number(a.match_score)||0));
+ for(const [index,job] of ordered.entries()){
+  const article=document.createElement('article'),title=document.createElement('strong'),company=document.createElement('small'),openButton=document.createElement('button'),status=document.createElement('p'),count=document.createElement('div');
+  article.dataset.jobId=job.id;status.setAttribute('role','status');status.className='job-action-status';title.textContent=job.title;company.textContent=job.company;count.className='attention-position';count.textContent=(index+1)+'/'+ordered.length;
+  if(positions.has(job.id))count.setAttribute('aria-label','Application '+positions.get(job.id)+' of '+attention.length+' needing your input');article.append(count,title,company);
+  const pay=job.metadata?.pay?.[0];if(pay){const salary=document.createElement('small');salary.className='job-pay';salary.textContent=pay.currency+' '+Number(pay.annualMin).toLocaleString()+(pay.annualMin===pay.annualMax?'':'–'+Number(pay.annualMax).toLocaleString())+' / year'+(pay.estimated?' (estimate)':'');article.append(salary);}
+  openButton.textContent='Open & autofill';let opening=false;
+  openButton.onclick=async()=>{if(opening)return;opening=true;openButton.hidden=true;status.textContent='Opening this application and filling saved answers…';try{const result=await request('open',{id:job.id,auto:false});status.textContent=result.attempted?'A Submit click is already recorded. Check the employer receipt.':'Form opened. Review the answers and click Submit when ready.';}catch(error){status.textContent=error.message;}finally{opening=false;openButton.hidden=false;}};
+  article.append(openButton,status);jobs.append(article);
  }
- message.textContent=data.state.error||(data.state.enabled?'Automatic mode on — '+data.state.queue.length+' waiting; checks every 30 seconds':'Automation stopped. Saved applications are retained.');
+ if(!pending.length){const empty=document.createElement('p');empty.textContent='No jobs left to complete right now.';jobs.append(empty);}
+ message.textContent=data.state.error||'';
  }catch(error){if(generation===loadGeneration)message.textContent=error.message;}}
 for(const action of ['dashboard','start','stop'])document.querySelector('#'+action).onclick=async()=>{try{await request(action);if(action!=='dashboard')await load();}catch(error){message.textContent=error.message;}};
+document.querySelector('#settings').onclick=()=>{const box=document.querySelector('#controls');box.hidden=!box.hidden;document.querySelector('#settings').setAttribute('aria-expanded',String(!box.hidden));};
 document.querySelector('#environment').onchange=async e=>{try{await request('environment',{value:e.target.value});message.textContent='Open ApplyPilot and sign in.';}catch(error){message.textContent=error.message;}};
 document.querySelector('#refresh').onclick=load;load();

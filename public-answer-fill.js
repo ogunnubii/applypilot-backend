@@ -9,7 +9,7 @@ export async function fillPublicQuestions(db,id,{research=researchForJob,continu
  if(!env.GEMINI_API_KEY)return {filled:0};let job=readJob(db,id);if(!waiting(job))return {filled:0};
  const fields=parse(job.required_fields_json,[]);if(!Array.isArray(fields))return {filled:0};
  let filled=0;
- for(const question of [...new Set(fields)].filter(q=>typeof q==='string'&&q.length<=240&&canResearchQuestion(q)&&!parse(job.answers_json,{})[q]?.trim()).slice(0,4)){
+ for(const question of [...new Set(fields)].filter(q=>typeof q==='string'&&q.length<=4000&&canResearchQuestion(q)&&!parse(job.answers_json,{})[q]?.trim()).slice(0,4)){
   job=readJob(db,id);if(!waiting(job))break;
   if(parse(job.answers_json,{})[question]?.trim())continue;
   const at=new Date(clock()).toISOString(),cutoff=new Date(clock()-3600000).toISOString();

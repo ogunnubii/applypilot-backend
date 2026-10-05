@@ -3,7 +3,7 @@ const P=globalThis.ApplyPilotPolicy;
 if(globalThis.__applypilotAgentLoaded)return;globalThis.__applypilotAgentLoaded=true;
 let packet,bar,note,started=false,initialReceipt=false,attempted=false,timer,busy=false,stopped=false,lastStep='',stepAt=0,submitAt=0,pageWaitAt=Date.now();
 const aiTried=new Map(),aiIssues=new Map();
-let assistanceSent=false,submissionRecording=false,lastNativeSubmitClickAt=0;
+let assistanceSent=false,submissionRecording=false,lastNativeSubmitClickAt=0,automaticSubmissionInProgress=false;
 const norm=P.normalize;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const visible=e=>!!e?.isConnected&&!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).display!=='none';
@@ -120,6 +120,10 @@ function controlComplete(e,fields){
  const role=controlRole(e);if(role==='combobox')return customComplete(e);if(role==='checkbox'||e.type==='checkbox')return isChecked(e);if(role==='radio')return roleRadioGroup(e).some(isChecked);if(e.type==='radio')return fields.some(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form&&o.checked);
  if(e.type==='file')return !!e.files?.length;if(e.matches?.('[contenteditable="true"]'))return !!compact(e.textContent);return !!e.value&&!(e.validity&&!e.validity.valid);
 }
+function formProgress(){
+ const fields=controls(),groups=new Map();for(const e of fields.filter(isRequired)){const key=(e.type==='radio'?e.name:label(e))+'|'+(e.type==='radio'?'radio':controlRole(e)||e.type||e.tagName);groups.set(key,(groups.get(key)||false)||controlComplete(e,fields));}
+ return {required:groups.size,filled:[...groups.values()].filter(Boolean).length};
+}
 function review(){
  const fields=controls(),required=fields.filter(isRequired),captcha=[...document.querySelectorAll('iframe[src*="captcha"],iframe[title*="challenge" i],.g-recaptcha,.h-captcha,[data-sitekey]')].some(visible);
  const login=fields.some(e=>e.type==='password'||e.autocomplete==='one-time-code'||/\b(verification code|authentication code|one.time code)\b/i.test(label(e)));
@@ -185,7 +189,7 @@ async function fill(){
  }
  return total;
 }
-async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked});if(blocked)await updateAttentionPosition();}
+async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked,progress:formProgress()});if(blocked)await updateAttentionPosition();}
 function signature(){return location.href+'|'+controls().map(e=>label(e)+':'+e.type+':'+controlRole(e)).join('|')+'|'+buttons().map(e=>buttonName(e)).join('|');}
 function buttons(){return [...document.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');}
 const buttonName=e=>compact(e.innerText||e.value||e.getAttribute('aria-label'));
@@ -214,6 +218,7 @@ async function advance(){
  const state=await send('state');attempted=attempted||state.attempted;const issue=siteIssue();if(issue){stopped=true;clearInterval(timer);const result=await send('site-error',{code:issue.code,empty:controls().length===0&&!document.querySelector('form'),initial:lastStep===''});note.textContent=result.message;return;}
  const text=receipt();if(text&&!initialReceipt&&attempted){await send('receipt',{receipt:text});note.textContent='Employer receipt verified. Application submitted.';stopped=true;clearInterval(timer);return;}
  if(attempted){if(!submitAt)submitAt=Date.now();note.textContent=Date.now()-submitAt>30000?'Submission uncertain. Check the employer receipt before retrying.':'Awaiting employer confirmation. Your Submit click is not yet a confirmed submission.';return;}
+ await send('progress',{fields:[],message:'Preparing the selected employer form',blocked:false,progress:formProgress()});
  const check=review();if(check.fields.length){const issue=check.fields.map(q=>aiIssues.get(q)).find(Boolean);if(issue)check.reason+=' · '+issue;}if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
  if(!check.reason&&!hasApplicationFields()){
   const entry=applicationEntry(),current=signature();
@@ -228,7 +233,12 @@ async function advance(){
  if(!controls().length&&!bs.some(b=>isSubmitAction(b)||isNextAction(b)||/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(b)))&&Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer form to load…';return;}
  if(submit.length===1&&next.length===0){
   if(!controls().length&&!document.querySelector('form'))return report('Cannot identify the final application form.');await send('capture',{fields:formAnswers()});const finalCheck=review();if(finalCheck.reason)return report(finalCheck.reason,finalCheck.fields);
-  const finalButtons=buttons(),finalSubmit=finalButtons.filter(isSubmitAction);if(finalSubmit.length!==1||finalButtons.some(isNextAction))return report('The form changed before final review. Review this step.');return report('Ready to submit — all supported fields are filled. Review the form, then click Submit.',[],true);
+  const finalButtons=buttons(),finalSubmit=finalButtons.filter(isSubmitAction);if(finalSubmit.length!==1||finalButtons.some(isNextAction))return report('The form changed before final review. Review this step.');if(packet.autonomousSubmit!==true||state.autonomousSubmit!==true)return report('Ready to submit — all supported fields are filled. Review the form, then click Submit.',[],true);
+  if(P.submissionDeclaration(bodyText()))return report('The final Submit action includes an employer declaration. Review and submit this form yourself.');
+  const before=bodyText(),grant=await send('attempt',{before,automatic:true,human:false,clickId:crypto.randomUUID()});
+  attempted=true;submitAt=Date.now();if(grant?.permitted!==true)return report('Submission authorization was not confirmed. Check the employer receipt before retrying.');
+  const recheck=review();if(recheck.reason)return report('Form changed after submission authorization. '+recheck.reason,recheck.fields);
+  automaticSubmissionInProgress=true;finalSubmit[0].click();note.textContent='Submitted to the employer; waiting for its receipt.';startReceiptMonitor();return;
  }
  if(next.length===1&&submit.length===0){if(!controls().length)return report('Cannot identify fields for this step.');await send('capture',{fields:formAnswers()});await send('step');lastStep=signatureNow;stepAt=Date.now();next[0].click();return;}
  const apply=bs.filter(e=>/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(e)));if(!controls().length&&apply.length===1&&lastStep===''){await send('step');lastStep=signatureNow;stepAt=Date.now();apply[0].click();return;}await report('Application action is unfamiliar or ambiguous. Continue manually.');
@@ -246,7 +256,7 @@ async function observeManualSubmission(){
 async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted)await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
 // Refresh paused forms without reopening them or clicking any navigation button.
 let savedRefreshBusy=false,lastRefreshSignature='',formChanged=false,formChangeTimer;
-const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions]);
+const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions,p?.autonomousSubmit]);
 async function refreshPausedAnswers(){
  if(!started||!stopped||busy||savedRefreshBusy||submissionRecording||attempted||siteIssue()||receipt())return;
  savedRefreshBusy=true;busy=true;
@@ -259,8 +269,8 @@ async function refreshPausedAnswers(){
   packet=latest;busy=true;attemptedCustom=new WeakMap();
   // Autofill-only refresh uses saved facts and bounded AI preparation; it never
   // advances or submits a form, and preserves existing field values.
-  if(packet.autofillOnly)await fill();else await fillPass();const check=review();
-  await report(preparationMessage(check),check.fields,true);
+  await fill();const check=review();
+  if(packet.autonomousSubmit===true&&state.refreshEnabled&&!check.reason){stopped=false;await advance();if(!stopped)startReceiptMonitor();}else await report(preparationMessage(check),check.fields,true);
  }catch{/* Keep the existing form and edits intact when the connection is unavailable. */}
  finally{busy=false;savedRefreshBusy=false;}
 }
@@ -286,7 +296,7 @@ document.addEventListener('click',e=>{
  recordAssistance();if(isSubmitAction(b)&&(!b.form||b.form.checkValidity())){lastNativeSubmitClickAt=Date.now();void observeManualSubmission();}
 },true);
 document.addEventListener('submit',e=>{
- if(!started||!e.isTrusted)return;
+ if(!started||!e.isTrusted||automaticSubmissionInProgress)return;
  const form=e.target,submitter=e.submitter&&isSubmitAction(e.submitter)?e.submitter:buttons().find(b=>b.form===form&&isSubmitAction(b));
  if(submitter&&Date.now()-lastNativeSubmitClickAt>1000){recordAssistance();void observeManualSubmission();}
 },true);

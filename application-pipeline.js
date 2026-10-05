@@ -70,7 +70,6 @@ export function pipelineStatus(db,userId){
 export function setPipeline(db,userId,enabled){
  if(typeof enabled!=='boolean')throw Error('Choose whether found jobs should queue automatically.');
  db.prepare('INSERT INTO pipeline_preferences(user_id,auto_queue_found,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET auto_queue_found=excluded.auto_queue_found,updated_at=excluded.updated_at').run(userId,enabled?1:0,new Date().toISOString());
- if(enabled)db.prepare('DELETE FROM work_focus WHERE user_id=?').run(userId);
  return {...pipelineStatus(db,userId),result:enabled?queueFoundApplications(db,userId):null};
 }
 export function queueEnabledPipelines(db){

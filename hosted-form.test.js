@@ -62,10 +62,10 @@ test('setup captures each structured profile field under its canonical answer ke
  assert.doesNotMatch(html,/Automatically apply to strong matches/);
 });
 
-test('hosted worker prepares the form and leaves final submission to the applicant',()=>{
+test('hosted worker preserves manual default and gates automatic submission behind focused authorization',()=>{
  const source=fs.readFileSync(new URL('./worker.js',import.meta.url),'utf8');
  assert.match(source,/Ready to submit — review the filled application and click Submit/);
- assert.doesNotMatch(source,/await\s+submit\.click\s*\(/);
+ assert.match(source,/if\(focusAllowsSubmit\(db,job\)\)/);assert.match(source,/reserveAutonomousAttempt\(db,job.id,job.user_id,'hosted-worker'\);await submit.click\(\)/);
  assert.doesNotMatch(source,/event\([^\n]+['"]automatic_submission['"]/);
  assert.doesNotMatch(source,/requiresHumanReview\(await page\.locator\(['"]body['"]\)/);
  assert.match(source,/if\(requiredMissing\.length\)/);

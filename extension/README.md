@@ -1,4 +1,4 @@
-Version 0.6.23 adds Add job links to open the bulk-link funnel, plus automatic popup refresh. The server checks batches and queues verified worldwide technology roles. Final Submit remains manual.
+Version 0.6.24 adds Add job links to open the bulk-link funnel, plus automatic popup refresh. The server checks batches and queues verified worldwide technology roles. Final Submit remains manual.
 
 Version 0.6.22 adds Mark completed beside each unfinished application. It records your submission, removes local retry work and updates Completed without inventing an employer receipt. Completed and Confirmed are separate totals. Reload the existing extension to retain its records.
 
@@ -47,3 +47,8 @@ Version 0.6.1 fixes missing-tab queue stalls and resumes routine submissions aft
 Version 0.6.2 recognizes employer HTTP 500/502/503/504, rate limits, denied access and missing pages. It does not treat them as application forms or confirmations. Newly opened automatic jobs may retry an empty landing page once after a one-minute cooldown, using a fresh GET. Other employer hosts continue during the wait. Existing records, edited/populated forms, form steps, and any possible submission remain paused. Stop automation and browser restart cancel pending retries. No access checks are bypassed. Update by extracting the ZIP over this same directory and reloading the same extension; keep its records.
 
 Version 0.6.7 prepares more routine forms by using accessible labels and descriptions, exact portal dropdown choices, ARIA radios and checkboxes, content-editable fields, and additional safe Next/Continue/Review labels. It ignores static footer boilerplate while still stopping for required legal, demographic, CAPTCHA, MFA, and unknown responses. ApplyPilot never clicks the final Submit button: the applicant clicks it once, and the extension durably records that attempt before replaying the click to the employer page.
+
+Application order follows the server company/platform rotation. Five is a soft rotation target, not an employer quota or permission to repeat a requisition. Final Submit remains manual.
+
+
+Single-application mode (0.6.24): enable Start autonomous application on the dashboard. Only the selected job progresses; saved facts and approved reusable answers fill the form. The hosted worker starts new forms, or the connected browser can continue an existing local form. Automatic Submit requires this explicit mode, a complete supported form and durable authorization. Missing facts, verification and employer declarations pause the same application. No automatic replay follows an uncertain attempt. The next job is selected only after a real employer receipt. The displayed percentage measures current-step required fields, not hiring probability or submission success. Manual Submit remains the default outside this mode.

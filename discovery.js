@@ -4,6 +4,7 @@ import {employerHold} from './employer-limits.js';
 import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
 import {pipelineEnabled,queueFoundApplications} from './application-pipeline.js';
 import {priorApplication} from './application-dedup.js';
+import {diversifyApplications,applicationDiversityHistory,spreadDiscoveryBoards} from './application-diversity.js';
 import {jobIntelligence,nextApplicationEligible} from './job-intelligence.js';
 import {workEligibility} from './work-eligibility.js';
 import {companyKey,historyKey} from './application-history.js';
@@ -174,7 +175,7 @@ const defaultBoards=['braze','cloudflare','canonical','gitlab','datadog','grafan
 // Current public boards with a high concentration of infrastructure,
 // reliability, cloud and support work. They are added only for searches in
 // that role family and share a one-minute feed cache.
-const infrastructureBoards=["https://job-boards.greenhouse.io/anthropic","https://jobs.ashbyhq.com/openai","https://jobs.ashbyhq.com/cohere","https://jobs.ashbyhq.com/perplexity","https://jobs.ashbyhq.com/marble.ai","https://jobs.ashbyhq.com/acquird","https://jobs.ashbyhq.com/homebase","https://jobs.ashbyhq.com/ashby","https://jobs.ashbyhq.com/remarcable-inc","https://jobs.ashbyhq.com/top-hat","https://jobs.ashbyhq.com/lightspeedhq","https://jobs.ashbyhq.com/hopper","https://jobs.ashbyhq.com/baseten","https://jobs.ashbyhq.com/hiive","https://jobs.ashbyhq.com/n8n","https://jobs.ashbyhq.com/modal","https://jobs.ashbyhq.com/ramp","https://jobs.ashbyhq.com/linear","https://jobs.ashbyhq.com/vanta","https://jobs.ashbyhq.com/notion","https://jobs.ashbyhq.com/cursor","https://jobs.ashbyhq.com/supabase","https://job-boards.greenhouse.io/gitlab","https://job-boards.greenhouse.io/cloudflare","https://job-boards.greenhouse.io/grafanalabs","https://job-boards.greenhouse.io/canonical","https://job-boards.greenhouse.io/datadog","https://job-boards.greenhouse.io/mongodb","https://job-boards.greenhouse.io/elastic","https://job-boards.greenhouse.io/cockroachlabs","https://job-boards.greenhouse.io/databricks","https://job-boards.greenhouse.io/stripe","https://job-boards.greenhouse.io/reddit","https://job-boards.greenhouse.io/figma","https://job-boards.greenhouse.io/netlify","https://job-boards.greenhouse.io/vercel","https://job-boards.greenhouse.io/turing"];
+const infrastructureBoards=["https://jobs.lever.co/zopa","https://jobs.lever.co/spotify","https://jobs.lever.co/palantir","https://job-boards.greenhouse.io/anthropic","https://jobs.ashbyhq.com/openai","https://jobs.ashbyhq.com/cohere","https://jobs.ashbyhq.com/perplexity","https://jobs.ashbyhq.com/marble.ai","https://jobs.ashbyhq.com/acquird","https://jobs.ashbyhq.com/homebase","https://jobs.ashbyhq.com/ashby","https://jobs.ashbyhq.com/remarcable-inc","https://jobs.ashbyhq.com/top-hat","https://jobs.ashbyhq.com/lightspeedhq","https://jobs.ashbyhq.com/hopper","https://jobs.ashbyhq.com/baseten","https://jobs.ashbyhq.com/hiive","https://jobs.ashbyhq.com/n8n","https://jobs.ashbyhq.com/modal","https://jobs.ashbyhq.com/ramp","https://jobs.ashbyhq.com/linear","https://jobs.ashbyhq.com/vanta","https://jobs.ashbyhq.com/notion","https://jobs.ashbyhq.com/cursor","https://jobs.ashbyhq.com/supabase","https://job-boards.greenhouse.io/gitlab","https://job-boards.greenhouse.io/cloudflare","https://job-boards.greenhouse.io/grafanalabs","https://job-boards.greenhouse.io/canonical","https://job-boards.greenhouse.io/datadog","https://job-boards.greenhouse.io/mongodb","https://job-boards.greenhouse.io/elastic","https://job-boards.greenhouse.io/cockroachlabs","https://job-boards.greenhouse.io/databricks","https://job-boards.greenhouse.io/stripe","https://job-boards.greenhouse.io/reddit","https://job-boards.greenhouse.io/figma","https://job-boards.greenhouse.io/netlify","https://job-boards.greenhouse.io/vercel","https://job-boards.greenhouse.io/turing"];
 function curatedBoards(intent,focus=''){
  const text=[...intent.roles,focus].join(' ').toLowerCase();
  return /\b(devops|site reliability|sre|platform|cloud|infrastructure|systems?|sysadmin|network|noc|support|build|release|ci\/cd|production)\b/.test(text)?infrastructureBoards:[];
@@ -227,7 +228,7 @@ async function executeSearch(id,userId){
  const applicant=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(search.applicant_id,userId);
  if(!applicant)throw Error('Applicant not found');
  const resolved=searchIntentForApplicant(search,applicant),intent=resolved.intent,requestedBoards=[...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')],boards=[...new Set([...requestedBoards,...(intent.broadTech?[...curatedBoards(intent,applicant.focus),...defaultBoards]:[...defaultBoards,...curatedBoards(intent,applicant.focus)])].map(board=>board.replace('job-boards.greenhouse.io','boards.greenhouse.io')))];
- const batch=sourceBatch(boards,search.source_cursor);
+ const batch=sourceBatch(spreadDiscoveryBoards(boards),search.source_cursor);
  if(search.auto_generated&&resolved.instruction!==search.instruction)db.prepare('UPDATE searches SET instruction=? WHERE id=?').run(resolved.instruction,id);
  db.prepare('UPDATE searches SET last_run=?,last_error=NULL,source_cursor=? WHERE id=?').run(now(),batch.next,id);
  let scanned=0,matched=0,strongMatches=0,added=0,queued=0,duplicatesSkipped=0,detailsFetched=0;const errors=[],sources=[];
@@ -238,7 +239,9 @@ async function executeSearch(id,userId){
  const candidates=sources.flatMap(s=>{scanned+=s.jobs.length;return s.jobs.map(job=>({...job,source:s.source}));})
   .map(job=>({job,assessment:matchAssessment(job,intent,applicant.focus)})).filter(x=>x.assessment.matched)
   .sort((a,b)=>b.assessment.score-a.assessment.score||String(a.job.url).localeCompare(String(b.job.url)));
- for(const {job,assessment} of candidates){
+ const history=applicationDiversityHistory(db,userId);
+ const diverseCandidates=diversifyApplications(candidates.map(c=>({...c.job,assessment:c.assessment})),history);
+ for(const job of diverseCandidates){const assessment=job.assessment;
   if(added>=100)break;let url;try{url=normalizeURL(job.url)}catch{continue;}if(!directDiscoveryLink(url))continue;
   if(job.descriptionURL){
    const hit=feedCache.get(job.descriptionURL),cached=hit&&Date.now()-hit.at<3600000;

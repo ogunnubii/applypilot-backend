@@ -121,7 +121,7 @@ async function refresh(force=false){
  const signature=JSON.stringify([current,externalRecords]);
  if(!force&&(signature===lastSignature||$('#jobs').contains(document.activeElement)||$('#jobs').querySelector('[data-dirty="true"],details[open]')))return;
  lastSignature=signature;$('#jobs').replaceChildren();
- const attention=globalThis.ApplyPilotPolicy.attentionOrder(current),attentionPositions=new Map(attention.map((j,i)=>[j.id,i+1]));
+ const attention=globalThis.ApplyPilotPolicy.attentionOrder(current.filter(pendingSubmission)),attentionPositions=new Map(attention.map((j,i)=>[j.id,i+1]));
  const blocked=j=>globalThis.ApplyPilotPolicy.needsInput(j);
  const rank=j=>preparationStage(j)==='ready'?-1:blocked(j)?0:1+['local_browser','running','queued','saved','submitted','interview','rejected','offer'].indexOf(j.status);
  const updated=j=>Number.isFinite(Date.parse(j.updated_at))?Date.parse(j.updated_at):0;
@@ -196,6 +196,8 @@ async function refresh(force=false){
   const link=el('a','Open this application on the employer site');link.href=job.url;link.target='_blank';link.rel='noopener';actions.append(link);
   if(human||upload)actions.append(el('p',job.challenge==='Unconfirmed submission'?'Check whether the employer received this application before trying again.':job.challenge==='Ready to submit'?'Review the filled application in the live browser, then click the employer’s Submit button yourself.':'Use Take over to work in the worker’s browser. The separate employer link starts a different browser session.'));
   const done=el('details');done.append(el('summary','I submitted this application'));
+  const reported=el('button','Record my submission without a receipt');reported.type='button';done.append(el('p','Already submitted? Remove this job from your to-do list and stop reapplication. It will only count as employer-confirmed when a receipt is recorded.'),reported);
+  reported.onclick=async()=>{reported.disabled=true;busy=true;try{await api('/jobs/'+job.id+'/report-submitted','POST',{reported:true});busy=false;await refresh(true);$('#notice').textContent='Your submission is recorded and removed from the completion list. Employer receipt is still unverified.';}catch(e){msg.textContent=e.message;}finally{busy=false;reported.disabled=false;}};
   const receiptForm=el('form'),receipt=field(receiptForm,'Employer confirmation reference or message');receipt.minLength=8;receipt.maxLength=300;
   const label=el('label'),check=el('input');check.type='checkbox';check.required=true;check.style.cssText='display:inline;width:auto;margin-right:8px';label.append(check,document.createTextNode('The employer confirmed receipt.'));receiptForm.append(label);
   const confirm=el('button','Confirm submitted');receiptForm.append(confirm);receiptForm.onsubmit=async e=>{e.preventDefault();confirm.disabled=true;busy=true;try{await api('/jobs/'+job.id+'/confirm','POST',{receipt:receipt.value});busy=false;await refresh(true);$('#notice').textContent='Submission recorded. The application is now shown as Submitted.'}catch(e){msg.textContent=e.message}finally{busy=false;confirm.disabled=false}};done.append(receiptForm);actions.append(done);$('#jobs').append(card);
@@ -203,9 +205,10 @@ async function refresh(force=false){
 
  compactJobCards();applyFilters();
  const linked=document.getElementById(location.hash.slice(1));
- if(linked?.classList.contains('job')){linked.hidden=false;linked.style.outline='3px solid #74ad91';const details=linked.querySelector('details');if(details)details.open=true;if(!linked.dataset.focused){linked.scrollIntoView?.({block:'center'});linked.dataset.focused='true';}}
+ if(linked?.classList.contains('job')&&(location.search.includes('view=settings')||linked.dataset.pending==='true')){linked.hidden=false;linked.style.outline='3px solid #74ad91';const details=linked.querySelector('details');if(details)details.open=true;if(!linked.dataset.focused){linked.scrollIntoView?.({block:'center'});linked.dataset.focused='true';}}
 }
 function renderMissingAnswers(jobs){
+ if(!location.search.includes('view=settings'))jobs=jobs.filter(pendingSubmission);
  let section=$('#missing-answers');
  if(section?.dataset.dirty==='true')return;
  const signature=JSON.stringify(jobs.map(j=>[j.id,j.status,j.challenge,j.required_fields_json,j.answers_json,j.draft_needs,j.handoff_available,j.application_only_questions,j.local_phase,j.local_attempt_at,j.continuation?.state]));
@@ -764,7 +767,7 @@ function renderHomeSummary(snapshot,jobs,interviews){
   ['Confirmed submissions',totals?totals.confirmed||0:'—','receipt','Employer receipt evidence only'],
   ['Forms filled / attempted',totals?totals.worked||0:'—','worked','Filled forms and attempts are not confirmed submissions'],
   ['Yet to submit',unique.filter(pendingSubmission).length,'pending','Excludes recorded attempts and completed applications'],
-  ['Ready for my Submit',unique.filter(j=>preparationStage(j)==='ready').length,'prep-ready','Filled forms waiting for your final click'],
+  ['Ready for my Submit',unique.filter(j=>pendingSubmission(j)&&preparationStage(j)==='ready').length,'prep-ready','Filled forms waiting for your final click'],
   ['Awaiting receipt',totals?totals.awaiting||0:'—','awaiting','An attempt was recorded; check the employer receipt before retrying'],
   ['Interviews',interviews.length,'interview','Includes interviews from other sources']
  ];

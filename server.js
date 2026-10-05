@@ -1,6 +1,6 @@
 import {experienceFor,saveExperience,deleteExperience} from './experience-library.js';
 import {installLanguagePolicy,excludesFrench,frenchApplication,archiveFrench,setFrenchExclusion} from './language-policy.js';
-import {installManualSubmitRecords,recordManualSubmit} from './manual-submit-record.js';
+import {installManualSubmitRecords,recordManualSubmit,recordReportedSubmission} from './manual-submit-record.js';
 import {fillPendingFactQuestions} from './paused-fact-fill.js';
 import {prepareFormAnswer} from './form-answer.js';
 import {hasFactDraft} from './draft-provenance.js';
@@ -82,7 +82,7 @@ if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
 }
 if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.21.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-04-richer-answers-focus',extensionVersion:'0.6.21',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-04-richer-answers-focus-2',extensionVersion:'0.6.21',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(req));if(input.registration_code!==process.env.REGISTRATION_CODE)return send(res,403,{error:'Registration code required'});let email=text(input.email,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return send(res,400,{error:'Valid email required'});let id=randomUUID(),hash=hashPassword(input.password);try{db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(id,email,hash,now())}catch{return send(res,409,{error:'Account already exists'})}return send(res,201,{token:issueToken(id,input.remember===true)})}
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id,input.remember===true)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
@@ -244,8 +244,8 @@ if(localRoute){
  }
  if(j.local_owner!==owner)return send(res,409,{error:'Application belongs to another browser'});
  if(['submitted','interview','rejected','offer'].includes(j.status)&&action==='attempt')return send(res,200,{ok:true,confirmed:true});
- if(j.status==='submitted'&&action==='submitted')return send(res,200,{ok:true});
- if(j.status!=='local_browser')return send(res,409,{error:'This application is not active in your browser'});
+ if(j.status==='submitted'&&action==='submitted'&&employerReceipt(j.confirmation))return send(res,200,{ok:true});
+ if(j.status!=='local_browser'&&!(j.status==='submitted'&&j.challenge==='Applicant reported submission'&&action==='submitted'))return send(res,409,{error:'This application is not active in your browser'});
  if(action==='assistance'&&req.method==='POST'){
    const x=JSON.parse(await body(req));
    if(!['human','tracking','partial'].includes(x.kind))return send(res,400,{error:'Unknown assistance record'});
@@ -317,7 +317,7 @@ if(localRoute){
   const x=JSON.parse(await body(req)),receipt=text(x.receipt,300);
   if(applicationLimit(x.receipt)){recordEmployerLimit(db,uid,j.id,x.receipt,{source:'Employer response reported by browser helper'});return send(res,409,{error:'The employer limit message is not a submission receipt.'});}
   if(!j.local_attempt_at||!sameApplication(x.url,j.url)||x.afterSubmit!==true||!employerReceipt(receipt))return send(res,400,{error:'An employer receipt after submission is required'});
-  db.prepare("UPDATE jobs SET status='submitted',confirmation=?,challenge=NULL,updated_at=? WHERE id=? AND status='local_browser'").run('Browser extension observed: '+receipt,now(),j.id);
+  db.prepare("UPDATE jobs SET status='submitted',confirmation=?,challenge=NULL,updated_at=? WHERE id=? AND (status='local_browser' OR status='submitted' AND challenge='Applicant reported submission')").run('Browser extension observed: '+receipt,now(),j.id);
   confirmLibrary(db,j);
   event(j.id,'submitted','Browser extension observed employer confirmation: '+receipt);return send(res,200,{ok:true});
  }
@@ -398,6 +398,7 @@ if(jobLink&&req.method==='PUT'){
 }
 m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/queue$/);if(m&&req.method==='POST'){let j=ownJob(uid,m[1]);if(!j)return send(res,404,{error:'Job not found'});if(priorApplication(db,uid,j))return send(res,409,{error:'This role was already applied to or is in progress. Repeat application blocked.'});if(j.handoff_available)return send(res,409,{error:'Resume the existing live browser instead of queuing a duplicate attempt'});if(metadataFor(j).available===false)return send(res,409,{error:'This employer posting is no longer available. Choose a current match.'});if(!supported(j.url))return send(res,400,{error:'Add the direct employer application link before queuing'});if(['Unconfirmed submission','Submission in progress'].includes(j.challenge))return send(res,409,{error:'The employer may have received this application. Check the employer site and record confirmation before trying again.'});let p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);if(!p.consent||!p.email||!p.resume_path)return send(res,400,{error:'Applicant consent, email and resume required'});if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});if(!['saved','needs_review','paused'].includes(j.status))return send(res,409,{error:'This job cannot be queued from its current state'});try{db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=?").run(now(),j.id);}catch(error){companyTransitionFailure(res,j,error);return;}event(j.id,'queued','Application queued');return send(res,200,{ok:true})}
 m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/confirm$/);if(m&&req.method==='POST'){let j=ownJob(uid,m[1]);if(!j)return send(res,404,{error:'Job not found'});if(['queued','running'].includes(j.status))return send(res,409,{error:'Wait until the worker finishes before recording a manual confirmation'});let x=JSON.parse(await body(req)),receipt=text(x.receipt,300);if(applicationLimit(x.receipt)){recordEmployerLimit(db,uid,j.id,x.receipt);return send(res,409,{error:'The employer limit message is not a submission receipt.'});}if(!employerReceipt(receipt)||/placeholder|example\.com|github\.com|not (?:yet )?(?:submitted|confirmed)|unconfirmed|simulat|test receipt/i.test(receipt))return send(res,400,{error:'Paste the employer message confirming that your application was received or submitted. Profile links and placeholders are not receipts.'});db.prepare("UPDATE jobs SET status='submitted',confirmation=?,challenge=NULL,updated_at=? WHERE id=?").run('Applicant verified: '+receipt,now(),j.id);confirmLibrary(db,j);event(j.id,'manual_confirmation','Applicant recorded employer confirmation: '+receipt);return send(res,200,{ok:true})}
+m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/report-submitted$/);if(m&&req.method==='POST'){const x=JSON.parse(await body(req));if(x.reported!==true)return send(res,400,{error:'Confirm that you already submitted this application.'});return send(res,200,recordReportedSubmission(db,uid,m[1]));}
 m=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/events$/);if(m&&req.method==='GET'){if(!ownJob(uid,m[1]))return send(res,404,{error:'Job not found'});return send(res,200,{events:db.prepare('SELECT at,type,message FROM events WHERE job_id=? ORDER BY id').all(m[1])})}
 return send(res,404,{error:'Not found'});
 }catch(e){console.error(e);return send(res,e.message==='Request too large'?413:400,{error:e.message||'Request failed'})}}).listen(Number(process.env.PORT||8080),process.env.BIND_HOST||'0.0.0.0',()=>console.log('ApplyPilot API listening'));

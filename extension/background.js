@@ -136,6 +136,7 @@ async function handle(m,sender){
    const state=await read(),record=state.records[m.id];if(record){record.attempted=true;record.phase='submitted';record.auto=false;record.siteRetryAt=0;record.pendingClicks={};}
    await chrome.storage.local.set({records:state.records,queue:state.queue.filter(id=>id!==m.id)});return result;
   }
+  if(m.action==='funnel'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard+'?view=funnel'});}
   if(m.action==='dashboard'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard});}
   if(m.action==='environment'){if(!environments[m.value])throw Error('Unknown environment');const s=await read();if(Object.keys(s.records).length)throw Error('Use a separate browser profile for another server while applications are tracked');await chrome.storage.local.set({environment:m.value,enabled:false,queue:[]});return {};}
   if(m.action==='stop'){const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;}await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});return {};}

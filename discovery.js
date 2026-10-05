@@ -1,3 +1,4 @@
+import {worldwideTechIntent} from './tech-search.js';
 import {excludesFrench,frenchApplication,archiveFrench} from './language-policy.js';
 import {employerHold} from './employer-limits.js';
 import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
@@ -33,7 +34,8 @@ export function parseBoards(input){
 
 export function parseIntent(input){
   const rawInstruction=String(input||'').trim().slice(0,5000);
-  const worldwideEligibility=/;\s*eligibility:\s*worldwide sponsorship, remote from Canada, or B2B/i.test(rawInstruction);
+  const broadTech=worldwideTechIntent(rawInstruction);
+  const worldwideEligibility=broadTech||/\bworldwide\b[^;]*(?:sponsorship|visa)/i.test(rawInstruction)||/;\s*eligibility:\s*worldwide sponsorship, remote from Canada, or B2B/i.test(rawInstruction);
   const instruction=rawInstruction.split(';').filter(clause=>!/^\s*eligibility:|^\s*Canada B2B only\s*$/i.test(clause)).join(';').trim();
   if(!instruction)throw Error('Describe the roles you want');
   const lower=instruction.toLowerCase(),locationClause=instruction.split(';').slice(1).join(', ').trim();
@@ -74,7 +76,7 @@ export function parseIntent(input){
   const titleSuffix=/\b(engineer|administrator|manager|operator|specialist|analyst|nurse|accountant)$/;
   roles=roles.map((role,index)=>role.split(/\s+/).length===1&&titleSuffix.test(roles[index+1]||'')?role+' '+roles[index+1].match(titleSuffix)[1]:role);
   if(!roles.length)throw Error('Include a role, for example: DevOps engineer; remote; Canada');
-  return {worldwideEligibility,roles:roles.slice(0,80),remote:locationOrder||worldwideEligibility?false:remote,places:locationOrder||worldwideEligibility?[]:places,localPlaces:locationOrder||worldwideEligibility?[]:localPlaces,remotePlaces:locationOrder||worldwideEligibility?[]:remotePlaces,remoteAny:locationOrder||worldwideEligibility?false:remoteAny,locationOrder};
+  return {broadTech,worldwideEligibility,roles:roles.slice(0,80),remote:locationOrder||worldwideEligibility?false:remote,places:locationOrder||worldwideEligibility?[]:places,localPlaces:locationOrder||worldwideEligibility?[]:localPlaces,remotePlaces:locationOrder||worldwideEligibility?[]:remotePlaces,remoteAny:locationOrder||worldwideEligibility?false:remoteAny,locationOrder};
 }
 
 export function profileSearchInstruction(applicant,resumeRoles=[]){
@@ -104,10 +106,10 @@ export function searchIntentForApplicant(search,applicant){
 export const SEARCH_INTERVAL_SECONDS=60;
 const feedCache=new Map(),pendingFeeds=new Map(),boardBackoff=new Map();
 async function readJSON(url){
- const host=new URL(url).origin;if((boardBackoff.get(host)||0)>Date.now())throw Error('Source temporarily cooling down after an error');
+ const endpoint=new URL(url);const host=endpoint.origin+endpoint.pathname.split('/').slice(0,5).join('/');if(Math.max(boardBackoff.get(host)||0,boardBackoff.get(endpoint.origin)||0)>Date.now())throw Error('Source temporarily cooling down after an error');
  const response=await fetch(url,{signal:AbortSignal.timeout(10000),headers:{accept:'application/json'}});
  if(!response.ok){
-  if(response.status===429||response.status>=500){const retry=response.headers.get('retry-after'),seconds=Number(retry),until=retry?(Number.isFinite(seconds)?Date.now()+seconds*1000:Date.parse(retry)):0;boardBackoff.set(host,Math.min(Date.now()+3600000,Math.max(Date.now()+60000,until||Date.now()+300000)));}
+  if(response.status===429||response.status>=500){const retry=response.headers.get('retry-after'),seconds=Number(retry),until=retry?(Number.isFinite(seconds)?Date.now()+seconds*1000:Date.parse(retry)):0;boardBackoff.set(response.status===429?endpoint.origin:host,Math.min(Date.now()+3600000,Math.max(Date.now()+60000,until||Date.now()+300000)));}
   const error=Error('Job board returned '+response.status);error.status=response.status;throw error;
  }
  if(Number(response.headers.get('content-length')||0)>8000000)throw Error('Job board response too large');
@@ -144,7 +146,7 @@ async function broadListings(intent){
   return {batches,errors};
 }
 
-async function listBoard(board,options={}){
+export async function listBoard(board,options={}){
   const u=new URL(board),token=decodeURIComponent(u.pathname.slice(1));
   if(u.hostname.includes('greenhouse.io')){
     const data=await cachedJSON(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs`);
@@ -164,7 +166,7 @@ const defaultBoards=['braze','cloudflare','canonical','gitlab','datadog','grafan
 // Current public boards with a high concentration of infrastructure,
 // reliability, cloud and support work. They are added only for searches in
 // that role family and share a one-minute feed cache.
-const infrastructureBoards=['marble.ai','acquird','homebase','ashby','remarcable-inc','top-hat','lightspeedhq','hopper','baseten','hiive','n8n'].map(x=>'https://jobs.ashbyhq.com/'+encodeURIComponent(x)).concat('https://job-boards.greenhouse.io/anthropic');
+const infrastructureBoards=["https://job-boards.greenhouse.io/anthropic","https://jobs.ashbyhq.com/openai","https://jobs.ashbyhq.com/cohere","https://jobs.ashbyhq.com/perplexity","https://jobs.ashbyhq.com/marble.ai","https://jobs.ashbyhq.com/acquird","https://jobs.ashbyhq.com/homebase","https://jobs.ashbyhq.com/ashby","https://jobs.ashbyhq.com/remarcable-inc","https://jobs.ashbyhq.com/top-hat","https://jobs.ashbyhq.com/lightspeedhq","https://jobs.ashbyhq.com/hopper","https://jobs.ashbyhq.com/baseten","https://jobs.ashbyhq.com/hiive","https://jobs.ashbyhq.com/n8n","https://jobs.ashbyhq.com/modal","https://jobs.ashbyhq.com/ramp","https://jobs.ashbyhq.com/linear","https://jobs.ashbyhq.com/vanta","https://jobs.ashbyhq.com/notion","https://jobs.ashbyhq.com/cursor","https://jobs.ashbyhq.com/supabase","https://job-boards.greenhouse.io/gitlab","https://job-boards.greenhouse.io/cloudflare","https://job-boards.greenhouse.io/grafanalabs","https://job-boards.greenhouse.io/canonical","https://job-boards.greenhouse.io/datadog","https://job-boards.greenhouse.io/mongodb","https://job-boards.greenhouse.io/elastic","https://job-boards.greenhouse.io/cockroachlabs","https://job-boards.greenhouse.io/databricks","https://job-boards.greenhouse.io/stripe","https://job-boards.greenhouse.io/reddit","https://job-boards.greenhouse.io/figma","https://job-boards.greenhouse.io/netlify","https://job-boards.greenhouse.io/vercel","https://job-boards.greenhouse.io/turing"];
 function curatedBoards(intent,focus=''){
  const text=[...intent.roles,focus].join(' ').toLowerCase();
  return /\b(devops|site reliability|sre|platform|cloud|infrastructure|systems?|sysadmin|network|noc|support|build|release|ci\/cd|production)\b/.test(text)?infrastructureBoards:[];
@@ -176,7 +178,7 @@ export function runSearch(id,userId){
  const task=executeSearch(id,userId).finally(()=>activeSearches.delete(key));
  activeSearches.set(key,task);return task;
 }
-async function detailForJob(row){
+export async function detailForJob(row){
  const u=new URL(row.url),parts=u.pathname.split('/').filter(Boolean),board=u.origin+'/'+parts[0];
  if(u.hostname.includes('greenhouse.io')){
   const j=await cachedJSON('https://boards-api.greenhouse.io/v1/boards/'+encodeURIComponent(parts[0])+'/jobs/'+parts[2]+'?pay_transparency=true',3600000);
@@ -216,7 +218,7 @@ async function executeSearch(id,userId){
  if(!search)throw Error('Search not found');
  const applicant=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(search.applicant_id,userId);
  if(!applicant)throw Error('Applicant not found');
- const resolved=searchIntentForApplicant(search,applicant),intent=resolved.intent,requestedBoards=[...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')],boards=[...new Set([...requestedBoards,...defaultBoards,...curatedBoards(intent,applicant.focus)])];
+ const resolved=searchIntentForApplicant(search,applicant),intent=resolved.intent,requestedBoards=[...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')],boards=[...new Set([...requestedBoards,...(intent.broadTech?[...curatedBoards(intent,applicant.focus),...defaultBoards]:[...defaultBoards,...curatedBoards(intent,applicant.focus)])].map(board=>board.replace('job-boards.greenhouse.io','boards.greenhouse.io')))];
  const batch=sourceBatch(boards,search.source_cursor);
  if(search.auto_generated&&resolved.instruction!==search.instruction)db.prepare('UPDATE searches SET instruction=? WHERE id=?').run(resolved.instruction,id);
  db.prepare('UPDATE searches SET last_run=?,last_error=NULL,source_cursor=? WHERE id=?').run(now(),batch.next,id);

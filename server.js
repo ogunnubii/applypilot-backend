@@ -1,3 +1,4 @@
+import {installFunnel,createFunnelBatch,funnelStatus,retryFunnelItem,processFunnel,enableWorldwideDiscovery} from './job-funnel.js';
 import {experienceFor,saveExperience,deleteExperience} from './experience-library.js';
 import {installLanguagePolicy,excludesFrench,frenchApplication,archiveFrench,setFrenchExclusion} from './language-policy.js';
 import {installManualSubmitRecords,recordManualSubmit,recordReportedSubmission} from './manual-submit-record.js';
@@ -34,6 +35,8 @@ import {parseBoards,parseIntent,profileSearchInstruction,runSearch,SEARCH_INTERV
 import {resumeRoles,resumeText} from './resume.js';
 installNotifications(db);installLibrary(db);installDrafts(db);installResearch(db);db.exec('CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT)');
 installArchive(db);installLanguagePolicy(db);installManualSubmitRecords(db);installContinuations(db);installPublicFill(db);installResumeEditor(db);installSavedRecovery(db);
+installFunnel(db);let funnelBusy=false;async function funnelTick(){if(funnelBusy)return;funnelBusy=true;try{await processFunnel(db);}catch(error){console.error('Job funnel:',error.message);}finally{funnelBusy=false}}
+const funnelTimer=setInterval(funnelTick,30000);funnelTimer.unref();setTimeout(funnelTick,2000).unref();
 const savedRecoveryTick=()=>{try{recoverSavedAnswers(db);}catch(error){console.error('Saved-answer recovery:',error.message);}};
 const savedRecoveryTimer=setInterval(savedRecoveryTick,60000);savedRecoveryTimer.unref();setTimeout(savedRecoveryTick,2000).unref();
 const pipelineTimer=setInterval(()=>{try{queueEnabledPipelines(db);}catch(error){console.error('Application pipeline:',error.message);}},60000);pipelineTimer.unref();
@@ -80,9 +83,9 @@ if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-typ
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
-if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.22.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
+if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.23.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-05-completed-controls',extensionVersion:'0.6.22',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-05-worldwide-funnel',extensionVersion:'0.6.23',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(req));if(input.registration_code!==process.env.REGISTRATION_CODE)return send(res,403,{error:'Registration code required'});let email=text(input.email,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return send(res,400,{error:'Valid email required'});let id=randomUUID(),hash=hashPassword(input.password);try{db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(id,email,hash,now())}catch{return send(res,409,{error:'Account already exists'})}return send(res,201,{token:issueToken(id,input.remember===true)})}
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id,input.remember===true)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
@@ -167,6 +170,11 @@ if(path==='/api/operations'&&req.method==='GET'){
 }
 if(path==='/api/activity'&&req.method==='GET')return send(res,200,{events:db.prepare('SELECT e.at,e.type,e.message,j.id AS job_id,j.title,j.company,j.applicant_id FROM events e JOIN jobs j ON j.id=e.job_id WHERE j.user_id=? AND j.status NOT IN (\'archived\',\'duplicate\') ORDER BY e.id DESC LIMIT 100').all(uid)});
 if(path==='/api/me')return send(res,200,{email:db.prepare('SELECT email FROM users WHERE id=?').get(uid)?.email});
+if(path==='/api/funnel'&&req.method==='GET')return send(res,200,funnelStatus(db,uid));
+if(path==='/api/funnel'&&req.method==='POST'){const result=createFunnelBatch(db,uid,JSON.parse(await body(req,1100000)));setImmediate(funnelTick);return send(res,201,result);}
+if(path==='/api/funnel/discovery'&&req.method==='POST'){const x=JSON.parse(await body(req)),result=enableWorldwideDiscovery(db,uid,x.applicant_id);setImmediate(()=>runSearch(result.id,uid).catch(error=>console.error('Worldwide discovery:',error.message)));return send(res,200,result);}
+const funnelRetry=path.match(/^\/api\/funnel\/([a-f0-9-]+)\/retry$/);
+if(funnelRetry&&req.method==='POST'){const result=retryFunnelItem(db,uid,funnelRetry[1]);setImmediate(funnelTick);return send(res,200,result);}
 if(path==='/api/searches'&&req.method==='GET')return send(res,200,{intervalSeconds:SEARCH_INTERVAL_SECONDS,searches:db.prepare('SELECT * FROM searches WHERE user_id=? ORDER BY created_at DESC').all(uid).map(s=>({...s,boards:JSON.parse(s.boards_json),boards_json:undefined,last_result:s.last_result_json?JSON.parse(s.last_result_json):null,last_result_json:undefined}))});
 if(path==='/api/searches'&&req.method==='POST'){
   const x=JSON.parse(await body(req)),p=db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(x.applicant_id,uid);
@@ -294,7 +302,7 @@ if(localRoute){
  if(action==='attempt'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
   if(applicationLimit(x.before)){recordEmployerLimit(db,uid,j.id,x.before,{source:'Employer page observed by browser helper'});return send(res,409,{error:'Employer application limit reached. Other employers can continue.'});}
-  if(x.human!==true)return send(res,409,{error:'Review the employer form and click Submit yourself. Update the browser helper to 0.6.22 if it tried to submit automatically.'});
+  if(x.human!==true)return send(res,409,{error:'Review the employer form and click Submit yourself. Update the browser helper to 0.6.23 if it tried to submit automatically.'});
   const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
   if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
   if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});

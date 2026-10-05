@@ -215,7 +215,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.22",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.23",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -325,7 +325,7 @@ test('hosted worker stops an HTTP 503 before inspecting or submitting a form and
 });
 
 function pureModule(file,bindings={}){
- if(file!=='employer-limits.js')bindings={employerHold:()=>null,excludesFrench:()=>false,frenchApplication:()=>false,archiveFrench:()=>[],...bindings};
+ if(file!=='employer-limits.js')bindings={worldwideTechIntent:value=>/^Worldwide technology roles:/i.test(value),employerHold:()=>null,excludesFrench:()=>false,frenchApplication:()=>false,archiveFrench:()=>[],...bindings};
  const code=sources[file].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const|let|class)/g,'');
  return new Function(...Object.keys(bindings),code+';return {employerKey:typeof employerKey==="function"?employerKey:null,applicationLimit:typeof applicationLimit==="function"?applicationLimit:null,installEmployerLimits:typeof installEmployerLimits==="function"?installEmployerLimits:null,employerHold:typeof employerHold==="function"?employerHold:null,recordEmployerLimit:typeof recordEmployerLimit==="function"?recordEmployerLimit:null,employerLimits:typeof employerLimits==="function"?employerLimits:null,installPipeline:typeof installPipeline==="function"?installPipeline:null,pipelineEnabled:typeof pipelineEnabled==="function"?pipelineEnabled:null,queueFoundApplications:typeof queueFoundApplications==="function"?queueFoundApplications:null,setPipeline:typeof setPipeline==="function"?setPipeline:null,pipelineStatus:typeof pipelineStatus==="function"?pipelineStatus:null,sameApplication:typeof sameApplication==="function"?sameApplication:null,priorApplication:typeof priorApplication==="function"?priorApplication:null,installRepeatGuard:typeof installRepeatGuard==="function"?installRepeatGuard:null,compensation:typeof compensation==="function"?compensation:null,jobIntelligence:typeof jobIntelligence==="function"?jobIntelligence:null,nextApplication:typeof nextApplication==="function"?nextApplication:null,nextApplicationEligible:typeof nextApplicationEligible==="function"?nextApplicationEligible:null,sourceBatch:typeof sourceBatch==="function"?sourceBatch:null,cachedJSON:typeof cachedJSON==="function"?cachedJSON:null,runSearch:typeof runSearch==="function"?runSearch:null};')(...Object.values(bindings));
 }
@@ -512,7 +512,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.22'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.23'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{

@@ -74,3 +74,10 @@ test('completion is popup-only and removes local retries only after the server r
  fail=false;await ctx.run({action:'mark-completed',id},popup);assert.equal(calls.at(-1)[0],'/jobs/'+id+'/report-submitted');assert.equal(calls.at(-1)[1],'POST');assert.equal(calls.at(-1)[2].reported,true);
  assert.deepEqual(state.queue,['another']);assert.equal(state.records[id].attempted,true);assert.equal(state.records[id].phase,'submitted');assert.equal(state.records[id].auto,false);assert.equal(state.records[id].siteRetryAt,0);
 });
+
+test('the extension funnel action opens the authenticated website funnel without starting an application',async()=>{
+ const noop={addListener(){}},opened=[];
+ const chrome={runtime:{getURL:p=>'chrome-extension://fixture/'+p,onMessage:noop,onStartup:noop,onInstalled:noop},alarms:{onAlarm:noop,get:async()=>({})},tabs:{onRemoved:noop,create:async x=>{opened.push(x);return x;}},storage:{local:{get:async()=>({device:'fixture',automaticDefault:true,environment:'hosted'}),setAccessLevel:async()=>{}}}};
+ const ctx=vm.createContext({chrome,URL,importScripts(){},ApplyPilotPolicy:{}});vm.runInContext(fs.readFileSync('extension/background.js','utf8')+';globalThis.run=handle;',ctx);
+ await ctx.run({action:'funnel'},{url:chrome.runtime.getURL('popup.html')});assert.equal(opened.length,1);assert.equal(opened[0].url,'https://marvelous-vitality-production-c2d8.up.railway.app/?view=funnel');
+});

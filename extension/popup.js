@@ -4,7 +4,7 @@ async function request(action,data={}){
  const r=await Promise.race([chrome.runtime.sendMessage({action,...data}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('The browser helper took too long to respond. Refresh and try again.')),timeout);})]).finally(()=>clearTimeout(timer));
  if(!r?.ok)throw Error(r?.error||'Extension unavailable');return r.data;
 }
-let loadGeneration=0;
+let loadGeneration=0,actionBusy=false;
 function unfinished(job){return ['saved','queued','paused','needs_review','local_browser'].includes(job.status)&&!job.employer_hold&&job.metadata?.available!==false&&!job.local_attempt_at&&!job.evidence?.confirmed&&!job.evidence?.awaiting&&!['Unconfirmed submission','Submission in progress'].includes(job.challenge);}
 async function load(){const generation=++loadGeneration;try{
  message.textContent='Loading…';const data=await request('list');if(generation!==loadGeneration)return;
@@ -19,15 +19,17 @@ async function load(){const generation=++loadGeneration;try{
   if(positions.has(job.id))count.setAttribute('aria-label','Application '+positions.get(job.id)+' of '+attention.length+' needing your input');article.append(count,title,company);
   const pay=job.metadata?.pay?.[0];if(pay){const salary=document.createElement('small');salary.className='job-pay';salary.textContent=pay.currency+' '+Number(pay.annualMin).toLocaleString()+(pay.annualMin===pay.annualMax?'':'–'+Number(pay.annualMax).toLocaleString())+' / year'+(pay.estimated?' (estimate)':'');article.append(salary);}
   openButton.textContent='Open & autofill';let opening=false;
-  openButton.onclick=async()=>{if(opening)return;opening=true;openButton.hidden=true;complete.hidden=true;status.textContent='Opening this application and filling saved answers…';try{const result=await request('open',{id:job.id,auto:false});status.textContent=result.attempted?'A Submit click is already recorded. Check the employer receipt.':'Form opened. Review the answers and click Submit when ready.';}catch(error){status.textContent=error.message;}finally{opening=false;openButton.hidden=false;complete.hidden=false;}};
+  openButton.onclick=async()=>{if(opening||actionBusy)return;opening=true;actionBusy=true;openButton.hidden=true;complete.hidden=true;status.textContent='Opening this application and filling saved answers…';try{const result=await request('open',{id:job.id,auto:false});status.textContent=result.attempted?'A Submit click is already recorded. Check the employer receipt.':'Form opened. Review the answers and click Submit when ready.';}catch(error){status.textContent=error.message;}finally{opening=false;actionBusy=false;openButton.hidden=false;complete.hidden=false;}};
   const complete=document.createElement('button');complete.textContent='Mark completed';complete.className='complete';complete.title='Record that you submitted this application. Employer confirmation remains separate.';
-  complete.onclick=async()=>{if(opening)return;opening=true;openButton.hidden=true;complete.hidden=true;status.textContent='Recording completion.';try{await request('mark-completed',{id:job.id});await load();}catch(error){status.textContent=error.message;openButton.hidden=false;complete.hidden=false;}finally{opening=false;}};
+  complete.onclick=async()=>{if(opening||actionBusy)return;opening=true;actionBusy=true;openButton.hidden=true;complete.hidden=true;status.textContent='Recording completion.';try{await request('mark-completed',{id:job.id});await load();}catch(error){status.textContent=error.message;openButton.hidden=false;complete.hidden=false;}finally{opening=false;actionBusy=false;}};
   article.append(openButton,complete,status);jobs.append(article);
  }
  if(!pending.length){const empty=document.createElement('p');empty.textContent='No jobs left to complete right now.';jobs.append(empty);}
  message.textContent=data.state.error||'';
  }catch(error){if(generation===loadGeneration)message.textContent=error.message;}}
-for(const action of ['dashboard','start','stop'])document.querySelector('#'+action).onclick=async()=>{try{await request(action);if(action!=='dashboard')await load();}catch(error){message.textContent=error.message;}};
+for(const action of ['dashboard','funnel','start','stop'])document.querySelector('#'+action).onclick=async()=>{try{await request(action);if(!['dashboard','funnel'].includes(action))await load();}catch(error){message.textContent=error.message;}};
 document.querySelector('#settings').onclick=()=>{const box=document.querySelector('#controls');box.hidden=!box.hidden;document.querySelector('#settings').setAttribute('aria-expanded',String(!box.hidden));};
 document.querySelector('#environment').onchange=async e=>{try{await request('environment',{value:e.target.value});message.textContent='Open ApplyPilot and sign in.';}catch(error){message.textContent=error.message;}};
 document.querySelector('#refresh').onclick=load;load();
+
+setInterval(()=>{if(!actionBusy)load();},15000);

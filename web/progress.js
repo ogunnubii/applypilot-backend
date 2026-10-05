@@ -94,7 +94,7 @@ async function refresh(force=false){
  externalRecords=history.records;
  $('#login').hidden=true;$('#workspace').hidden=false;$('#logout').hidden=false;
  notificationSettings();
- updateDiscovery();updateAIStatus();
+ refreshFunnel();updateDiscovery();updateAIStatus();
  const current=jobs.filter(j=>j.status!=='duplicate');
  const interviews=interviewRecords(externalRecords,current);
  renderHistoryOverview(externalRecords,current);
@@ -387,7 +387,7 @@ function focusLocalApplication(jobId){
 function renderLibraryLauncher(){
  if(document.querySelector('#answer-library'))return;
  const box=el('section');box.id='answer-library';box.style.cssText='padding:20px;margin:16px 0;border:1px solid #74ad91;border-radius:12px';
- box.append(el('h2','Answer library'),el('p','Save filled employer forms with the extension’s Save form answers to library button. Confirmed ordinary answers can fill matching questions automatically. Approve other reusable answers here; conflicts and application-specific answers need review. Matching dropdowns fill automatically. Extension 0.6.22 prepares supported forms and waits for your final Submit click.'));
+ box.append(el('h2','Answer library'),el('p','Save filled employer forms with the extension’s Save form answers to library button. Confirmed ordinary answers can fill matching questions automatically. Approve other reusable answers here; conflicts and application-specific answers need review. Matching dropdowns fill automatically. Extension 0.6.23 prepares supported forms and waits for your final Submit click.'));
  const load=el('button','Open / refresh answer library'),list=el('div');box.append(load,list);placeWorkspacePanel(box);
  load.onclick=async()=>{load.disabled=true;try{const {answers}=await api('/answer-library');list.replaceChildren();if(!answers.length)list.append(el('p','No captured answers yet. Save a filled form from its employer tab.'));
  for(const entry of answers){const form=el('form');form.style.cssText='padding:12px 0;border-top:1px solid #ddd';const input=field(form,entry.question);input.value=entry.answer;form.append(el('small',entry.company+' · '+(entry.confirmed?'Employer receipt recorded':'Captured draft — not proof of submission')));
@@ -509,14 +509,14 @@ function renderBrowserReadiness(jobs){
  if(box){if(Date.now()-Number(box.dataset.checkedAt||0)>30000)box.querySelector('button').click();return;}
  box=el('section');box.id='browser-readiness';box.style.cssText='padding:16px;border:1px solid #74ad91;border-radius:12px;margin:16px 0';
  box.append(el('h2','Application preparation in your browser'));
- const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.22)');
+ const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.23)');
  setup.href='/local-browser.html';setup.style.marginLeft='12px';status.setAttribute('role','status');
  box.append(status,check,setup);placeWorkspacePanel(box);
  check.onclick=()=>{
   if(check.disabled)return;check.disabled=true;box.dataset.checkedAt=String(Date.now());const requestId=crypto.randomUUID();
   const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);check.disabled=false;
    browserHelperStatus=error?null:{...data,checkedAt:Date.now()};
-   status.textContent=error|| (data?.version!=='0.6.22'?'Browser helper '+data?.version+' is connected. Update to 0.6.22 so supported forms stop at final Submit.':data?.enabled?'Browser helper 0.6.22 connected. New queued applications are prepared automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine preparation.')+(data?.error?' '+data.error:'');
+   status.textContent=error|| (data?.version!=='0.6.23'?'Browser helper '+data?.version+' is connected. Update to 0.6.23 so supported forms stop at final Submit.':data?.enabled?'Browser helper 0.6.23 connected. New queued applications are prepared automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine preparation.')+(data?.error?' '+data.error:'');
   };
   const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-browser-status-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
   const timer=setTimeout(()=>finish('Browser helper not detected here. Open this dashboard in the Chrome or Edge profile with ApplyPilot Local enabled.'),3500);
@@ -636,7 +636,7 @@ function renderContinuationQueue(data){
 }
 async function drainContinuations(data){
  if(continuationBusy||busy||activeHandoff||Date.now()<nextContinuationCheck||!data?.requests?.some(r=>r.state==='queued'))return;
- if(!browserHelperStatus?.enabled||browserHelperStatus.version!=='0.6.22'||Date.now()-browserHelperStatus.checkedAt>45000)return;
+ if(!browserHelperStatus?.enabled||browserHelperStatus.version!=='0.6.23'||Date.now()-browserHelperStatus.checkedAt>45000)return;
  continuationBusy=true;nextContinuationCheck=Date.now()+20000;
  try{
   const {request}=await api('/continuations/claim','POST',{});if(!request)return;
@@ -771,6 +771,7 @@ function renderHomeSummary(snapshot,jobs,interviews){
   [location.search.includes('view=settings')?'Yet to submit':'Need your attention',unique.filter(location.search.includes('view=settings')?pendingSubmission:needsMyAttention).length,'pending','Forms waiting for your answer, review or final Submit'],
   ['Ready for my Submit',unique.filter(j=>pendingSubmission(j)&&preparationStage(j)==='ready').length,'prep-ready','Filled forms waiting for your final click'],
   ['Awaiting receipt',totals?totals.awaiting||0:'—','awaiting','An attempt was recorded; check the employer receipt before retrying'],
+  ['Preparing',unique.filter(j=>!j.local_attempt_at&&(['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='ready')).length,'preparing','Queued or currently preparing in the browser'],
   ['Interviews',interviews.length,'interview','Includes interviews from other sources']
  ];
  const signature=JSON.stringify(rows);if(box.dataset.signature!==signature){
@@ -817,3 +818,39 @@ function focusView(){
  for(const metric of document.querySelectorAll('.home-metric'))if(metric.tagName!=='BUTTON')metric.removeAttribute('aria-pressed');
 }
 focusView();
+
+// This browser source is appended to the existing authenticated dashboard bundle.
+let funnelProfilesLoaded=false,funnelRefreshing=false;
+async function refreshFunnel(){
+ if(new URLSearchParams(location.search).get('view')!=='funnel')return;
+ document.body.dataset.funnel='true';
+ const box=$('#job-funnel');box.hidden=false;
+ if(funnelRefreshing)return;funnelRefreshing=true;
+ try{
+  if(!funnelProfilesLoaded){const {applicants}=await api('/applicants');const select=$('#funnel-profile');select.replaceChildren();for(const p of applicants){const option=el('option',p.name);option.value=p.id;select.append(option);}funnelProfilesLoaded=true;}
+  const [data,searches,pipeline]=await Promise.all([api('/funnel'),api('/searches'),api('/pipeline')]);
+  const counts=$('#funnel-numbers');counts.replaceChildren();
+  for(const [name,key] of [['Waiting','pending'],['Checking','checking'],['Sent to preparation','queued'],['Needs link review','review'],['Duplicates skipped','duplicate'],['Excluded / closed','excluded']]){const tile=el('div'),n=(data.totals?.[key]||0)+(key==='excluded'?(data.totals?.closed||0):0);tile.className='home-metric';tile.append(el('span',name),el('strong',String(n)));counts.append(tile);}
+  const active=(searches.searches||[]).filter(s=>s.enabled),latest=active.filter(s=>s.last_run).sort((a,b)=>b.last_run.localeCompare(a.last_run))[0],worldwide=active.some(s=>s.instruction.startsWith('Worldwide technology roles:'));
+  $('#funnel-discovery-status').textContent=(worldwide?'Worldwide technology discovery is on. ':active.length+' existing search(es) are active. ')+(pipeline.enabled?'Automatic queueing is on. ':'Automatic queueing is off. ')+(latest?'Last checked '+new Date(latest.last_run).toLocaleTimeString()+': '+(latest.last_result?.scanned||0)+' postings, '+(latest.last_result?.added||0)+' new, '+(latest.last_result?.queued||0)+' queued.':'First search is pending.');
+  $('#funnel-enable-discovery').textContent=worldwide?'Refresh worldwide search':'Enable worldwide technology search';
+  const errors=active.filter(s=>s.last_error);$('#funnel-source-errors').textContent=errors.length?'Some sources need another check: '+errors.map(s=>s.last_error).join('; '):'';
+  const progress=$('#funnel-batches');progress.replaceChildren();for(const batch of data.batches||[]){const checked=batch.counts.filter(c=>!['pending','checking'].includes(c.status)).reduce((n,c)=>n+c.count,0);progress.append(el('p',new Date(batch.created_at).toLocaleString()+' · '+checked+'/'+batch.received+' links checked'+(batch.repeated?' · '+batch.repeated+' repeat links skipped':'')));}
+  const list=$('#funnel-items');list.replaceChildren();
+  for(const item of data.items||[]){const row=el('article'),link=el('a',item.title?item.company+' — '+item.title:item.url);link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';row.append(link,el('small',item.application_status?'Application: '+item.application_status:'Link: '+item.status),el('p',item.message||'Waiting for a background check.'));
+   if(['review','closed'].includes(item.status)&&!item.job_id){const retry=el('button','Check link again');retry.onclick=async()=>{retry.hidden=true;try{await api('/funnel/'+item.id+'/retry','POST',{});await refreshFunnel();}catch(error){$('#funnel-notice').textContent=error.message;retry.hidden=false;}};row.append(retry);}
+   list.append(row);
+  }
+  $('#funnel-updated').textContent='Updated '+new Date(data.checkedAt).toLocaleTimeString()+' · Checks groups of '+data.batchSize+' every '+data.intervalSeconds+' seconds. Updates automatically.';
+ }catch(error){$('#funnel-notice').textContent=error.message;}finally{funnelRefreshing=false;}
+}
+if($('#funnel-form'))$('#funnel-form').onsubmit=async event=>{
+ event.preventDefault();const button=event.submitter||$('#funnel-add'),input=$('#funnel-links'),original=input.value;button.hidden=true;
+ try{const result=await api('/funnel','POST',{applicant_id:$('#funnel-profile').value,links:original});if(input.value===original)input.value='';$('#funnel-notice').textContent=result.added+' links saved. '+result.repeated+' duplicates skipped. '+result.rejected+' invalid links excluded.'+(result.reasons?.length?' '+result.reasons.join(' '):'')+' Processing continues on the server.';await refreshFunnel();}
+ catch(error){$('#funnel-notice').textContent=error.message;}finally{button.hidden=false;}
+};
+if($('#funnel-enable-discovery'))$('#funnel-enable-discovery').onclick=async()=>{
+ const button=$('#funnel-enable-discovery');button.hidden=true;
+ try{await api('/funnel/discovery','POST',{applicant_id:$('#funnel-profile').value});$('#funnel-notice').textContent='Worldwide technology search enabled. Suitable open roles will enter the preparation queue automatically.';await refreshFunnel();}
+ catch(error){$('#funnel-notice').textContent=error.message;}finally{button.hidden=false;}
+};

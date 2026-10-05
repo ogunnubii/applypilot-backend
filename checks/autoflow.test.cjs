@@ -360,6 +360,19 @@ test('minute discovery rotates sources fairly and coalesces cached reads',async(
  assert(sources['discovery.js'].includes('SEARCH_INTERVAL_SECONDS=60'));
  assert(!sources['discovery.js'].includes('SEARCH_INTERVAL_HOURS'));
 });
+test('large employer feeds are accepted while oversized decoded streams are cancelled',async()=>{
+ const assert=require('node:assert/strict');
+ const payload=JSON.stringify({jobs:[{description:'x'.repeat(9000000)}]});
+ const large=pureModule('discovery.js',{fetch:async()=>new Response(payload)});
+ assert.equal((await large.cachedJSON('https://board.example/large')).jobs[0].description.length,9000000);
+ let cancelled=false;
+ const over=pureModule('discovery.js',{fetch:async()=>new Response(new ReadableStream({pull(c){c.enqueue(new Uint8Array(13000000));},cancel(){cancelled=true;}}))});
+ await assert.rejects(over.cachedJSON('https://board.example/oversized'),/too large/);assert.equal(cancelled,true);
+ let read=false,cancelledHeader=false;
+ const declared=pureModule('discovery.js',{fetch:async()=>({ok:true,headers:{get:()=> '24000001'},body:{cancel:async()=>{cancelledHeader=true;}},text:async()=>{read=true;return '{}';}})});
+ await assert.rejects(declared.cachedJSON('https://board.example/declared'),/too large/);assert.equal(read,false);assert.equal(cancelledHeader,true);
+});
+
 test('employer rate limits stop repeated requests during cooldown',async()=>{
  const assert=require('node:assert/strict');let reads=0;
  const {cachedJSON}=pureModule('discovery.js',{fetch:async()=>{reads++;return {ok:false,status:429,headers:{get:()=> '300'}};}});

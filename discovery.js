@@ -112,8 +112,16 @@ async function readJSON(url){
   if(response.status===429||response.status>=500){const retry=response.headers.get('retry-after'),seconds=Number(retry),until=retry?(Number.isFinite(seconds)?Date.now()+seconds*1000:Date.parse(retry)):0;boardBackoff.set(response.status===429?endpoint.origin:host,Math.min(Date.now()+3600000,Math.max(Date.now()+60000,until||Date.now()+300000)));}
   const error=Error('Job board returned '+response.status);error.status=response.status;throw error;
  }
- if(Number(response.headers.get('content-length')||0)>8000000)throw Error('Job board response too large');
- const body=await response.text();if(body.length>8000000)throw Error('Job board response too large');return JSON.parse(body);
+ // Large public employer feeds include hundreds of full descriptions. Bound
+ // the decoded stream as well as Content-Length, including compressed feeds.
+ const limit=24000000;
+ if(Number(response.headers.get('content-length')||0)>limit){await response.body?.cancel().catch(()=>{});throw Error('Job board response too large');}
+ if(response.body){
+  const chunks=[];let size=0;
+  for await(const chunk of response.body){size+=chunk.byteLength;if(size>limit)throw Error('Job board response too large');chunks.push(Buffer.from(chunk));}
+  return JSON.parse(Buffer.concat(chunks,size).toString('utf8'));
+ }
+ const body=await response.text();if(Buffer.byteLength(body)>limit)throw Error('Job board response too large');return JSON.parse(body);
 }
 async function cachedJSON(url,ttl=60000){
  const hit=feedCache.get(url);if(hit&&Date.now()-hit.at<ttl)return hit.data;

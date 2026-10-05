@@ -137,6 +137,7 @@ async function humanPause(job,page,p){
  // Fill only accessible fields. Playwright respects overlays and actionability.
  const filled=await fill(page,p).catch(()=>0);if(filled)event(job.id,'filled',`Filled ${filled} contact fields before human handoff`);
  try{const files=page.locator('input[type="file"]');const fields=await files.evaluateAll(xs=>xs.map(e=>({label:[...e.labels||[]].map(l=>l.innerText).join(' '),id:e.id.replace(/[_-]/g,' '),name:e.name.replace(/[_-]/g,' ')})));const selected=pickResumeField(fields);if(selected>=0){await files.nth(selected).setInputFiles(p.resume_path);event(job.id,'upload','Resume attached before human handoff');}}catch{}
+ await recordFormProgress(page,job).catch(()=>{});
  set(job,'paused','Human verification required','CAPTCHA');
 }
 let handoffs,resumeQueue=[];

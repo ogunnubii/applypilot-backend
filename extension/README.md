@@ -1,3 +1,5 @@
+Version 0.6.22 adds Mark completed beside each unfinished application. It records your submission, removes local retry work and updates Completed without inventing an employer receipt. Completed and Confirmed are separate totals. Reload the existing extension to retain its records.
+
 Version 0.6.21 adds full-length application questions, employer field limits, and a focused popup with counts and unfinished jobs. The server uses relevant approved experience and the public posting to draft complex answers. Final Submit remains manual.
 
 Version 0.6.21 opens supported application entry tabs before autofill. Job descriptions and empty loading pages cannot become Ready for Submit. Intermediate Next steps remain manual; final Submit remains manual. Existing embedded-form and dashboard reconnection fixes are included.

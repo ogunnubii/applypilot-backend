@@ -5,7 +5,7 @@ export function recordReportedSubmission(db,userId,jobId){
   const job=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,userId);
   if(!job)throw Error('Application not found');
   if(['submitted','interview','rejected','offer'].includes(job.status)){db.exec('COMMIT');return {ok:true,alreadyRecorded:true};}
-  if(['running','queued','archived','duplicate'].includes(job.status)||job.handoff_available)throw Error('Wait for active preparation to finish before recording your submission.');
+  if(['running','archived','duplicate'].includes(job.status)||job.handoff_available)throw Error('Wait for active preparation to finish before recording your submission.');
   const at=new Date().toISOString();
   db.prepare("UPDATE jobs SET status='submitted',local_attempt_at=COALESCE(local_attempt_at,?),local_phase='verifying',required_fields_json='[]',challenge='Applicant reported submission',updated_at=? WHERE id=? AND user_id=?").run(at,at,jobId,userId);
   db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(jobId,at,'applicant_reported_submission','Applicant reported already submitting this application. Reapplication stopped; no employer receipt was supplied.');

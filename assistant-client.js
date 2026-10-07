@@ -891,6 +891,6 @@ if($('#funnel-form'))$('#funnel-form').onsubmit=async event=>{
 };
 if($('#funnel-enable-discovery'))$('#funnel-enable-discovery').onclick=async()=>{
  const button=$('#funnel-enable-discovery');button.hidden=true;
- try{await api('/funnel/discovery','POST',{applicant_id:$('#funnel-profile').value});$('#funnel-notice').textContent='Worldwide technology search enabled. Suitable open roles will enter the preparation queue automatically.';await refreshFunnel();}
+ try{await api('/funnel/discovery','POST',{applicant_id:$('#funnel-profile').value});$('#funnel-notice').textContent='Saved job search refreshed. Suitable open roles will enter the preparation queue automatically.';await refreshFunnel();}
  catch(error){$('#funnel-notice').textContent=error.message;}finally{button.hidden=false;}
 };

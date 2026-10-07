@@ -63,3 +63,14 @@ test('main application card offers a direct manual link without unsupported auto
  w.eval(readFileSync('extension/policy.js','utf8'));w.eval(readFileSync('assistant-client.js','utf8'));await w.refresh(true);
  const card=w.document.querySelector('#job-m');assert(!card.hidden);assert.equal(card.querySelector('.manual-application-link').href,job.url);assert.match(card.textContent,/Review & apply/);assert.match(card.textContent,/Pay needs confirmation/);assert(!card.textContent.includes('Prepare live application'));assert(card.querySelector('.mark-completed'));w.close();
 });
+
+for(const client of ['assistant-client.js','web/progress.js'])test(client+' connects supported review jobs to the browser helper without submitting or marking complete',async()=>{
+ const dom=new JSDOM(readFileSync('assistant-page.html','utf8'),{url:'https://marvelous-vitality-production-c2d8.up.railway.app/',runScripts:'outside-only'}),w=dom.window;w.setInterval=()=>0;
+ const job={id:'m',title:'Cloud Support Engineer',company:'Company',url:'https://www.iitjobs.com/job/cloud-engineer-123',status:'needs_review',metadata:{manualReview:true,pay:[],eligibility:{eligible:false}},challenge:'Manual application'},messages=[];
+ w.fetch=async url=>({ok:true,json:async()=>String(url).endsWith('/jobs')?{jobs:[job],batch:{enabled:true,job_ids:['m'],selected:1,completed:0,minimum_cad:120000}}:String(url).endsWith('/application-history')?{records:[]}:String(url).endsWith('/operations')?{applications:[],totals:{}}:String(url).endsWith('/continuations')?{requests:[]}:String(url).endsWith('/searches')?{searches:[]}:String(url).endsWith('/ai-status')?{profiles:[],attempts:[]}:String(url).endsWith('/activity')?{events:[]}:String(url).endsWith('/employer-limits')?{limits:[]}:{} });
+ w.postMessage=(data,origin)=>queueMicrotask(()=>w.dispatchEvent(new w.MessageEvent('message',{data,source:w,origin})));
+ w.chrome={runtime:{sendMessage:async message=>{messages.push(message);return {ok:true,data:{opened:true}};}}};
+ w.eval(readFileSync('extension/dashboard-bridge.js','utf8'));w.eval(readFileSync('extension/policy.js','utf8'));w.eval(readFileSync(client,'utf8'));await w.refresh(true);
+ const card=w.document.querySelector('#job-m'),button=card.querySelector('.manual-autofill');assert(button);assert(!card.hidden);assert.match(card.textContent,/Ready for autofill/);assert.match(card.textContent,/Review pay and eligibility/);
+ await button.onclick();assert.deepEqual(messages.filter(m=>m.action==='open-from-dashboard').map(m=>m.id),['m']);assert(!messages.some(m=>/submit|complete|attempt/.test(m.action)));assert.equal(job.status,'needs_review');w.close();
+});

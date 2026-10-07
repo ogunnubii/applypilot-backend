@@ -5,7 +5,8 @@ import {priorApplication} from './application-dedup.js';
 import {companyKey,historyKey} from './application-history.js';
 
 // An explicit saved lead becomes visible for manual review without granting
-// employer-form support, salary eligibility, autofill or submission evidence.
+// salary eligibility or submission evidence. Known employer forms can be prepared
+// by the browser helper, with final submission left to the applicant.
 export function loadManualApplication(db,userId,itemId,input={}){
  const value=(v,max)=>typeof v==='string'?v.trim().slice(0,max):'';
  const title=value(input.title,200),company=value(input.company,200),notes=value(input.notes,2000);
@@ -26,7 +27,7 @@ export function loadManualApplication(db,userId,itemId,input={}){
   if(batch&&batch.applicant_id!==profile.id)throw Error('Choose the profile used by your current batch.');
   const size=batch?db.prepare('SELECT COUNT(*) AS n FROM application_batch_members WHERE batch_id=?').get(batch.current_batch).n:0;
   if(batch&&size>=20)throw Error('Your current batch already has 20 jobs. Finish it before adding another.');
-  const id=randomUUID(),message='Manual application: open the posting, check pay and eligibility, then apply on its website. Automatic form preparation is not supported for this link.';
+  const id=randomUUID(),message='Manual review: check pay and eligibility before applying. The browser helper can fill supported forms; email-only postings and unsupported forms need your input. Final Submit stays with you.';
   const metadata={version:2,manualReview:true,pay:[],eligibility:{eligible:false,reason:'Pay, qualifications and work arrangement require review'},sourceUrl:url};
   db.prepare("INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,challenge,created_at,updated_at,job_metadata_json) VALUES(?,?,?,?,?,?,?,'needs_review',?,'Manual application',?,?,?)").run(id,userId,profile.id,title,company,url,url,notes,at,at,JSON.stringify(metadata));
   if(batch)db.prepare('INSERT INTO application_batch_members VALUES(?,?,?,?)').run(batch.current_batch,id,userId,size+1);

@@ -7,12 +7,14 @@ import {plainJobText} from './draft-job-context.js';
 
 const denied=new BlockList();
 for(const [base,bits] of [['0.0.0.0',8],['10.0.0.0',8],['100.64.0.0',10],['127.0.0.0',8],['169.254.0.0',16],['172.16.0.0',12],['192.168.0.0',16],['192.0.0.0',24],['192.0.2.0',24],['198.18.0.0',15],['198.51.100.0',24],['203.0.113.0',24],['224.0.0.0',4],['240.0.0.0',4]])denied.addSubnet(base,bits,'ipv4');
-export function safeFunnelURL(value){
+function safePublicURL(value){
  const u=new URL(value);
  if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443'||isIP(u.hostname.replace(/^\[|\]$/g,''))||!u.hostname.includes('.')||/\.(?:local|localhost|internal|test|invalid)$/i.test(u.hostname))throw Error('Use a public HTTPS employer job link.');
  for(const name of u.searchParams.keys())if(/^(?:password|passwd|access_token|auth|authorization|api_key|secret|session|email)$/i.test(name))throw Error('Remove private sign-in information from the job link.');
- return canonicalJobURL(u.toString());
+ u.hash='';
+ return u.toString();
 }
+export function safeFunnelURL(value){return canonicalJobURL(safePublicURL(value));}
 export function parseFunnelLinks(input){
  if(typeof input!=='string'||input.length>1000000)throw Error('Paste up to 1,000 job links at a time.');
  const raw=input.match(/https?:\/\/[^\s<>"'\[\]]+/gi)||[];
@@ -25,7 +27,9 @@ export function parseFunnelLinks(input){
 // Resolve and pin a public IPv4 address for every HTTPS hop. No cookies, bearer
 // tokens, browser session, executable page scripts or private network access.
 export async function readPublicJob(url,{resolveHost=lookup,requestImpl=request}={}){
- let target=safeFunnelURL(url);
+ // Identity normalization is for duplicate checks, not HTTP requests. Some
+ // employers redirect to a trailing slash; removing it on every hop loops.
+ let target=safePublicURL(url);
  for(let hops=0;hops<5;hops++){
   const u=new URL(target),addresses=await resolveHost(u.hostname,{all:true,family:4});
   if(!addresses.length||addresses.some(a=>a.family!==4||denied.check(a.address,'ipv4')))throw Error('Job link does not resolve to a public address.');
@@ -39,7 +43,7 @@ export async function readPublicJob(url,{resolveHost=lookup,requestImpl=request}
    });req.setTimeout(12000,()=>req.destroy(Error('Employer page timed out.')));req.on('error',reject);req.end();
   });
   if(!data.redirect)return data;
-  target=safeFunnelURL(new URL(data.redirect,target).toString());
+  target=safePublicURL(new URL(data.redirect,target).toString());
  }
  throw Error('Too many employer-page redirects.');
 }

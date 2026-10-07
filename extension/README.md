@@ -1,4 +1,4 @@
-Version 0.6.27 reads native and custom dropdown choices for supported saved-fact Gemini answers. Final Submit stays manual.
+Version 0.6.28 adds Open & autofill for supported manual-review jobs. It opens iitjobs Quick Apply and fills the Randstad application rather than job-alert signup forms. Supported job pages also include JFrog, Kinaxis iCIMS and Deloitte Canada. Saved answers and supported Gemini answers prepare the form; final Submit stays manual. Email-only postings remain manual. Update the existing extension folder, reload the same installation and refresh the dashboard; new site access may require Chrome/Edge approval.
 
 Version 0.6.22 adds Mark completed beside each unfinished application. It records your submission, removes local retry work and updates Completed without inventing an employer receipt. Completed and Confirmed are separate totals. Reload the existing extension to retain its records.
 

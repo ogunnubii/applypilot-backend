@@ -1,6 +1,16 @@
 // Shared, deterministic policy. No model-generated facts are used for form filling.
 (() => {
   const domains = ['greenhouse.io','lever.co','myworkdayjobs.com','workdayjobs.com','ashbyhq.com','smartrecruiters.com','workable.com','bamboohr.com','recruitee.com'];
+  function customApplication(url){
+    try{const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443')return null;
+      const host=u.hostname.replace(/^www\./,'');
+      if(host==='iitjobs.com'&&/^\/job\/[^/]+-\d+\/?$/.test(u.pathname))return 'iitjobs';
+      if(host==='randstad.ca'&&/^\/jobs\/[^/]+_\d+\/?$/.test(u.pathname))return 'randstad';
+      if(host==='join.jfrog.com'&&/^\/job\/\d+-[^/]+\/?$/.test(u.pathname))return 'jfrog';
+      if(host==='careers-kinaxis.icims.com'&&/^\/jobs\/\d+\//.test(u.pathname))return 'icims';
+      if(host==='careers.deloitte.ca'&&/^\/job\/[^/]+\/\d+-en_US\/?$/.test(u.pathname))return 'deloitte';
+    }catch{}return null;
+  }
   const normalize = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[?]/g,'').replace(/[*✱]/g, '').replace(/\s+/g, ' ').trim();
   function greenhouseIdentity(url){
     try{const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443')return null;
@@ -15,11 +25,13 @@
     try{const u=new URL(sender.url);return Number.isInteger(sender.frameId)&&sender.frameId>0&&/^\/embed\/job_app\/?$/.test(u.pathname)&&!!greenhouseIdentity(sender.url)&&sameApplication(sender.url,url)&&sameApplication(sender.tab?.url,url);}catch{return false;}
   }
   function supported(url) {
-    try { const u = new URL(url); return u.protocol === 'https:' && !u.username && !u.password && (!u.port || u.port === '443') && (domains.some(d => u.hostname === d || u.hostname.endsWith('.'+d))||u.hostname==='careers.trivago.com'&&!!greenhouseIdentity(url)); } catch { return false; }
+    try { const u = new URL(url); return u.protocol === 'https:' && !u.username && !u.password && (!u.port || u.port === '443') && (domains.some(d => u.hostname === d || u.hostname.endsWith('.'+d))||customApplication(url)||u.hostname==='careers.trivago.com'&&!!greenhouseIdentity(url)); } catch { return false; }
   }
   function identity(url) {
     const canonical=greenhouseIdentity(url);if(canonical)return canonical;
     const u = new URL(url); u.hash = '';
+    const custom=customApplication(url);
+    if(custom){u.hostname=u.hostname.replace(/^www\./,'');u.search='';if(custom==='icims')u.pathname=u.pathname.match(/^\/jobs\/\d+/)[0];}
     u.hostname = u.hostname.replace('job-boards.greenhouse.io','boards.greenhouse.io');
     if (/(?:^|\.)(?:myworkdayjobs|workdayjobs)\.com$/i.test(u.hostname)) u.pathname = u.pathname.replace(/^\/[a-z]{2}(?:-[a-z]{2})?(?=\/)/i,'');
     u.pathname = u.pathname.replace(/\/(apply|application|thanks|thank-you|confirmation)\/?$/i,'').replace(/\/$/,'');
@@ -121,5 +133,5 @@ function frenchApplication(job={}){
  return signals.filter(s=>text.includes(s)).length>=2;
 }
 
-  globalThis.ApplyPilotPolicy = Object.freeze({submissionDeclaration,greenhouseIdentity,trustedFrame,frenchApplication,needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
+  globalThis.ApplyPilotPolicy = Object.freeze({customApplication,submissionDeclaration,greenhouseIdentity,trustedFrame,frenchApplication,needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
 })();

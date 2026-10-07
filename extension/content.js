@@ -116,7 +116,14 @@ function mount(){
  bar.append(heading,note);document.body.append(bar);updateAttentionPosition();
  const saving=document.createElement('small');saving.id='applypilot-answer-save-status';saving.setAttribute('role','status');saving.textContent='Answers save automatically as you type.';bar.append(saving);
 }
-function controls(){return [...document.querySelectorAll('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&(!e.readOnly||controlRole(e)==='combobox'));}
+function applicationRoot(){
+ const site=P.customApplication?.(location.href);
+ if(site==='randstad')return document.querySelector('#applicationForm');
+ if(site==='jfrog')return document.querySelector('#job-form-2');
+ if(site==='iitjobs')return [...document.querySelectorAll('[role="dialog"],.MuiDialog-paper,.MuiDrawer-paper')].find(e=>visible(e)&&/quick apply|application/i.test(e.querySelector('h1,h2,h3,h4,h5,h6')?.textContent||''))||null;
+ return document;
+}
+function controls(){return [...(applicationRoot()?.querySelectorAll('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]')||[])].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&(!e.readOnly||controlRole(e)==='combobox'));}
 function formAnswers(){
  const rows=[];for(const e of controls()){
   const q=label(e),role=controlRole(e);if(protectedQuestion(q)||/password|one.?time|verification code|captcha/i.test(q)||['password','file','hidden','submit','button'].includes(e.type))continue;
@@ -154,7 +161,7 @@ async function fillPass(){
  const forms=[...document.forms],groups=new Map();for(const e of fields.filter(e=>e.type==='radio')){const key=forms.indexOf(e.form)+':'+e.name;if(!e.name)continue;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(e);}
  for(const group of groups.values()){if(group.some(e=>e.checked))continue;const a=answer(group[0]);if(a===null)continue;const match=group.filter(e=>P.optionMatches(label(group[0]),optionText(e),a,packet.profile));if(match.length===1){match[0].click();if(match[0].checked)count++;}}
  count+=await fillRoleRadios(fields);
- const files=[...document.querySelectorAll('input[type="file"]')].filter(e=>!e.disabled&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
+ const files=[...(applicationRoot()?.querySelectorAll('input[type="file"]')||[])].filter(e=>!e.disabled&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
  if(files.length===1&&!files[0].files.length&&packet.resume?.base64){const r=packet.resume,bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0)),dt=new DataTransfer();dt.items.add(new File([bytes],r.name,{type:r.name.endsWith('.pdf')?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));files[0].files=dt.files;files[0].dispatchEvent(new Event('input',{bubbles:true}));files[0].dispatchEvent(new Event('change',{bubbles:true}));count++;}
  if(count)note.textContent=count+' additional fields filled.';if(count)await send('progress',{fields:[],message:'Filled '+count+' fields on the employer form.',blocked:false,filled:count});return count;
 }
@@ -202,9 +209,9 @@ async function fill(){
 }
 async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked,progress:formProgress()});if(blocked)await updateAttentionPosition();}
 function signature(){return location.href+'|'+controls().map(e=>label(e)+':'+e.type+':'+controlRole(e)).join('|')+'|'+buttons().map(e=>buttonName(e)).join('|');}
-function buttons(){return [...document.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');}
+function buttons(){const root=P.customApplication?.(location.href)?applicationRoot():document;return [...(root?.querySelectorAll('button,input[type="submit"],[role="button"]')||[])].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');}
 const buttonName=e=>compact(e.innerText||e.value||e.getAttribute('aria-label'));
-const isSubmitAction=e=>/^(?:submit(?: my| your| the)?(?: application)?|send(?: my| the)? application|complete application)$/i.test(buttonName(e));
+const isSubmitAction=e=>/^(?:submit(?: my| your| the)?(?: application)?|send(?: my| the)? application|complete application)$/i.test(buttonName(e))||!!P.customApplication?.(location.href)&&hasApplicationFields()&&/^(?:apply|apply now)$/i.test(buttonName(e));
 const isNextAction=e=>/^(?:next(?: step)?|continue(?: application)?|save\s*(?:&|and)\s*continue|save and next|review(?: application)?|proceed)$/i.test(buttonName(e));
 function hasApplicationFields(){return controls().some(e=>!['hidden','submit','button','reset','image','search'].includes(e.type)&&e.getAttribute('role')!=='searchbox');}
 function preparationMessage(check){
@@ -218,6 +225,14 @@ function applicationEntry(){
  // Open an empty entry page, never advance a populated step. Ashby exposes
  // both an Application tab and an Apply button; prefer its unique tab.
  if(hasApplicationFields())return null;
+ const custom=P.customApplication?.(location.href);
+ if(custom){
+  if(applicationRoot()?.querySelector('input[type="file"]'))return null;
+  const candidates=[...document.querySelectorAll('button')].filter(e=>visible(e)&&!e.disabled&&/^(?:apply|apply now)$/i.test(buttonName(e)));
+  // The observed iitjobs header/footer buttons open the same Quick Apply modal.
+  if(custom==='iitjobs'&&candidates.length===2&&candidates.every(e=>/^apply now$/i.test(buttonName(e))))return candidates[0];
+  return candidates.length===1?candidates[0]:null;
+ }
  if(location.hostname==='jobs.ashbyhq.com'){
   const tab=document.querySelector('[role="tab"]#job-application-form');
   if(tab&&visible(tab)&&tab.getAttribute('aria-selected')!=='true'&&!tab.disabled)return tab;
@@ -233,7 +248,7 @@ async function advance(){
  const check=review();if(check.fields.length){const issue=check.fields.map(q=>aiIssues.get(q)).find(Boolean);if(issue)check.reason+=' · '+issue;}if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
  if(!check.reason&&!hasApplicationFields()){
   const entry=applicationEntry(),current=signature();
-  if(entry&&lastStep===''){await send('step');lastStep=current;stepAt=Date.now();pageWaitAt=Date.now();entry.click();note.textContent='Opening the employer application form.';return;}
+  if(entry&&lastStep===''){await send('step',{entry:true});lastStep=current;stepAt=Date.now();pageWaitAt=Date.now();entry.click();note.textContent='Opening the employer application form.';return;}
   if(Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer application form to load.';return;}
   return report(preparationMessage(check),check.fields);
  }

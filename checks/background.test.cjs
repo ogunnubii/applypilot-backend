@@ -78,6 +78,30 @@ test('autosaved answers survive a disconnected server and extension restart with
  assert(!(await resumed.send('autosave',{question:'Password',answer:'fixture'},resumed.sender('a'))).ok);
 });
 
+test('supported manual-review leads enter preparation, while email-only leads and prior attempts stay out',async()=>{
+ const h=harness();h.jobs.splice(0,2,
+  {id:'manual',status:'needs_review',challenge:'Manual application',metadata:{manualReview:true},url:'https://www.iitjobs.com/job/cloud-engineer-123'},
+  {id:'email',status:'needs_review',challenge:'Manual application',metadata:{manualReview:true},url:'https://apply.tri-global.com/job/example'},
+  {id:'attempted',status:'needs_review',challenge:'Manual application',metadata:{manualReview:true},local_attempt_at:'2026',url:'https://www.iitjobs.com/job/cloud-engineer-124'});
+ await h.send('start');assert(h.shared.store.records.manual);assert(!h.shared.store.records.email);assert(!h.shared.store.records.attempted);
+ assert(!h.shared.calls.some(c=>c.route.endsWith('/attempt')));
+});
+
+test('manual Open and autofill can open one entry screen without allowing automatic Next or Submit',async()=>{
+ const h=harness();await h.send('stop');await h.send('open',{id:'a',auto:false});
+ assert((await h.send('step',{entry:true},h.sender('a'))).ok);
+ assert(!(await h.send('step',{entry:true},h.sender('a'))).ok);
+ assert(!(await h.send('step',{},h.sender('a'))).ok);
+ assert(!(await h.send('attempt',{automatic:true},h.sender('a'))).ok);
+});
+
+test('only a trusted dashboard can request opening a tracked application',async()=>{
+ const h=harness(),sender={tab:{id:1},url:'https://applypilot-jobs.pages.dev/automate',frameId:0};
+ assert(!(await h.send('open-from-dashboard',{id:'a'},{...sender,url:'https://evil.example/'})).ok);
+ assert(!(await h.send('open-from-dashboard',{id:'a'},{...sender,frameId:1})).ok);
+ assert((await h.send('open-from-dashboard',{id:'a'},sender)).ok);assert(h.shared.store.records.a.manualOpen);
+});
+
 test('manual open reuses the exact employer tab and brings its window forward',async()=>{
  const h=harness();await h.send('open',{id:'a',auto:true});const tab=h.shared.tabs.find(t=>t.id===h.shared.store.records.a.tabId);tab.windowId=7;tab.active=false;
  const before=h.shared.tabs.length;await h.send('open',{id:'a',auto:false});assert.equal(h.shared.tabs.length,before);assert.equal(tab.active,true);assert.equal(h.shared.store.records.a.auto,false);

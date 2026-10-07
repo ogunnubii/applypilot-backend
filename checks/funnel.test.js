@@ -36,6 +36,16 @@ test('structured employer pages preserve role identity and refuse multi-posting 
  const html='<script type="application/ld+json">'+JSON.stringify(data)+'</script>';const job=jobFromHTML(html,'https://jobs.smartrecruiters.com/employer/1234');assert.equal(job.company,'Employer');assert.equal(job.location,'Berlin, Germany');assert.equal(jobFromHTML(html+html,job.url),null);
  const result=await resolveFunnelPosting('https://company.example.com/role',{read:async()=>({html:'<a href="'+url(30)+'">Apply</a>',url:'https://company.example.com/role'}),details:async row=>posting(row.url)});assert.equal(result.url,url(30));
 });
+
+test('public reader preserves trailing-slash redirects and request query strings without changing duplicate identity',async()=>{
+ const visited=[];
+ const result=await readPublicJob('https://employer.example.com/job/123',{resolveHost:async()=>[{address:'8.8.8.8',family:4}],requestImpl:(url,opts,cb)=>{
+  visited.push(url.href);const req=new EventEmitter();req.setTimeout=()=>{};req.end=()=>{const res=new EventEmitter();res.resume=()=>{};res.statusCode=visited.length===1?301:200;res.headers=res.statusCode===301?{location:'/job/123/?step=application'}:{};cb(res);if(res.statusCode===200){res.emit('data',Buffer.from('<h1>Application</h1>'));res.emit('end');}};return req;
+ }});
+ assert.deepEqual(visited,['https://employer.example.com/job/123','https://employer.example.com/job/123/?step=application']);
+ assert.equal(result.url,visited[1]);assert.match(result.html,/Application/);
+ assert.equal(safeFunnelURL('https://employer.example.com/job/123/'),safeFunnelURL('https://employer.example.com/job/123'));
+});
 test('saved bulk groups survive processing, queue suitable jobs, skip repeats and leave uncertain roles for review',async()=>{
  assert.throws(()=>createFunnelBatch(db,'other',{applicant_id:'p',links:url(1)}),/profile/);
  const batch=createFunnelBatch(db,'owner',{applicant_id:'p',links:[1,2,3,4,5,6,7].map(url).join('\n')});assert.equal(batch.added,7);assert.equal(funnelStatus(db,'other').items.length,0);

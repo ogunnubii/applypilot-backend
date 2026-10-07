@@ -12,7 +12,7 @@ test('list and connection checks bypass a stuck mutation while mutations remain 
 test('popup timeout exits Loading, allows retry, and ignores a stale response',async()=>{
  const {JSDOM}=require('jsdom');const dom=new JSDOM(fs.readFileSync('extension/popup.html','utf8'),{runScripts:'outside-only'}),w=dom.window;
  let timeout;const responses=[];w.setTimeout=fn=>{timeout=fn;return 1};w.clearTimeout=()=>{};
- w.chrome={runtime:{sendMessage:()=>new Promise(resolve=>responses.push(resolve))}};w.ApplyPilotPolicy={attentionOrder:()=>[]};
+ w.chrome={runtime:{sendMessage:()=>new Promise(resolve=>responses.push(resolve))}};w.ApplyPilotPolicy={attentionOrder:()=>[],supported:()=>true};
  w.eval(fs.readFileSync('extension/popup.js','utf8'));timeout();await new Promise(r=>setImmediate(r));
  assert.match(w.document.querySelector('#message').textContent,/too long/);
  w.document.querySelector('#refresh').click();responses[1]({ok:true,data:{state:{enabled:true,queue:[]},jobs:[{id:'new',title:'New job',company:'Employer',status:'queued'}]}});await new Promise(r=>setImmediate(r));
@@ -28,7 +28,7 @@ test('read requests prefer active dashboards and skip a frozen tab without retry
 
 test('focused popup uses clear working actions, prevents repeat requests and hides employer holds',async()=>{
  const {JSDOM}=require('jsdom');const dom=new JSDOM(fs.readFileSync('extension/popup.html','utf8'),{runScripts:'outside-only'}),w=dom.window;
- let finish;const calls=[];w.ApplyPilotPolicy={attentionOrder:()=>[]};w.chrome={runtime:{sendMessage:async m=>{calls.push(m);if(m.action==='list')return {ok:true,data:{state:{enabled:true,queue:[]},totals:{confirmed:2,worked:4},jobs:[{id:'good',status:'queued',title:'Good',company:'Example'},{id:'done',status:'submitted',title:'Finished'},{id:'attempt',status:'local_browser',local_attempt_at:'today',title:'Attempted'},{id:'hold',status:'queued',title:'Held',employer_hold:{message:'Employer application limit reached'}}]}};return new Promise(resolve=>{finish=resolve;});}}};
+ let finish;const calls=[];w.ApplyPilotPolicy={attentionOrder:()=>[],supported:()=>true};w.chrome={runtime:{sendMessage:async m=>{calls.push(m);if(m.action==='list')return {ok:true,data:{state:{enabled:true,queue:[]},totals:{confirmed:2,worked:4},jobs:[{id:'good',status:'queued',title:'Good',company:'Example'},{id:'done',status:'submitted',title:'Finished'},{id:'attempt',status:'local_browser',local_attempt_at:'today',title:'Attempted'},{id:'hold',status:'queued',title:'Held',employer_hold:{message:'Employer application limit reached'}}]}};return new Promise(resolve=>{finish=resolve;});}}};
  w.eval(fs.readFileSync('extension/popup.js','utf8'));await new Promise(r=>setImmediate(r));
  const row=w.document.querySelector('[data-job-id="good"]'),button=row.querySelector('button');assert.equal(row.querySelectorAll('button').length,2);button.click();assert.equal(calls.at(-1).auto,false);assert(button.hidden);assert.match(row.textContent,/Opening this application/);button.click();assert.equal(calls.filter(c=>c.action==='open').length,1);
  finish({ok:false,error:'This application belongs to another browser'});await new Promise(r=>setImmediate(r));assert.match(row.querySelector('[role=status]').textContent,/another browser/);assert(!button.hidden);
@@ -53,7 +53,7 @@ test('the responsive dashboard remains preferred when employer tab becomes activ
 test('Mark completed updates popup numbers, removes the job and reports a failure without opening an employer form',async()=>{
  const {JSDOM}=require('jsdom'),dom=new JSDOM(fs.readFileSync('extension/popup.html','utf8'),{runScripts:'outside-only'}),w=dom.window;
  let done=false,fail=true,finish;const calls=[];
- w.ApplyPilotPolicy={attentionOrder:jobs=>jobs};w.chrome={runtime:{sendMessage:async m=>{calls.push(m);if(m.action==='list')return {ok:true,data:{state:{enabled:true},totals:{completed:done?3:2,confirmed:2},jobs:[{id:'job',status:done?'submitted':'local_browser',title:'Example role',company:'Employer'}]}};return new Promise(resolve=>{finish=()=>{if(!fail)done=true;resolve(fail?{ok:false,error:'Could not save completion'}:{ok:true,data:{reported:true}});};});}}};
+ w.ApplyPilotPolicy={attentionOrder:jobs=>jobs,supported:()=>true};w.chrome={runtime:{sendMessage:async m=>{calls.push(m);if(m.action==='list')return {ok:true,data:{state:{enabled:true},totals:{completed:done?3:2,confirmed:2},jobs:[{id:'job',status:done?'submitted':'local_browser',title:'Example role',company:'Employer'}]}};return new Promise(resolve=>{finish=()=>{if(!fail)done=true;resolve(fail?{ok:false,error:'Could not save completion'}:{ok:true,data:{reported:true}});};});}}};
  w.eval(fs.readFileSync('extension/popup.js','utf8'));await new Promise(r=>setImmediate(r));
  const button=w.document.querySelector('button.complete');button.click();button.click();assert.equal(calls.filter(c=>c.action==='mark-completed').length,1);finish();await new Promise(r=>setImmediate(r));
  assert(!button.hidden);assert.match(w.document.querySelector('.job-action-status').textContent,/Could not save/);assert.match(w.document.querySelector('#numbers').textContent,/2Completed/);

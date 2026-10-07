@@ -43,7 +43,7 @@ async function openJob(id,auto=true,focus=false){
  const matches=tabs.filter(t=>P.sameApplication(t.url,packet.job.url));
  let tab=matches.find(t=>record?.tabId===t.id)||(matches.length===1?matches[0]:null);
  if(matches.length>1&&!tab)throw Error('Several copies of this application are open. Close duplicates first.');
- record={safeInitialLoad:!record&&!tab,...record,id,url:packet.job.url,attempted:!!(record?.attempted||claim.attempted||packet.job.attempted),auto,phase:'ready',touched:Date.now()};
+ record={safeInitialLoad:!record&&!tab,...record,id,url:packet.job.url,attempted:!!(record?.attempted||claim.attempted||packet.job.attempted),auto,manualOpen:!auto,phase:'ready',touched:Date.now()};
  if(record.attempted){record.phase='verifying';record.auto=false;}
  await saveRecord(record);
  await api('/jobs/'+id+'/local/assistance','POST',{kind:record.safeInitialLoad?'tracking':'partial'});
@@ -53,8 +53,9 @@ async function openJob(id,auto=true,focus=false){
 }
 function eligible(j,s){
  const r=s.records[j.id];
- return j.execution_mode==='local'&&P.supported(j.url)&&!j.local_attempt_at&&!r?.attempted&&!['Unconfirmed submission','Submission in progress','Sensitive action'].includes(j.challenge)&&
- (j.status==='queued'&&!r)&&!Object.values(s.records).some(other=>other.siteCooldownUntil>Date.now()&&new URL(other.url).hostname===new URL(j.url).hostname);
+ const review=j.metadata?.manualReview&&j.status==='needs_review'&&j.challenge==='Manual application';
+ return (j.execution_mode==='local'||review)&&P.supported(j.url)&&!j.employer_hold&&j.metadata?.available!==false&&!j.local_attempt_at&&!r?.attempted&&!['Unconfirmed submission','Submission in progress','Sensitive action'].includes(j.challenge)&&
+ ((j.status==='queued'||review)&&!r)&&!Object.values(s.records).some(other=>other.siteCooldownUntil>Date.now()&&new URL(other.url).hostname===new URL(j.url).hostname);
 }
 async function retrySubmissionRecords(){
  const s=await read();let sent=0;
@@ -112,6 +113,11 @@ async function handle(m,sender){
   const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
   if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
   const s=await read();return {version:chrome.runtime.getManifest().version,enabled:!!s.enabled,queued:s.queue.length,error:s.error||''};
+ }
+ if(m.action==='open-from-dashboard'){
+  const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
+  if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
+  return openJob(m.id,false,true);
  }
  if(m.action==='resume-existing'){
   const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
@@ -175,7 +181,7 @@ async function handle(m,sender){
   const clickId=m.clickId||'legacy',payload={url:sender.url,before:String(m.before||'').slice(0,20000),human:m.human===true,clickId,humanAssisted:!!b.assisted,automatic};b.pendingClicks=b.pendingClicks||{};if(!automatic)b.pendingClicks[clickId]=payload;await saveRecord(b);
   try{const result=await api('/jobs/'+b.id+'/local/attempt','POST',payload);delete b.pendingClicks[clickId];await saveRecord(b);return result;}catch(e){b.auto=false;b.phase='blocked';if(e.status&&e.status<500&&e.status!==429)delete b.pendingClicks[clickId];await saveRecord(b);throw e;}
  }
- if(m.action==='step'){if(!s.enabled||s.userPaused||!(b.auto||b.autonomousSubmit))throw Error('Automation was stopped');if((b.steps||0)>=15)throw Error('Step limit reached. Continue manually.');await api('/jobs/'+b.id+'/local/step','POST',{});b.steps=(b.steps||0)+1;await saveRecord(b);return {};}
+ if(m.action==='step'){const manualEntry=m.entry===true&&b.manualOpen&&!b.entryOpened&&!b.attempted;if(!manualEntry&&(!s.enabled||s.userPaused||!(b.auto||b.autonomousSubmit)))throw Error('Automation was stopped');if((b.steps||0)>=15)throw Error('Step limit reached. Continue manually.');await api('/jobs/'+b.id+'/local/step','POST',{});if(m.entry===true)b.entryOpened=true;b.steps=(b.steps||0)+1;await saveRecord(b);return {};}
  if(m.action==='form-opened'){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;await saveRecord(b);return {};}
  if(m.action==='site-error'){
   const issue=P.employerPageIssue({status:m.code});if(!issue)throw Error('Unrecognized employer page error.');

@@ -1,3 +1,4 @@
+import {supportAssessment,supportRole} from './support-career.js';
 import {technologyRole} from './tech-search.js';
 // Deterministic matching: no model calls or Work credits.
 const groups = [
@@ -35,7 +36,7 @@ export function locationPriority(job){
 }
 export function matches(job,intent){
  const title=clean(job.title), location=clean(job.location);
- const roleMatch=intent.broadTech?technologyRole(job.title):intent.roles.some(role=>{
+ const roleMatch=intent.supportCareer?supportRole(job.title):intent.broadTech?technologyRole(job.title):intent.roles.some(role=>{
   const r=clean(role);
   if(phrase(title,r)) return true;
   const group=roleGroup(r);return !!group&&group.some(x=>phrase(title,x));
@@ -72,6 +73,7 @@ export function matches(job,intent){
 // applicant explicitly requested that level.
 export function matchAssessment(job,intent,profileFocus=''){
  const matched=matches(job,intent);if(!matched)return {matched:false,strong:false,score:0};
+ if(intent.supportCareer)return {...supportAssessment(job),locationPriority:locationPriority(job)};
  const title=clean(job.title),requested=intent.roles.map(clean),profile=clean(profileFocus);
  if(intent.broadTech){const infrastructure=/devops|sre|site reliability|platform|infrastructure|cloud|sysadmin|systems|architecture|architect/.test(title),junior=/\b(?:intern|internship|graduate|junior)\b/.test(title);return {matched:true,strong:!junior,score:junior?55:infrastructure?96:84,locationPriority:locationPriority(job)};}
  const titleLevels=tokens(title,advancedLevel),titleHeads=tokens(title,occupationHead),titleFunctions=tokens(title,functionConflict),titleQualifications=tokens(title,qualificationConflict);

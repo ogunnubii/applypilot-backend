@@ -58,9 +58,9 @@ test('Conflicting aliases do not guess and authorization does not transfer betwe
  try{assert.equal(f.w.document.getElementById('city').value,'');assert.equal(f.w.document.getElementById('visa').value,'');assert(!f.messages.some(m=>m.action==='attempt'));}finally{f.close();}
 });
 
-test('Blocked forms only check refresh permission; manual refill obtains newly saved profile data',async()=>{
+test('Blocked forms respect refresh permission and expose automatic saving without manual buttons',async()=>{
  const f=await fixture('<form><label>Phone<input id="phone"></label><label>Unknown fact<input required></label></form>');
- try{const before=f.messages.length;await f.tick();await f.tick();assert(f.messages.slice(before).every(m=>m.action==='state'),'paused tabs must not fill or report when refresh is disabled');assert(f.messages.length-before<=3,'paused checks stay bounded');const button=[...f.w.document.querySelectorAll('button')].find(b=>b.textContent==='Fill available answers');await button.onclick();assert.equal(f.messages.filter(m=>m.action==='packet').length,2,'manual fill refreshes stale packet');}finally{f.close();}
+ try{const before=f.messages.length;await f.tick();await f.tick();assert(f.messages.slice(before).every(m=>m.action==='state'),'paused tabs must not fill or report when refresh is disabled');assert(f.messages.length-before<=3,'paused checks stay bounded');const button=[...f.w.document.querySelectorAll('button')].find(b=>b.textContent==='Fill available answers');assert.equal(button,undefined);assert(f.w.document.querySelector("#applypilot-answer-save-status"));}finally{f.close();}
 });
 test('Actual Grafana labels resolve explicit location parts and Toronto time zone',async()=>{
  const f=await fixture('<form></form>',{automatic:false});

@@ -145,7 +145,7 @@ test('local missing answers are saved without queuing a new attempt',async()=>{
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([url,opts?.method]);return {ok:true,json:async()=>({})};};w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
  const job={id:'local',applicant_id:'p',company:'Example',title:'Engineer',status:'local_browser',local_phase:'blocked',challenge:'Local browser',required_fields_json:'["Preferred name","Required field","AI Policy for Application"]',answers_json:'{}'};
  w.renderMissingAnswers([job]);const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form'),input=form.querySelector('textarea');assert(!section.hidden);assert.equal(form.querySelectorAll('textarea').length,1);assert.equal(section.querySelector('details').open,false);input.value='Applicant';
- w.eval('refresh=async()=>{}');await form.onsubmit({preventDefault(){}});assert(requests.some(([url,method])=>url.endsWith('/answers')&&method==='PUT'));assert(!requests.some(([url])=>url.endsWith('/continue')));
+ w.eval('refresh=async()=>{}');input.dispatchEvent(new w.Event("input",{bubbles:true}));input.dispatchEvent(new w.Event("blur"));await new Promise(r=>setTimeout(r,20));assert(requests.some(([url,method])=>url.endsWith('/answers')&&method==='PUT'));assert(!requests.some(([url])=>url.endsWith('/continue')));
  section.dataset.dirty='false';w.renderMissingAnswers([{...job,local_attempt_at:'2026-10-01'}]);assert.equal(section.querySelector('form'),null,'attempted application must not re-enter the answer/resume flow');w.close();
 });
 
@@ -195,7 +195,7 @@ test('continuation queue validates readiness, isolates users and never redispatc
  db.close();
 });
 
-test('saving complete browser answers requests continuation, partial and protected forms stay paused',async()=>{
+test('autosave sends per-question updates; server owns continuation and attempted forms stay protected',async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  async function scenario(questions,attempted=false){
   const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
@@ -203,10 +203,10 @@ test('saving complete browser answers requests continuation, partial and protect
   w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);w.eval('refresh=async()=>{}');
   w.renderMissingAnswers([{id:'j',applicant_id:'p',company:'Fixture',title:'Engineer',status:'local_browser',local_phase:'blocked',required_fields_json:JSON.stringify(questions),answers_json:'{}',local_attempt_at:attempted?'today':null}]);
   const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form');
-  if(form){form.querySelector('textarea').value='Applicant';await form.onsubmit({preventDefault(){}});}
+  if(form){form.querySelector('textarea').value='Applicant';const input=form.querySelector("textarea");input.dispatchEvent(new w.Event("input",{bubbles:true}));input.dispatchEvent(new w.Event("blur"));await new Promise(r=>setTimeout(r,20));}
   const result={requests,hidden:!section.querySelector('form')};w.close();return result;
  }
- let r=await scenario(['Preferred name']);assert(r.requests.some(([url,method])=>url.endsWith('/continuation')&&method==='POST'));assert(!r.requests.some(([url])=>url.endsWith('/continue')||url.endsWith('/attempt')));
+ let r=await scenario(['Preferred name']);assert(r.requests.some(([url,method,payload])=>url.endsWith('/answers')&&method==='PUT'&&JSON.parse(payload).autosave));assert(!r.requests.some(([url])=>url.endsWith('/continue')||url.endsWith('/attempt')));
  for(const questions of [['Preferred name','Unknown fact'],['Preferred name','AI policy']]){r=await scenario(questions);assert(!r.requests.some(([url])=>url.endsWith('/continuation')));}
  assert((await scenario(['Preferred name'],true)).hidden);
 });
@@ -215,7 +215,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.24",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.25",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -232,7 +232,7 @@ test('saved profile fills basic field aliases while unknown and conflicting answ
  const profile={id:'p',name:'Test Applicant',location:'Toronto, Ontario, Canada',reusableAnswers:{School:'First University',University:'Second University'}};
  w.setInterval=()=>0;w.fetch=async()=>({ok:true,json:async()=>({applicants:[profile]})});w.eval(sources['extension/policy.js']);w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
  w.renderMissingAnswers([{id:'j',applicant_id:'p',company:'Fixture',title:'Engineer',status:'local_browser',local_phase:'blocked',required_fields_json:JSON.stringify(['Given name','Country','State / Province','City','University','Do you need visa sponsorship?']),application_only_questions:['Do you need visa sponsorship?'],answers_json:'{}'}]);
- const form=w.document.querySelector('#missing-answers form');await form.querySelector('button').onclick();
+ const form=w.document.querySelector('#missing-answers form');await new Promise(r=>setTimeout(r,25));
  const values=Object.fromEntries([...form.querySelectorAll('textarea[data-answer-key]')].map(i=>[i.getAttribute('aria-label'),i.value]));
  assert.equal(values['Given name'],'Test');assert.equal(values.Country,'Canada');assert.equal(values['State / Province'],'Ontario');assert.equal(values.City,'Toronto');assert.equal(values.University,'','conflicting aliases must remain blank');assert.equal(values['Do you need visa sponsorship?'],'');
  w.close();
@@ -325,7 +325,7 @@ test('hosted worker stops an HTTP 503 before inspecting or submitting a form and
 });
 
 function pureModule(file,bindings={}){
- if(file!=='employer-limits.js')bindings={applicationDiversityHistory:()=>[],diversifyApplications:jobs=>jobs,spreadDiscoveryBoards:boards=>boards,worldwideTechIntent:value=>/^Worldwide technology roles:/i.test(value),employerHold:()=>null,excludesFrench:()=>false,frenchApplication:()=>false,archiveFrench:()=>[],...bindings};
+ if(file!=='employer-limits.js')bindings={supportIntent:()=>false,populateBatch:()=>null,inActiveBatch:()=>true,applicationDiversityHistory:()=>[],diversifyApplications:jobs=>jobs,spreadDiscoveryBoards:boards=>boards,worldwideTechIntent:value=>/^Worldwide technology roles:/i.test(value),employerHold:()=>null,excludesFrench:()=>false,frenchApplication:()=>false,archiveFrench:()=>[],...bindings};
  const code=sources[file].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const|let|class)/g,'');
  return new Function(...Object.keys(bindings),code+';return {employerKey:typeof employerKey==="function"?employerKey:null,applicationLimit:typeof applicationLimit==="function"?applicationLimit:null,installEmployerLimits:typeof installEmployerLimits==="function"?installEmployerLimits:null,employerHold:typeof employerHold==="function"?employerHold:null,recordEmployerLimit:typeof recordEmployerLimit==="function"?recordEmployerLimit:null,employerLimits:typeof employerLimits==="function"?employerLimits:null,installPipeline:typeof installPipeline==="function"?installPipeline:null,pipelineEnabled:typeof pipelineEnabled==="function"?pipelineEnabled:null,queueFoundApplications:typeof queueFoundApplications==="function"?queueFoundApplications:null,setPipeline:typeof setPipeline==="function"?setPipeline:null,pipelineStatus:typeof pipelineStatus==="function"?pipelineStatus:null,sameApplication:typeof sameApplication==="function"?sameApplication:null,priorApplication:typeof priorApplication==="function"?priorApplication:null,installRepeatGuard:typeof installRepeatGuard==="function"?installRepeatGuard:null,compensation:typeof compensation==="function"?compensation:null,jobIntelligence:typeof jobIntelligence==="function"?jobIntelligence:null,nextApplication:typeof nextApplication==="function"?nextApplication:null,nextApplicationEligible:typeof nextApplicationEligible==="function"?nextApplicationEligible:null,sourceBatch:typeof sourceBatch==="function"?sourceBatch:null,cachedJSON:typeof cachedJSON==="function"?cachedJSON:null,runSearch:typeof runSearch==="function"?runSearch:null};')(...Object.values(bindings));
 }
@@ -525,7 +525,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.24'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.25'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{

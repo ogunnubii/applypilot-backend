@@ -1,3 +1,5 @@
+import {batchPreferences} from './application-batches.js';
+import {SUPPORT_INSTRUCTION,refreshSalaryRates} from './support-career.js';
 import {randomUUID} from 'node:crypto';
 import {parseFunnelLinks,safeFunnelURL,readPublicJob,jobFromHTML,applicationLinks} from './funnel-links.js';
 import {parseIntent,directDiscoveryLink,detailForJob} from './discovery.js';
@@ -35,15 +37,16 @@ export function retryFunnelItem(db,userId,id){
 }
 export function enableWorldwideDiscovery(db,userId,applicantId){
  const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(applicantId,userId);if(!p)throw Error('Choose your applicant profile.');
- const existing=db.prepare('SELECT id FROM searches WHERE user_id=? AND applicant_id=? AND instruction=?').get(userId,p.id,WORLDWIDE_TECH_INSTRUCTION),id=existing?.id||randomUUID();
+ const instruction=batchPreferences(db,userId)?SUPPORT_INSTRUCTION:WORLDWIDE_TECH_INSTRUCTION;
+ const existing=db.prepare('SELECT id FROM searches WHERE user_id=? AND applicant_id=? AND instruction=?').get(userId,p.id,instruction),id=existing?.id||randomUUID();
  // Replacing searches for this profile is explicit, account-scoped and preserves history.
  db.exec('BEGIN IMMEDIATE');try{
   db.prepare('UPDATE searches SET enabled=0 WHERE user_id=? AND applicant_id=?').run(userId,p.id);
   if(existing)db.prepare('UPDATE searches SET enabled=1,auto_queue=1,last_run=NULL WHERE id=?').run(id);
-  else db.prepare("INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,created_at) VALUES(?,?,?,?,'[]',1,?)").run(id,userId,p.id,WORLDWIDE_TECH_INSTRUCTION,new Date().toISOString());
+  else db.prepare("INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,created_at) VALUES(?,?,?,?,'[]',1,?)").run(id,userId,p.id,instruction,new Date().toISOString());
   db.exec('COMMIT');
  }catch(error){db.exec('ROLLBACK');throw error;}
- setPipeline(db,userId,true);return {id,instruction:WORLDWIDE_TECH_INSTRUCTION};
+ setPipeline(db,userId,true);return {id,instruction};
 }
 export async function resolveFunnelPosting(input,{details=detailForJob,read=readPublicJob}={}){
  let url=safeFunnelURL(input);
@@ -72,13 +75,15 @@ export async function processFunnel(db,{resolve=resolveFunnelPosting,limit=5,clo
    const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(item.applicant_id,item.user_id);if(!p){finish('review','Applicant profile is no longer available.');continue;}
    const existing=db.prepare('SELECT id,title,company,status FROM jobs WHERE user_id=? AND applicant_id=? AND normalized_url=?').get(item.user_id,p.id,item.url);if(existing){finish('duplicate','Application already tracked; kept the existing record.',existing);continue;}
    const job=await resolve(item.url);
+   if(db.prepare('SELECT status FROM funnel_items WHERE id=?').get(item.id)?.status!=='checking')continue;
    if(!job||job.closed){finish('closed','The employer no longer lists this role.');continue;}
    if(job.review){finish('review',job.message);continue;}
    if(!supported(job.url)||!job.title||!job.company){finish('review','The employer form or job identity could not be verified.');continue;}
    if(excludesFrench(db,item.user_id)&&frenchApplication(job)){finish('excluded','French-language application excluded.');continue;}
    const prior=priorApplication(db,item.user_id,job)||db.prepare('SELECT id,company,title FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(item.user_id,companyKey(job.company),historyKey(job.title));
    if(prior){const native=db.prepare('SELECT id,title,company FROM jobs WHERE id=? AND user_id=?').get(prior.id,item.user_id);finish('duplicate','Matched previous application history. No repeat application created.',native);continue;}
-   const metadata=jobIntelligence(job,parseIntent(WORLDWIDE_TECH_INSTRUCTION),p.focus);
+   const prefs=batchPreferences(db,item.user_id);if(prefs)await refreshSalaryRates();const metadata=jobIntelligence(job,{...parseIntent(prefs?SUPPORT_INSTRUCTION:WORLDWIDE_TECH_INSTRUCTION),minimumCAD:prefs?.minimum_cad},p.focus);
+   if(prefs&&(!metadata.supportCareer?.strong||!metadata.salaryTarget?.eligible)){finish('excluded',metadata.salaryTarget?.reason||'Outside support-career preferences');continue;}
    if(!metadata.matched){finish('excluded','Role is outside the requested technology and IT categories.');continue;}
    if(!metadata.eligibility.eligible){finish('review',metadata.eligibility.reason);continue;}
    const url=safeFunnelURL(job.url),id=randomUUID(),at=clock();

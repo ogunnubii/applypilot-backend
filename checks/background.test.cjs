@@ -7,6 +7,7 @@ function harness(shared={}){
  const chrome={windows:{update:async()=>{}},storage:{local:{get:async()=>structuredClone(shared.store),set:async value=>Object.assign(shared.store,structuredClone(value)),setAccessLevel:async()=>{}}},alarms:{get:async()=>({name:'queue'}),create:async()=>{},onAlarm:listener('alarm')},runtime:{getURL:p=>'chrome-extension://fixture/'+p,onMessage:listener('message'),onStartup:listener('startup'),onInstalled:listener('installed')},tabs:{query:async ({url}={})=>shared.tabs.filter(t=>!url||t.url.startsWith('https://applypilot-jobs.netlify.app/')),get:async id=>{const t=shared.tabs.find(t=>t.id===id);if(!t)throw Error('No tab');return t;},create:async props=>{const t={id:shared.tabs.length+1,...props};shared.tabs.push(t);return t;},update:async(id,props)=>Object.assign(shared.tabs.find(t=>t.id===id),props),sendMessage:async()=>({ok:true}),onRemoved:listener('removed')},scripting:{executeScript:async({args})=>{
   if(!args)return [{result:{ready:true}}];
   const [,route,method,data,device]=args;shared.calls.push({route,method,data,device});
+  if(shared.offlineAnswers&&route.endsWith('/answers'))throw Error('Fixture connection unavailable');
   if(route==='/jobs')return [{result:{data:{jobs}}}];
   const [,id,action]=route.match(/\/jobs\/([^/]+)\/local\/(.*)/)||[];
   if(action==='claim'){shared.claims[id]||={attempted:false};return [{result:{data:shared.claims[id]}}];}
@@ -66,6 +67,16 @@ test('Dashboard can focus an existing application without restarting it; foreign
 });
 
 test('Automatic submission intent is rejected before any server or record mutation',async()=>{const h=harness();await h.send('open',{id:'a',auto:true});const result=await h.send('attempt',{before:'Application form'},h.sender('a'));assert(!result.ok);assert(!h.shared.store.records.a.attempted);assert(!h.shared.calls.some(c=>c.route.endsWith('/attempt')));});
+
+test('autosaved answers survive a disconnected server and extension restart without repeated writes',async()=>{
+ const h=harness();await h.send('open',{id:'a'});await h.send('stop');h.shared.offlineAnswers=true;
+ const result=await h.send('autosave',{question:'Preferred technology',answer:'Linux',resume:true},h.sender('a'));
+ assert(result.ok);assert(result.data.pending);assert.equal(h.shared.store.records.a.pendingAnswers['Preferred technology'].answer,'Linux');
+ h.shared.offlineAnswers=false;const resumed=harness(h.shared);await resumed.events.alarm({name:'queue'});await resumed.send('list');
+ assert.equal(Object.keys(h.shared.store.records.a.pendingAnswers).length,0);const saved=h.shared.calls.filter(x=>x.route.endsWith('/answers')).at(-1);assert.equal(saved.data.resume,true);assert.equal(saved.data.answer,'Linux');
+ const count=h.shared.calls.length;await resumed.send('autosave',{question:'Preferred technology',answer:'Linux',resume:true},resumed.sender('a'));assert.equal(h.shared.calls.length,count);
+ assert(!(await resumed.send('autosave',{question:'Password',answer:'fixture'},resumed.sender('a'))).ok);
+});
 
 test('manual open reuses the exact employer tab and brings its window forward',async()=>{
  const h=harness();await h.send('open',{id:'a',auto:true});const tab=h.shared.tabs.find(t=>t.id===h.shared.store.records.a.tabId);tab.windowId=7;tab.active=false;

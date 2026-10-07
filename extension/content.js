@@ -103,10 +103,8 @@ async function updateAttentionPosition(){
 function mount(){
  document.getElementById('applypilot-local-controls')?.remove();bar=document.createElement('aside');bar.id='applypilot-local-controls';bar.style.cssText='position:fixed;bottom:16px;right:16px;max-width:360px;z-index:2147483647;background:#12253b;color:white;padding:16px;border-radius:12px;box-shadow:0 3px 18px #0008;font:14px system-ui';
  const heading=document.createElement('strong');heading.textContent='ApplyPilot · '+packet.job.title;note=document.createElement('p');note.setAttribute('role','status');
- const refill=document.createElement('button');refill.textContent='Fill available answers';refill.onclick=async()=>{try{await recordAssistance();await resumeFill();}catch(e){note.textContent=e.message;}};
- const save=document.createElement('button');save.textContent='Remember an answer';save.onclick=async()=>{await recordAssistance();const question=prompt('Exact question to remember for this applicant:');if(!question)return;if(protectedQuestion(question)){note.textContent='Complete sensitive statements directly with the employer.';return;}const value=prompt('Your truthful answer (reused only for this exact question):');if(value===null||!value.trim())return;try{await send('remember',{question,answer:value});packet=null;await fill();note.textContent='Answer saved for this applicant.';}catch(e){note.textContent=e.message;}};
- const capture=document.createElement('button');capture.textContent='Save form answers to library';capture.onclick=async()=>{capture.disabled=true;try{await recordAssistance();const r=await send('capture',{fields:formAnswers()});note.textContent=r.saved+' answers saved. Review them in the dashboard Answer library. Nothing was submitted.';}catch(e){note.textContent='Could not save answers: '+e.message;}finally{capture.disabled=false;}};
- bar.append(heading,note,refill,save,capture);document.body.append(bar);updateAttentionPosition();
+ bar.append(heading,note);document.body.append(bar);updateAttentionPosition();
+ const saving=document.createElement('small');saving.id='applypilot-answer-save-status';saving.setAttribute('role','status');saving.textContent='Answers save automatically as you type.';bar.append(saving);
 }
 function controls(){return [...document.querySelectorAll('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&!e.readOnly);}
 function formAnswers(){
@@ -258,6 +256,7 @@ async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!att
 let savedRefreshBusy=false,lastRefreshSignature='',formChanged=false,formChangeTimer;
 const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions,p?.autonomousSubmit]);
 async function refreshPausedAnswers(){
+ if(document.activeElement?.matches?.('input,select,textarea,[contenteditable="true"]'))return;
  if(!started||!stopped||busy||savedRefreshBusy||submissionRecording||attempted||siteIssue()||receipt())return;
  savedRefreshBusy=true;busy=true;
  try{
@@ -290,7 +289,24 @@ async function resumeFill(){
  }finally{busy=false;}
 }
 async function begin(){try{await resumeFill();}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched and can be linked later. */}}
-for(const type of ['input','change'])document.addEventListener(type,e=>{if(started&&e.isTrusted&&!bar?.contains(e.target)&&e.target.matches?.('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]'))recordAssistance();},true);
+
+const pendingHumanAnswers=new Map();let answerSaveTimer,answerSaveBusy=false;
+async function flushHumanAnswers(){
+ if(answerSaveBusy||!pendingHumanAnswers.size)return;answerSaveBusy=true;
+ const status=document.getElementById('applypilot-answer-save-status');
+ try{for(const [question,entry] of [...pendingHumanAnswers]){if(status)status.textContent='Saving answer...';const result=await send('autosave',{question,answer:entry.answer,resume:entry.resume});if(pendingHumanAnswers.get(question)===entry)pendingHumanAnswers.delete(question);if(status)status.textContent=result.pending?'Saved on this browser; database sync will retry.':'Saved automatically';}}
+ catch(e){if(status)status.textContent='Answer not synced: '+e.message+' - retrying.';}
+ finally{answerSaveBusy=false;if(pendingHumanAnswers.size)answerSaveTimer=setTimeout(flushHumanAnswers,5000);}
+}
+function humanAnswerChanged(e){
+ if(!started||!e.isTrusted||bar?.contains(e.target)||!e.target.matches?.('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]'))return;
+ recordAssistance();const q=label(e.target);if(protectedQuestion(q))return;
+ const row=formAnswers().find(r=>r.question===q);if(!row)return;pendingHumanAnswers.set(q,{answer:row.answer,resume:e.type!=='input'});
+ clearTimeout(answerSaveTimer);answerSaveTimer=setTimeout(flushHumanAnswers,e.type==='input'?650:0);
+}
+for(const type of ['input','change','focusout'])document.addEventListener(type,humanAnswerChanged,true);
+document.addEventListener('click',e=>{if(!e.isTrusted||!started||bar?.contains(e.target))return;const control=e.target.closest?.('[role="checkbox"],[role="radio"],[role="combobox"]');if(control)setTimeout(()=>humanAnswerChanged({isTrusted:true,type:'change',target:control}),100);},true);
+
 document.addEventListener('click',e=>{
  const b=e.target.closest?.('button,input[type="submit"],[role="button"]');if(!started||!e.isTrusted||!b||bar?.contains(b))return;
  recordAssistance();if(isSubmitAction(b)&&(!b.form||b.form.checkValidity())){lastNativeSubmitClickAt=Date.now();void observeManualSubmission();}

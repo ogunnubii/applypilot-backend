@@ -64,7 +64,16 @@ async function retrySubmissionRecords(){
   catch(e){if(e.status&&e.status<500&&e.status!==429){delete b.pendingClicks[id];b.recordError=e.message;await saveRecord(b);}return;}
  }
 }
+
+async function flushAnswerOutbox(record){
+ for(const [question,answer]of Object.entries(record.pendingAnswers||{})){
+  try{record.lastSavedAnswers=record.lastSavedAnswers||{};if(JSON.stringify(record.lastSavedAnswers[question])!==JSON.stringify(answer)){await api('/jobs/'+record.id+'/answers','PUT',{question,answer:typeof answer==='string'?answer:answer.answer,remember:true,autosave:true,resume:answer.resume===true});Object.defineProperty(record.lastSavedAnswers,question,{value:answer,enumerable:true,configurable:true,writable:true});}delete record.pendingAnswers[question];await saveRecord(record);}
+  catch(e){record.answerSaveError=e.message;await saveRecord(record);return {pending:true};}
+ }record.answerSaveError='';await saveRecord(record);return {saved:true};
+}
+
 async function tick(){
+ for(const r of Object.values((await read()).records))if(Object.keys(r.pendingAnswers||{}).length)await flushAnswerOutbox(r);
  await retrySubmissionRecords();
 
  const s=await read();if(!s.enabled)return;
@@ -187,6 +196,7 @@ async function handle(m,sender){
   const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,filled:m.filled,progress:m.progress,formLanguage:m.formLanguage});if(m.blocked)await tick();return result;
  }
  if(m.action==='capture')return api('/jobs/'+b.id+'/local/capture','POST',{fields:m.fields});
+ if(m.action==='autosave'){if(typeof m.question!=='string'||typeof m.answer!=='string'||!m.answer.trim()||m.answer.length>4000||P.sensitive(m.question)||/password|one.?time|verification code|captcha|API key|access token/i.test(m.question))throw Error('This answer cannot be saved automatically.');b.pendingAnswers=b.pendingAnswers||{};Object.defineProperty(b.pendingAnswers,m.question,{value:{answer:m.answer.trim(),resume:m.resume===true},enumerable:true,configurable:true,writable:true});await saveRecord(b);return flushAnswerOutbox(b);}
  if(m.action==='remember')return api('/jobs/'+b.id+'/answers','PUT',{question:m.question,answer:m.answer,remember:true});
  if(m.action==='receipt'){
   if(!b.attempted)throw Error('No submission action observed in this tab.');

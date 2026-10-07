@@ -1,3 +1,5 @@
+import {supportIntent,refreshSalaryRates} from './support-career.js';
+import {batchPreferences} from './application-batches.js';
 import {worldwideTechIntent} from './tech-search.js';
 import {excludesFrench,frenchApplication,archiveFrench} from './language-policy.js';
 import {employerHold} from './employer-limits.js';
@@ -35,8 +37,8 @@ export function parseBoards(input){
 
 export function parseIntent(input){
   const rawInstruction=String(input||'').trim().slice(0,5000);
-  const broadTech=worldwideTechIntent(rawInstruction);
-  const worldwideEligibility=broadTech||/\bworldwide\b[^;]*(?:sponsorship|visa)/i.test(rawInstruction)||/;\s*eligibility:\s*worldwide sponsorship, remote from Canada, or B2B/i.test(rawInstruction);
+  const supportCareer=supportIntent(rawInstruction),broadTech=worldwideTechIntent(rawInstruction);
+  const worldwideEligibility=supportCareer||broadTech||/\bworldwide\b[^;]*(?:sponsorship|visa)/i.test(rawInstruction)||/;\s*eligibility:\s*worldwide sponsorship, remote from Canada, or B2B/i.test(rawInstruction);
   const instruction=rawInstruction.split(';').filter(clause=>!/^\s*eligibility:|^\s*Canada B2B only\s*$/i.test(clause)).join(';').trim();
   if(!instruction)throw Error('Describe the roles you want');
   const lower=instruction.toLowerCase(),locationClause=instruction.split(';').slice(1).join(', ').trim();
@@ -77,7 +79,7 @@ export function parseIntent(input){
   const titleSuffix=/\b(engineer|administrator|manager|operator|specialist|analyst|nurse|accountant)$/;
   roles=roles.map((role,index)=>role.split(/\s+/).length===1&&titleSuffix.test(roles[index+1]||'')?role+' '+roles[index+1].match(titleSuffix)[1]:role);
   if(!roles.length)throw Error('Include a role, for example: DevOps engineer; remote; Canada');
-  return {broadTech,worldwideEligibility,roles:roles.slice(0,80),remote:locationOrder||worldwideEligibility?false:remote,places:locationOrder||worldwideEligibility?[]:places,localPlaces:locationOrder||worldwideEligibility?[]:localPlaces,remotePlaces:locationOrder||worldwideEligibility?[]:remotePlaces,remoteAny:locationOrder||worldwideEligibility?false:remoteAny,locationOrder};
+  return {supportCareer,broadTech,worldwideEligibility,roles:roles.slice(0,80),remote:locationOrder||worldwideEligibility?false:remote,places:locationOrder||worldwideEligibility?[]:places,localPlaces:locationOrder||worldwideEligibility?[]:localPlaces,remotePlaces:locationOrder||worldwideEligibility?[]:remotePlaces,remoteAny:locationOrder||worldwideEligibility?false:remoteAny,locationOrder};
 }
 
 export function profileSearchInstruction(applicant,resumeRoles=[]){
@@ -94,6 +96,7 @@ export function profileSearchInstruction(applicant,resumeRoles=[]){
 }
 
 export function mergeProfileRoles(intent,focus=''){
+ if(intent.supportCareer)return intent;
  let profile=[];try{profile=parseIntent(focus).roles}catch{}
  return {...intent,roles:[...new Set([...intent.roles,...profile])].slice(0,80)};
 }
@@ -227,11 +230,12 @@ async function executeSearch(id,userId){
  if(!search)throw Error('Search not found');
  const applicant=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(search.applicant_id,userId);
  if(!applicant)throw Error('Applicant not found');
- const resolved=searchIntentForApplicant(search,applicant),intent=resolved.intent,requestedBoards=[...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')],boards=[...new Set([...requestedBoards,...(intent.broadTech?[...curatedBoards(intent,applicant.focus),...defaultBoards]:[...defaultBoards,...curatedBoards(intent,applicant.focus)])].map(board=>board.replace('job-boards.greenhouse.io','boards.greenhouse.io')))];
+ const resolved=searchIntentForApplicant(search,applicant),intent=resolved.intent,requestedBoards=[...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')],boards=[...new Set([...requestedBoards,...(intent.broadTech||intent.supportCareer?[...curatedBoards(intent,applicant.focus),...defaultBoards]:[...defaultBoards,...curatedBoards(intent,applicant.focus)])].map(board=>board.replace('job-boards.greenhouse.io','boards.greenhouse.io')))];
  const batch=sourceBatch(spreadDiscoveryBoards(boards),search.source_cursor);
  if(search.auto_generated&&resolved.instruction!==search.instruction)db.prepare('UPDATE searches SET instruction=? WHERE id=?').run(resolved.instruction,id);
  db.prepare('UPDATE searches SET last_run=?,last_error=NULL,source_cursor=? WHERE id=?').run(now(),batch.next,id);
  let scanned=0,matched=0,strongMatches=0,added=0,queued=0,duplicatesSkipped=0,detailsFetched=0;const errors=[],sources=[];
+ if(intent.supportCareer){await refreshSalaryRates();intent.minimumCAD=batchPreferences(db,userId)?.minimum_cad||120000;}
  const results=await Promise.allSettled(batch.boards.map(listBoard));
  results.forEach((result,index)=>{if(result.status==='fulfilled')sources.push({source:batch.boards[index],jobs:result.value});else errors.push(batch.boards[index]+': '+String(result.reason?.message).slice(0,150));});
  // Aggregators are supplementary and cached for an hour; direct employer boards rotate every minute.
@@ -242,6 +246,7 @@ async function executeSearch(id,userId){
  const history=applicationDiversityHistory(db,userId);
  const diverseCandidates=diversifyApplications(candidates.map(c=>({...c.job,assessment:c.assessment})),history);
  for(const job of diverseCandidates){const assessment=job.assessment;
+  if(db.prepare("SELECT enabled FROM searches WHERE id=?").get(search.id)?.enabled===0)break;
   if(added>=100)break;let url;try{url=normalizeURL(job.url)}catch{continue;}if(!directDiscoveryLink(url))continue;
   if(job.descriptionURL){
    const hit=feedCache.get(job.descriptionURL),cached=hit&&Date.now()-hit.at<3600000;
@@ -252,6 +257,7 @@ async function executeSearch(id,userId){
   const metadata=jobIntelligence(job,intent,applicant.focus),existing=db.prepare('SELECT * FROM jobs WHERE applicant_id=? AND normalized_url=?').get(applicant.id,url);
   if(existing)saveMetadata(existing.id,metadata);
   if(intent.worldwideEligibility&&!metadata.eligibility.eligible)continue;
+  if(intent.supportCareer&&(!metadata.supportCareer?.strong||!metadata.salaryTarget?.eligible))continue;
   const ck=companyKey(job.company),tk=historyKey(job.title);
   const imported=db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,ck,tk);
   const prior=db.prepare("SELECT 1 FROM jobs WHERE user_id=? AND history_company(company)=? AND history_title(title)=? AND (status IN ('submitted','interview','offer','rejected','duplicate','archived','running','local_browser','queued') OR local_attempt_at IS NOT NULL)").get(userId,ck,tk);

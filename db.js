@@ -86,3 +86,6 @@ if(!db.prepare('PRAGMA table_info(applicants)').all().some(c=>c.name==='gemini_f
 
 import {installSingleApplication} from './single-application.js';
 installSingleApplication(db);
+
+import {installBatches} from './application-batches.js';
+installBatches(db);

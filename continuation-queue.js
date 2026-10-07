@@ -23,6 +23,7 @@ export function installContinuations(db){db.exec(`CREATE TABLE IF NOT EXISTS con
  requested_at TEXT NOT NULL,claim_id TEXT,claimed_at TEXT,message TEXT NOT NULL DEFAULT ''
  )`);}
 export function requestContinuation(db,uid,id,check=()=> ''){
+ if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='answer_save_state'").get()&&db.prepare('SELECT 1 FROM answer_save_state WHERE job_id=? AND editing=1').get(id))throw Error('Finish the answer you are editing before continuing.');
  const job=jobFor(db,uid,id),problem=continuationProblem(job)||check(job);if(problem)throw Error(problem);
  const old=db.prepare('SELECT * FROM continuation_requests WHERE job_id=? AND user_id=?').get(id,uid);
  if(old&&['queued','dispatching'].includes(old.state))return {state:old.state};
@@ -48,6 +49,7 @@ export function claimContinuation(db,uid,check=()=> ''){
   const requests=db.prepare("SELECT * FROM continuation_requests WHERE user_id=? AND state='queued' ORDER BY requested_at,job_id").all(uid);
   for(const request of requests){
    if(focus&&focus.job_id!==request.job_id)continue;
+   if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='answer_save_state'").get()&&db.prepare('SELECT 1 FROM answer_save_state WHERE job_id=? AND editing=1').get(request.job_id))continue;
    const job=jobFor(db,uid,request.job_id),problem=continuationProblem(job)||(signature(job)!==request.signature?'The form or saved answers changed. Review this application before continuing.':check(job));
    if(problem){db.prepare("UPDATE continuation_requests SET state='review',message=? WHERE job_id=?").run(problem,request.job_id);continue;}
    const claimId=randomUUID();

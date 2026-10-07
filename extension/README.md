@@ -1,4 +1,4 @@
-Version 0.6.24 adds Add job links to open the bulk-link funnel, plus automatic popup refresh. The server checks batches and queues verified worldwide technology roles. Final Submit remains manual.
+Version 0.6.25 adds Add job links to open the bulk-link funnel, plus automatic popup refresh. The server checks batches and queues verified worldwide technology roles. Final Submit remains manual.
 
 Version 0.6.22 adds Mark completed beside each unfinished application. It records your submission, removes local retry work and updates Completed without inventing an employer receipt. Completed and Confirmed are separate totals. Reload the existing extension to retain its records.
 
@@ -51,4 +51,7 @@ Version 0.6.7 prepares more routine forms by using accessible labels and descrip
 Application order follows the server company/platform rotation. Five is a soft rotation target, not an employer quota or permission to repeat a requisition. Final Submit remains manual.
 
 
-Single-application mode (0.6.24): enable Start autonomous application on the dashboard. Only the selected job progresses; saved facts and approved reusable answers fill the form. The hosted worker starts new forms, or the connected browser can continue an existing local form. Automatic Submit requires this explicit mode, a complete supported form and durable authorization. Missing facts, verification and employer declarations pause the same application. No automatic replay follows an uncertain attempt. The next job is selected only after a real employer receipt. The displayed percentage measures current-step required fields, not hiring probability or submission success. Manual Submit remains the default outside this mode.
+Single-application mode (0.6.25): enable Start autonomous application on the dashboard. Only the selected job progresses; saved facts and approved reusable answers fill the form. The hosted worker starts new forms, or the connected browser can continue an existing local form. Automatic Submit requires this explicit mode, a complete supported form and durable authorization. Missing facts, verification and employer declarations pause the same application. No automatic replay follows an uncertain attempt. The next job is selected only after a real employer receipt. The displayed percentage measures current-step required fields, not hiring probability or submission success. Manual Submit remains the default outside this mode.
+
+## 0.6.25
+Support-career batches of up to 20, per-question autosave with durable retry, and automatic reuse of completed factual answers. The helper panel no longer needs Save answers or Fill available answers controls. Batch mode prepares forms and leaves final Submit with the applicant.

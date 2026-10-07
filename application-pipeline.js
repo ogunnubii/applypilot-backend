@@ -1,3 +1,4 @@
+import {populateBatch,inActiveBatch} from './application-batches.js';
 import {excludesFrench,archiveFrench} from './language-policy.js';
 import {employerHold} from './employer-limits.js';
 import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
@@ -14,6 +15,7 @@ export function pipelineEnabled(db,userId){
 }
 export function queueFoundApplications(db,userId,{applicantId=null}={}){
  archiveFrench(db,userId);
+ populateBatch(db,userId);
  const result={queued:0,held:0,duplicates:0,applications:[]},at=new Date().toISOString();
  const record=(job,type,message)=>db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(job.id,at,type,message);
  const policyFor=job=>typeof companyApplicationPolicy==='function'?companyApplicationPolicy(db,job.applicant_id,job):{allowed:true};
@@ -30,6 +32,7 @@ export function queueFoundApplications(db,userId,{applicantId=null}={}){
  try{
   const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND status='saved' AND (? IS NULL OR applicant_id=?) ORDER BY match_score DESC,created_at,id").all(userId,applicantId,applicantId);
   for(const job of rows){
+   if(!inActiveBatch(db,job))continue;
    const profile=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,userId);
    const imported=db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,companyKey(job.company),historyKey(job.title));
    const duplicate=priorApplication(db,userId,job)||imported;

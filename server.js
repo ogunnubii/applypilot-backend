@@ -389,7 +389,6 @@ if(answerRoute){const j=ownJob(uid,answerRoute[1]);if(!j)return send(res,404,{er
   if(x.autosave===true)db.prepare('INSERT INTO answer_save_state VALUES(?,?,?) ON CONFLICT(job_id,question) DO UPDATE SET editing=excluded.editing').run(j.id,question,x.resume===true?0:1);
   const reusable=x.remember===true&&(!x.autosave||x.resume===true)&&canReuse(question)&&!hasResearchDraftForQuestion(db,j.id,question)&&!hasFactDraft(db,j.id,question);
   if(reusable)rememberAnswers(j.applicant_id,[[question,answer]]);
-  if(x.autosave===true&&x.resume===true&&!hasResearchDraftForQuestion(db,j.id,question)&&!hasFactDraft(db,j.id,question)){captureAnswers(db,j,[{question,answer}]);const row=db.prepare('SELECT id FROM answer_history WHERE job_id=? AND question=?').get(j.id,question);if(row)updateLibrary(db,uid,row.id,answer,reusable);}
   event(j.id,'answer_saved',reusable?'Saved applicant-approved answer for reuse':'Saved an answer for this application');if(x.autosave===true&&x.resume===true){
    const latest=ownJob(uid,j.id),questions=JSON.parse(latest.required_fields_json||"[]"),a=JSON.parse(latest.answers_json||"{}");
    if(questions.length&&questions.every(q=>canCapture(q)&&a[q]?.trim())&&!db.prepare('SELECT 1 FROM answer_save_state WHERE job_id=? AND editing=1').get(j.id)&&!latest.local_attempt_at&&!["CAPTCHA","Sign-in","Sensitive action","Unconfirmed submission","Submission in progress","Upload needs review","Ready to submit"].includes(latest.challenge)){

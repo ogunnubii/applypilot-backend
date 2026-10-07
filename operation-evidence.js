@@ -10,7 +10,7 @@ export function applicationEvidence(job,now=Date.now()){
  const fresh=Number.isFinite(Date.parse(job.updated_at))&&now-Date.parse(job.updated_at)<120000;
  const stalled=!attempted&&job.status==='local_browser'&&job.local_phase==='ready'&&!fresh;
  return {completed,confirmed,completion,automatic:completion==='automatic',assisted:completion==='assisted',unknown:completion==='unknown',attempted,filled,worked:filled||attempted||confirmed,
-  awaiting:attempted&&!confirmed,
+  awaiting:job.status!=='archived'&&attempted&&!confirmed,
   active:!attempted&&(['queued','running'].includes(job.status)||job.status==='local_browser'&&job.local_phase==='ready'&&!stalled),
   stalled,
   blocked:!attempted&&(['paused','needs_review'].includes(job.status)||job.status==='local_browser'&&job.local_phase==='blocked'),
@@ -27,7 +27,7 @@ export function operationSnapshot(db,userId){
  EXISTS(SELECT 1 FROM events e WHERE e.job_id=j.id AND e.rowid<=(SELECT MIN(r.rowid) FROM events r WHERE r.job_id=j.id AND r.type IN ('submitted','manual_confirmation')) AND e.type='completion_tracking') AS tracking_event,
  EXISTS(SELECT 1 FROM events e WHERE e.job_id=j.id AND e.rowid<=(SELECT MIN(r.rowid) FROM events r WHERE r.job_id=j.id AND r.type IN ('submitted','manual_confirmation')) AND e.type='automatic_submission') AS automatic_event,
  EXISTS(SELECT 1 FROM events e WHERE e.job_id=j.id AND e.rowid<=(SELECT MIN(r.rowid) FROM events r WHERE r.job_id=j.id AND r.type IN ('submitted','manual_confirmation')) AND e.type IN ('assistance_boundary','paused','needs_review')) AS review_event
- FROM jobs j WHERE j.user_id=? AND j.status NOT IN ('archived','duplicate')`).all(userId);
+ FROM jobs j WHERE j.user_id=? AND (j.status NOT IN ('archived','duplicate') OR j.status='archived' AND EXISTS(SELECT 1 FROM events a WHERE a.job_id=j.id AND a.type='archived' AND a.message LIKE 'Queue reset for support-career batches.%'))`).all(userId);
  const totals={completed:0,confirmed:0,worked:0,awaiting:0,active:0,stalled:0,blocked:0,unverifiedOutcome:0,automatic:0,assisted:0,unknown:0};
  for(const job of jobs){const evidence=applicationEvidence(job);for(const key of Object.keys(totals))if(evidence[key])totals[key]++;}
  return {totals,applications:jobs.map(job=>({id:job.id,...applicationEvidence(job)})),checkedAt:new Date().toISOString()};

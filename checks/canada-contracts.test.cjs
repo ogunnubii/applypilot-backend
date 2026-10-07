@@ -3,13 +3,17 @@ const read=f=>fs.readFileSync(path.join(__dirname,'..',f),'utf8');
 test('remote Canada search preserves its scope despite worldwide support defaults',async()=>{
  const s=await import('../support-career.js');
  const src=read('discovery.js'),start=src.indexOf('const placeWords='),end=src.indexOf('export function profileSearchInstruction');
- const parse=new Function('supportIntent','remoteCanadaIntent','worldwideTechIntent',src.slice(start,end).replace(/export /g,'')+';return parseIntent;')(s.supportIntent,s.remoteCanadaIntent,()=>false);
+ const parse=new Function('supportIntent','remoteCanadaIntent','worldwideTechIntent','t4FallbackIntent',src.slice(start,end).replace(/export /g,'')+';return parseIntent;')(s.supportIntent,s.remoteCanadaIntent,()=>false,s.t4FallbackIntent);
  const intent=parse(s.CANADA_SUPPORT_INSTRUCTION);assert.equal(intent.remote,true);assert.equal(intent.remoteCanadaOnly,true);assert.deepEqual(intent.remotePlaces,['canada']);assert.deepEqual(intent.localPlaces,[]);
  const {jobIntelligence}=await import('../job-intelligence.js');
  const job={title:'Cloud Support Engineer',location:'Remote Canada',remote:true,description:'CAD 70-90/hour. We accept incorporated contractors.'};
  assert(jobIntelligence(job,intent).eligibility.eligible);assert(jobIntelligence(job,intent).salaryTarget.eligible);
  assert(!jobIntelligence({...job,location:'London hybrid; visa sponsorship'},intent).eligibility.eligible);
  assert(!jobIntelligence({...job,location:'Remote Canada',description:'Full-time permanent T4 employment.'},intent).eligibility.eligible);
+ const fallback=parse(s.CANADA_FALLBACK_INSTRUCTION);assert(fallback.t4Fallback&&fallback.remoteCanadaOnly);
+ const t4={...job,description:'Full-time permanent T4 employment. CAD 130000 per year.'};assert.equal(jobIntelligence(t4,fallback).eligibility.kind,'canada-employment-fallback');
+ assert(!jobIntelligence({...t4,location:'Remote USA'},fallback).eligibility.eligible);
+ assert(!jobIntelligence({...t4,description:t4.description+' Hybrid attendance required.'},fallback).eligibility.eligible);
  const db={prepare:()=>({all:()=>[{instruction:s.CANADA_SUPPORT_INSTRUCTION}]})};assert.equal(s.supportSearchInstruction(db,'u','p'),s.CANADA_SUPPORT_INSTRUCTION);
 });
 test('incorporated remote eligibility needs engagement evidence, Canadian scope and stable remote work',async()=>{

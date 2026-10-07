@@ -3,6 +3,8 @@ export const SUPPORT_INSTRUCTION='Support career pathway: AI support engineer, t
 export const supportIntent=value=>/^Support career pathway:/i.test(String(value||''));
 export const CANADA_SUPPORT_INSTRUCTION=SUPPORT_INSTRUCTION.split(';')[0]+'; remote Canada only; eligibility: incorporated / C2C / B2B contracts only';
 export const remoteCanadaIntent=value=>/;\s*remote Canada only\s*(?:;|$)/i.test(String(value||''));
+export const t4FallbackIntent=value=>/;\s*T4 fallback only\s*(?:;|$)/i.test(String(value||''));
+export const CANADA_FALLBACK_INSTRUCTION=CANADA_SUPPORT_INSTRUCTION.replace('contracts only','contracts first')+'; T4 fallback only';
 export function supportSearchInstruction(db,userId,applicantId){
  const rows=db.prepare('SELECT instruction FROM searches WHERE user_id=? AND applicant_id=? AND enabled=1 ORDER BY created_at DESC').all(userId,applicantId);
  return rows.map(r=>r.instruction).find(supportIntent)||SUPPORT_INSTRUCTION;

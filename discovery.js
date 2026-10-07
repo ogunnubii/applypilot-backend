@@ -1,4 +1,4 @@
-import {supportIntent,remoteCanadaIntent,refreshSalaryRates} from './support-career.js';
+import {supportIntent,remoteCanadaIntent,t4FallbackIntent,refreshSalaryRates} from './support-career.js';
 import {batchPreferences} from './application-batches.js';
 import {worldwideTechIntent} from './tech-search.js';
 import {excludesFrench,frenchApplication,archiveFrench} from './language-policy.js';
@@ -79,7 +79,7 @@ export function parseIntent(input){
   const titleSuffix=/\b(engineer|administrator|manager|operator|specialist|analyst|nurse|accountant)$/;
   roles=roles.map((role,index)=>role.split(/\s+/).length===1&&titleSuffix.test(roles[index+1]||'')?role+' '+roles[index+1].match(titleSuffix)[1]:role);
   if(!roles.length)throw Error('Include a role, for example: DevOps engineer; remote; Canada');
-  if(remoteCanadaOnly)return {supportCareer,broadTech,worldwideEligibility:true,remoteCanadaOnly:true,roles:roles.slice(0,80),remote:true,places:[],localPlaces:[],remotePlaces:['canada'],remoteAny:false,locationOrder:null};
+  if(remoteCanadaOnly)return {supportCareer,broadTech,worldwideEligibility:true,remoteCanadaOnly:true,t4Fallback:t4FallbackIntent(rawInstruction),roles:roles.slice(0,80),remote:true,places:[],localPlaces:[],remotePlaces:['canada'],remoteAny:false,locationOrder:null};
   return {supportCareer,broadTech,worldwideEligibility,roles:roles.slice(0,80),remote:locationOrder||worldwideEligibility?false:remote,places:locationOrder||worldwideEligibility?[]:places,localPlaces:locationOrder||worldwideEligibility?[]:localPlaces,remotePlaces:locationOrder||worldwideEligibility?[]:remotePlaces,remoteAny:locationOrder||worldwideEligibility?false:remoteAny,locationOrder};
 }
 

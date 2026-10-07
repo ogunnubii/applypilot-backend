@@ -1,6 +1,6 @@
 // Evidence-based eligibility filter for the applicant's explicit worldwide search mode.
 // Remote in one country is not permission to work remotely from another.
-export function workEligibility(job,{incorporatedFromCanada=false,remoteCanadaOnly=false}={}){
+export function workEligibility(job,{incorporatedFromCanada=false,remoteCanadaOnly=false,allowCanadianEmployment=false}={}){
  const plain=value=>String(value||'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/<[^>]*>/g,' ').replace(/&(?:nbsp|amp);/g,' ').replace(/\s+/g,' ').trim();
  const location=plain(job.location),text=plain([job.title,job.employmentType,job.description].join(' '));
  const canada=/\b(canada|toronto|ontario|vancouver|montreal|ottawa|calgary|quebec|alberta|british columbia|waterloo|winnipeg|halifax|edmonton|saskatchewan|manitoba|nova scotia|new brunswick)\b/i.test(location);
@@ -16,6 +16,7 @@ export function workEligibility(job,{incorporatedFromCanada=false,remoteCanadaOn
  const b2b=corporateEvidence||text.match(/\b(?:b2b\s*(?:\/\s*)?(?:contract(?:or)?|engagement|role)|independent\s+contractors?|consulting\s+contract)\b/i);
  const noB2b=/\b(?:no|not accepting|cannot accept|do not accept)\s+(?:b2b|c2c|corp[\s-]*(?:to|2)[\s-]*corp|independent contractors)\b|\b(?:b2b|c2c|incorporated contractors?)\s+(?:is\s+|are\s+)?(?:not\s+(?:available|accepted|supported|permitted)|unavailable)\b/i.test(text);
  const incorporated=!!corporateEvidence;
+ if(canada&&remoteCanadaOnly&&allowCanadianEmployment&&!restrictedRemote&&(!incorporated||noB2b||/\bT4\s+(?:only|employment)\b/i.test(text))&&/\b(?:T4|full[ -]time|permanent|employment|employee)\b/i.test(text))return {eligible:true,kind:'canada-employment-fallback',reason:'Canadian employee / T4 fallback; use only when no suitable incorporated contracts are available. Confirm work authorization and employer location requirements.'};
  if(canada&&(!incorporated||noB2b||/\b(?:T4 only|T4 employment|no incorporated)\b/i.test(text)))return {eligible:false,reason:'Canada requires explicit incorporated / C2C / B2B engagement; generic contract or T4 employment is not sufficient'};
  if(b2b&&!noB2b&&!restrictedRemote)return {eligible:true,reason:'Posting specifies '+b2b[0],kind:'business-contract'};
  if(canada)return {eligible:false,reason:'Canadian role has no explicit B2B / consulting-contract evidence'};

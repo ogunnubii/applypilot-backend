@@ -3,6 +3,7 @@ import {canCapture} from './answer-library.js';
 import {submissionDeclaration} from './local-policy.js';
 import {ensureFocusedJob,focusSnapshot,setWorkFocus,focusAllowsSubmit,saveFormProgress,reserveAutonomousAttempt} from './single-application.js';
 import {installFunnel,createFunnelBatch,funnelStatus,retryFunnelItem,processFunnel,enableWorldwideDiscovery} from './job-funnel.js';
+import {loadManualApplication} from './manual-applications.js';
 import {experienceFor,saveExperience,deleteExperience} from './experience-library.js';
 import {installLanguagePolicy,excludesFrench,frenchApplication,archiveFrench,setFrenchExclusion} from './language-policy.js';
 import {installManualSubmitRecords,recordManualSubmit,recordReportedSubmission} from './manual-submit-record.js';
@@ -90,7 +91,7 @@ if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
 }
 if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.27.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-06-dropdowns-canada',extensionVersion:'0.6.27',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-06-canada-fallback',extensionVersion:'0.6.27',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(path==='/api/register'&&req.method==='POST'){let input=JSON.parse(await body(req));if(input.registration_code!==process.env.REGISTRATION_CODE)return send(res,403,{error:'Registration code required'});let email=text(input.email,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return send(res,400,{error:'Valid email required'});let id=randomUUID(),hash=hashPassword(input.password);try{db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(id,email,hash,now())}catch{return send(res,409,{error:'Account already exists'})}return send(res,201,{token:issueToken(id,input.remember===true)})}
 if(path==='/api/login'&&req.method==='POST'){let address=req.socket.remoteAddress||'unknown',rate=attempts.get(address)||{count:0,at:Date.now()};if(Date.now()-rate.at>600000)rate={count:0,at:Date.now()};if(rate.count>=10)return send(res,429,{error:'Too many sign-in attempts. Try later.'});rate.count++;attempts.set(address,rate);let input=JSON.parse(await body(req)),u=db.prepare('SELECT * FROM users WHERE email=?').get(text(input.email,254).toLowerCase());if(!u||!verifyPassword(input.password,u.password_hash))return send(res,401,{error:'Invalid credentials'});attempts.delete(address);return send(res,200,{token:issueToken(u.id,input.remember===true)})}
 let uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid)return send(res,401,{error:'Sign in required'});
@@ -170,6 +171,8 @@ if(path==='/api/operations'&&req.method==='GET'){
 if(path==='/api/activity'&&req.method==='GET')return send(res,200,{events:db.prepare('SELECT e.at,e.type,e.message,j.id AS job_id,j.title,j.company,j.applicant_id FROM events e JOIN jobs j ON j.id=e.job_id WHERE j.user_id=? AND j.status NOT IN (\'archived\',\'duplicate\') ORDER BY e.id DESC LIMIT 100').all(uid)});
 if(path==='/api/me')return send(res,200,{email:db.prepare('SELECT email FROM users WHERE id=?').get(uid)?.email});
 if(path==='/api/funnel'&&req.method==='GET')return send(res,200,funnelStatus(db,uid));
+const manualFunnel=path.match(/^\/api\/funnel\/([a-f0-9-]+)\/manual$/);
+if(manualFunnel&&req.method==='POST')return send(res,201,loadManualApplication(db,uid,manualFunnel[1],JSON.parse(await body(req))));
 if(path==='/api/funnel'&&req.method==='POST'){const result=createFunnelBatch(db,uid,JSON.parse(await body(req,1100000)));setImmediate(funnelTick);return send(res,201,result);}
 if(path==='/api/funnel/discovery'&&req.method==='POST'){const x=JSON.parse(await body(req)),result=enableWorldwideDiscovery(db,uid,x.applicant_id);setImmediate(()=>runSearch(result.id,uid).catch(error=>console.error('Worldwide discovery:',error.message)));return send(res,200,result);}
 const funnelRetry=path.match(/^\/api\/funnel\/([a-f0-9-]+)\/retry$/);

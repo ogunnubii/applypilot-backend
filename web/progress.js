@@ -2,7 +2,7 @@
 function paySummary(job){
  const wrap=el('div');wrap.className='job-pay';const rows=job.metadata?.pay||[];
  if(job.metadata?.available===false){wrap.append(el('strong','Posting availability needs review'));return wrap;}
- if(!rows.length){wrap.append(el('strong',job.metadata?.checkedAt?'Annual pay not disclosed':'Annual pay · checking employer posting'));return wrap;}
+ if(!rows.length){wrap.append(el('strong',job.metadata?.manualReview?'Pay needs confirmation':job.metadata?.checkedAt?'Annual pay not disclosed':'Annual pay · checking employer posting'));return wrap;}
  for(const pay of rows){
   const number=n=>Number(n).toLocaleString('en-US',{maximumFractionDigits:0}),range=(lo,hi)=>number(lo)+(lo===hi?'':'–'+number(hi));
   wrap.append(el('strong',pay.currency+' '+range(pay.annualMin,pay.annualMax)+' / year'+(pay.estimated?' · estimate':'')));
@@ -132,6 +132,8 @@ async function refresh(force=false){
   if(job.status==='interview'){const r=interviews.find(r=>interviewIdentity(r)===interviewIdentity(job));const card=interviewCard(r);card.id='job-'+job.id;card.dataset.completion=job.evidence?.completion||'';card.dataset.confirmed=String(!!job.evidence?.confirmed);card.dataset.worked=String(!!job.evidence?.worked);$('#jobs').append(card);continue;}
   const card=el('article');card.id='job-'+job.id;card.className='job';card.dataset.preparation=preparationStage(job)||'';card.dataset.pending=String(pendingSubmission(job));card.dataset.actionable=String(pendingSubmission(job)&&!['running','queued'].includes(job.status));card.dataset.completion=job.evidence?.completion||'';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');for(const key of ['active','blocked','stalled','worked','confirmed'])card.dataset[key]=String(!!job.evidence?.[key]);card.dataset.state=job.evidence?.awaiting||job.local_attempt_at&&!job.evidence?.confirmed&&job.status==='local_browser'?'awaiting':job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');if(attentionPositions.has(job.id)){const counter=el('span',attentionPositions.get(job.id)+'/'+attention.length+' · Needs your input');counter.className='attention-position';counter.style.cssText='display:inline-block;font-size:14px;font-weight:750;color:#245a3c;background:#e9f4ec;border-radius:8px;padding:4px 9px;margin-bottom:7px';counter.setAttribute('aria-label','Application '+attentionPositions.get(job.id)+' of '+attention.length+' needing your input');names.append(counter);}names.append(el('h2',job.title),paySummary(job),el('small',job.company));if(job.metadata?.supportCareer?.demands?.length)names.append(el('small',job.metadata.supportCareer.demands.join('; ')));if(job.metadata?.checkedAt){names.append(el('small',(job.match_score||0)+'/100 role and eligibility score · '+(job.metadata.location||'Location not listed')+(job.metadata.eligibility?.eligible?'':' · Eligibility needs confirmation')));}const badge=el('span',({saved:'Found',running:'Preparing',queued:'Preparing · queued',paused:'Blocked',needs_review:job.challenge==='Ready to submit'?'Ready to submit':'Blocked',local_browser:job.evidence?.stalled?'Browser check needed':job.local_phase==='blocked'?(/^Ready (?:for your review|to submit)/.test(job.last_message||'')?'Ready to submit':'Needs your input'):job.local_attempt_at?'Awaiting receipt':'Preparing · local',submitted:job.evidence?.confirmed?'Receipt recorded':'Submission needs evidence',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);if(job.employer_hold&&!job.evidence?.confirmed)badge.textContent='Employer application limit';heading.append(mark,names,badge);card.append(heading);if(job.manual_submit_clicks)card.append(el('small',job.manual_submit_clicks+' manual Submit clicks recorded · application counted once · confirmation requires an employer receipt'));if(job.employer_hold&&!job.evidence?.confirmed)card.append(el('p',job.employer_hold.message+' Applications to this employer are paused. Other employers can continue.'));
   if(job.evidence?.stalled)card.append(el('p','No recent browser activity has been received. Check the helper and employer tab; this form is not counted as actively filling.'));
+  if(job.metadata?.eligibility?.kind==='canada-employment-fallback')heading.append(el('strong','Employee / T4 fallback'));
+  if(job.metadata?.manualReview){badge.textContent='Review & apply';if(job.notes)card.append(el('p',job.notes));}
   const updated=Date.parse(job.updated_at),stamp=el('p');stamp.className='last-updated';stamp.style.cssText='font-size:13px;color:#626c65;margin:8px 0';
   if(Number.isFinite(updated)){const time=el('time',new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(updated)));time.dateTime=new Date(updated).toISOString();stamp.append(document.createTextNode('Last updated: '),time);}else stamp.textContent='Last updated: unavailable';card.append(stamp);renderCompanyCareers(card,job);
   if(!['running','queued','local_browser'].includes(job.status)&&!job.handoff_available){const remove=el('button','Delete application permanently');remove.onclick=async()=>{if(!window.confirm('Permanently delete the visible record and captured answers for '+job.title+' at '+job.company+'? This cannot be undone and does not withdraw an employer application. Minimal requisition and company activity is retained to prevent duplicate or excess applications.'))return;remove.disabled=true;try{await api('/jobs/'+job.id,'DELETE',{confirm:job.id});await refresh(true);}catch(e){$('#notice').textContent=e.message;remove.disabled=false;}};card.append(remove);}
@@ -172,7 +174,7 @@ async function refresh(force=false){
     await refresh(true);
    }}catch(e){msg.textContent=e.message;$('#notice').textContent=e.message;}finally{takeover.disabled=false;takeover.textContent=job.handoff_available?(job.challenge==='Ready to submit'?'Review filled form and submit':'Take over filled application'):'Prepare live application';}
   };
-  if(job.status!=='local_browser'){
+  if(job.status!=='local_browser'&&!job.metadata?.manualReview){
    if(!job.handoff_available&&['Unconfirmed submission','Submission in progress'].includes(job.challenge))actions.append(el('p','Live restart is unavailable because a submission may already have occurred. Check the employer receipt using the employer link below.'));
    else card.insertBefore(takeover,actions);
   }
@@ -185,7 +187,7 @@ async function refresh(force=false){
    };card.insertBefore(resume,actions);
    if(!job.local_attempt_at){const automatic=el('button','Continue autofill');automatic.className='continue-autofill';automatic.onclick=async()=>{automatic.disabled=true;actions.open=true;msg.textContent='Resuming saved answers…';try{await resumeLocalApplication(job.id);msg.textContent=activeFocus.auto_submit?'Selected application resumed with automatic submission enabled.':'Autofill resumed. Final Submit stays with you.';await refresh(true);}catch(e){msg.textContent=e.message;}finally{automatic.disabled=false;}};card.insertBefore(automatic,actions);}
   }
-  if(job.status!=='local_browser'&&!human&&!upload&&!job.handoff_available){
+  if(job.status!=='local_browser'&&!human&&!upload&&!job.handoff_available&&!job.metadata?.manualReview){
    const form=el('form');form.oninput=()=>{form.dataset.dirty='true'};
    const fields=[];
    if(questions.length){for(const question of [...new Set(questions)]){const input=field(form,question);fields.push({question,input});chatQuestionTools(form,question,job,input);}}
@@ -193,7 +195,7 @@ async function refresh(force=false){
    for(const f of fields)autoSaveField(f.input,()=>f.question||f.questionInput.value,[job],form);
    form.onsubmit=e=>e.preventDefault();actions.append(form);
   }
-  const link=el('a','Open this application on the employer site');link.href=job.url;link.target='_blank';link.rel='noopener';actions.append(link);
+  const link=el('a',job.metadata?.manualReview?'Open application':'Open this application on the employer site');link.href=job.url;link.target='_blank';link.rel='noopener noreferrer';if(job.metadata?.manualReview){link.className='primary manual-application-link';card.insertBefore(link,actions);}else actions.append(link);
   if(human||upload)actions.append(el('p',job.challenge==='Unconfirmed submission'?'Check whether the employer received this application before trying again.':job.challenge==='Ready to submit'?'Review the filled application in the live browser, then click the employer’s Submit button yourself.':'Use Take over to work in the worker’s browser. The separate employer link starts a different browser session.'));
   const done=el('details');done.append(el('summary','I submitted this application'));
   const reported=el('button','Mark completed');reported.type='button';reported.className='mark-completed';reported.title='Use after you submit the application. Adds it to Completed and stops repeat applications; employer confirmation stays separate.';card.insertBefore(reported,actions);done.append(el('p','An employer receipt upgrades a completed application to employer-confirmed.'));
@@ -407,8 +409,8 @@ function renderBatchControl(batch={}){
  if(box.contains(document.activeElement))return;
  box.hidden=!batch.enabled&&!location.search.includes('view=settings');if(box.hidden)return;
  box.replaceChildren(el('h2',batch.enabled?'Your batch of 20':'Support-career batches'));
- if(batch.enabled){box.append(el('strong',batch.selected+'/20 selected - '+batch.completed+' completed in this batch'),el('p','AI / cloud / technical support. Target CAD '+Number(batch.minimum_cad).toLocaleString()+' per year. Canada: incorporated contracts only.'));
-  if(batch.selected<20)box.append(el('p','Searching for '+(20-batch.selected)+' more verified matches. Jobs with unverified pay or work eligibility stay out of the batch.'));
+ if(batch.enabled){box.append(el('strong',batch.selected+'/20 selected - '+batch.completed+' completed in this batch'),el('p','AI / cloud / technical support. Target CAD '+Number(batch.minimum_cad).toLocaleString()+' per year. '+(batch.t4Fallback?'Canada: fully remote incorporated contracts first; employee / T4 roles only as a fallback.':'Canada: incorporated contracts only.')));
+  if(batch.selected<20)box.append(el('p','Searching for '+(20-batch.selected)+' more verified matches. Automatic matches need verified pay and work-arrangement evidence. Manually added leads remain marked for review.'));
   if(batch.selected&&batch.completed===batch.selected){const next=el('button','Start next batch of 20');next.onclick=async()=>{next.disabled=true;try{await api('/application-batch','POST',{action:'next'});await refresh(true);}catch(e){$('#notice').textContent=e.message;next.disabled=false;}};box.append(next);}
  }
  if(!location.search.includes('view=settings'))return;
@@ -827,7 +829,7 @@ function compactJobCards(){
    if(child.tagName==='P'||child.tagName==='LABEL'||child.tagName==='BUTTON'&&child.textContent==='Delete application permanently')detail.append(child);
   }
   const notes={ready:'Filled — review the employer form and click Submit.',answers:'Your answer is needed above.',employer:activeFocus.auto_submit?'Verification or an employer declaration needs your attention.':'Complete the remaining employer-site step.',held:'Paused by the employer application limit.',awaiting:'Submission attempted. Check for a receipt before retrying.',review:'Open the saved form to check the next step.',preparing:activeFocus.auto_submit?'The worker is preparing this application for automatic submission.':'Autofill in progress - final Submit stays with you.'};
-  const note=notes[card.dataset.preparation];if(note){const p=el('p',note);p.className='job-next-step';heading.after(p);}
+  const note=card.querySelector('.manual-application-link')?'Review the posting and apply on its website. Pay and eligibility still need checking.':notes[card.dataset.preparation];if(note){const p=el('p',note);p.className='job-next-step';heading.after(p);}
   if(detail.children.length>1)card.append(detail);
  }
 }
@@ -864,12 +866,19 @@ async function refreshFunnel(){
   $('#funnel-discovery-status').textContent=(worldwide?'Worldwide technology discovery is on. ':active.length+' existing search(es) are active. ')+(pipeline.enabled?'Automatic queueing is on. ':'Automatic queueing is off. ')+(latest?'Last checked '+new Date(latest.last_run).toLocaleTimeString()+': '+(latest.last_result?.scanned||0)+' postings, '+(latest.last_result?.added||0)+' new, '+(latest.last_result?.queued||0)+' queued.':'First search is pending.');
   const support=active.some(s=>s.instruction.startsWith('Support career pathway:'));
   $('#funnel-enable-discovery').textContent=support?'Refresh support-career search':worldwide?'Refresh worldwide search':'Enable worldwide technology search';
-  if(support){const details=$('#funnel-enable-discovery').closest('details');details.querySelector('summary').textContent='Automatic support-career search';details.querySelector('p').textContent='AI, cloud and technical support, technical account management and implementation consulting. Published pay must reach your CAD target. Canada requires explicit incorporated / C2C / B2B engagement. Workload signals affect ranking.';}
+  if(support){const details=$('#funnel-enable-discovery').closest('details');details.querySelector('summary').textContent='Automatic support-career search';details.querySelector('p').textContent='AI, cloud and technical support, technical account management and implementation consulting. Published pay must reach your CAD target. Fully remote Canadian incorporated / C2C / B2B contracts come first. Employee / T4 roles are used only when your saved search allows fallback and no suitable contracts are available. Workload signals affect ranking.';}
   const errors=active.filter(s=>s.last_error);$('#funnel-source-errors').textContent=errors.length?'Some sources need another check: '+errors.map(s=>s.last_error).join('; '):'';
   const progress=$('#funnel-batches');progress.replaceChildren();for(const batch of data.batches||[]){const checked=batch.counts.filter(c=>!['pending','checking'].includes(c.status)).reduce((n,c)=>n+c.count,0);progress.append(el('p',new Date(batch.created_at).toLocaleString()+' · '+checked+'/'+batch.received+' links checked'+(batch.repeated?' · '+batch.repeated+' repeat links skipped':'')));}
-  const list=$('#funnel-items');list.replaceChildren();
+  const list=$('#funnel-items');if(list.querySelector('form[data-editing="true"]'))return;list.replaceChildren();
   for(const item of data.items||[]){const row=el('article'),link=el('a',item.title?item.company+' — '+item.title:item.url);link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';row.append(link,el('small',item.application_status?'Application: '+item.application_status:'Link: '+item.status),el('p',item.message||'Waiting for a background check.'));
    if(['review','closed'].includes(item.status)&&!item.job_id){const retry=el('button','Check link again');retry.onclick=async()=>{retry.hidden=true;try{await api('/funnel/'+item.id+'/retry','POST',{});await refreshFunnel();}catch(error){$('#funnel-notice').textContent=error.message;retry.hidden=false;}};row.append(retry);}
+   if(item.status==='review'&&!item.job_id){
+    const details=el('details');details.append(el('summary','Load on Applications for manual review'));
+    const form=el('form'),title=field(form,'Job title'),company=field(form,'Company'),notes=field(form,'Review notes');title.required=true;company.required=true;title.maxLength=company.maxLength=200;notes.maxLength=2000;title.value=item.title||'';company.value=item.company||'';
+    form.oninput=()=>{form.dataset.editing='true';};notes.required=false;
+    const add=el('button','Load application');form.append(el('p','Adds this lead to your current batch for manual review. It does not confirm eligibility or enable automatic preparation.'),add);
+    form.onsubmit=async event=>{event.preventDefault();add.disabled=true;form.dataset.editing='true';try{const result=await api('/funnel/'+item.id+'/manual','POST',{title:title.value,company:company.value,notes:notes.value});$('#funnel-notice').textContent=result.duplicate?'Previously tracked application retained; no duplicate created.':'Loaded on Applications for manual review.';form.dataset.editing='false';await refreshFunnel();}catch(error){$('#funnel-notice').textContent=error.message;add.disabled=false;}};details.append(form);row.append(details);
+   }
    list.append(row);
   }
   $('#funnel-updated').textContent='Updated '+new Date(data.checkedAt).toLocaleTimeString()+' · Checks groups of '+data.batchSize+' every '+data.intervalSeconds+' seconds. Updates automatically.';

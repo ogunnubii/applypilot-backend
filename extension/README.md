@@ -1,4 +1,4 @@
-Version 0.6.26 fills supported personal website prompts from your saved Website / portfolio, with separate LinkedIn and GitHub values. The server checks batches and queues verified worldwide technology roles. Final Submit remains manual.
+Version 0.6.27 reads native and custom dropdown choices for supported saved-fact Gemini answers. Final Submit stays manual.
 
 Version 0.6.22 adds Mark completed beside each unfinished application. It records your submission, removes local retry work and updates Completed without inventing an employer receipt. Completed and Confirmed are separate totals. Reload the existing extension to retain its records.
 
@@ -59,3 +59,7 @@ Support-career batches of up to 20, per-question autosave with durable retry, an
 ## 0.6.26
 
 Saved Website / portfolio facts now fill supported website prompts. LinkedIn and GitHub wording variants include Your profile and profile-link prompts. Each uses its own saved value; company and other people's links are not inferred. Final Submit behavior is unchanged.
+
+
+## 0.6.27
+Reads offered options from native and custom dropdowns, maps supported professional facts to exact choices, and preserves manual edits. Ambiguous options, missing facts and protected declarations stay for review. Canada-only remote incorporated-contract searches remain scoped after refresh.

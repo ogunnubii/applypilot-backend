@@ -65,20 +65,30 @@ function customComplete(e){
  if(controlRole(e)!=='combobox')return false;const selected=customValue(e),saved=completedCustom.get(e);
  if(saved!==undefined)return !!selected&&P.optionMatches(label(e),selected,saved,packet.profile);return !!selected;
 }
-function optionNodes(e){
- const ids=(e.getAttribute('aria-controls')||e.getAttribute('aria-owns')||'').split(/\s+/).filter(Boolean);
+function optionNodes(e,before=null){
+ const ids=((e.getAttribute('aria-controls')||'')+' '+(e.getAttribute('aria-owns')||'')).split(/\s+/).filter(Boolean);
  const controlled=ids.flatMap(id=>[...(document.getElementById(id)?.querySelectorAll('[role="option"]')||[])]);
- const candidates=controlled.length?controlled:[...document.querySelectorAll('[role="listbox"] [role="option"],body > [role="option"],[role="option"]')];
+ let candidates=controlled;if(!ids.length&&before){candidates=[...document.querySelectorAll('[role="option"]')].filter(o=>visible(o)&&!before.has(o));const groups=new Set(candidates.map(o=>o.closest('[role="listbox"],[role="menu"]')||o.parentElement));if(groups.size!==1)return [];}
  return [...new Set(candidates)].filter(o=>!bar?.contains(o)&&visible(o)&&o.getAttribute('aria-disabled')!=='true');
+}
+function openDropdown(e){const before=new Set([...document.querySelectorAll('[role="option"]')].filter(visible));e.focus();if(e.getAttribute('aria-expanded')!=='true')e.click();return before;}
+function closeDropdown(e){e.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true}));}
+function validOptionLabel(value){const text=compact(value);return text&&!/^(?:select|choose)(?:\b|\.{3}|…)/i.test(text);}
+async function dropdownChoices(e){
+ if(e.tagName==='SELECT')return [...e.options].filter(o=>!o.disabled&&o.value&&validOptionLabel(o.textContent)).map(o=>compact(o.textContent));
+ const before=openDropdown(e);let options=[];
+ for(let i=0;i<12;i++){options=optionNodes(e,before).map(o=>compact(o.textContent||o.getAttribute('aria-label'))).filter(validOptionLabel);if(options.length)break;await pause(75);}
+ closeDropdown(e);return options;
 }
 async function fillCombobox(e,a){
  if(customComplete(e))return false;if(e.matches('input')&&e.value?.trim()&&e.getAttribute('aria-expanded')!=='true')return false;
- if(attemptedCustom.get(e)===String(a))return false;attemptedCustom.set(e,String(a));e.focus();e.click();
+ if(attemptedCustom.get(e)===String(a))return false;attemptedCustom.set(e,String(a));const before=openDropdown(e),initial=e.matches('input')?e.value:'';let typed=false;
  for(let retry=0;retry<12;retry++){
-  const matches=optionNodes(e).filter(o=>P.optionMatches(label(e),o.textContent||o.getAttribute('aria-label'),a,packet.profile));if(matches.length>1)return false;
-  if(matches.length===1){matches[0].click();for(let verify=0;verify<10;verify++){if(P.optionMatches(label(e),customValue(e),a,packet.profile)){completedCustom.set(e,String(a));return true;}await pause(50);}return false;}
-  if(retry===1&&e.matches('input')&&!e.readOnly)setValue(e,a);await pause(75);
+  const matches=optionNodes(e,before).filter(o=>P.optionMatches(label(e),o.textContent||o.getAttribute('aria-label'),a,packet.profile));if(matches.length>1)break;
+  if(matches.length===1){matches[0].click();for(let verify=0;verify<10;verify++){if(P.optionMatches(label(e),customValue(e),a,packet.profile)){completedCustom.set(e,String(a));return true;}await pause(50);}break;}
+  if(retry===1&&e.matches('input')&&!e.readOnly){setValue(e,a);typed=true;}await pause(75);
  }
+ if(typed&&e.value===String(a))setValue(e,initial);closeDropdown(e);
  return false;
 }
 async function fillRoleCheckbox(e,a){
@@ -106,7 +116,7 @@ function mount(){
  bar.append(heading,note);document.body.append(bar);updateAttentionPosition();
  const saving=document.createElement('small');saving.id='applypilot-answer-save-status';saving.setAttribute('role','status');saving.textContent='Answers save automatically as you type.';bar.append(saving);
 }
-function controls(){return [...document.querySelectorAll('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&!e.readOnly);}
+function controls(){return [...document.querySelectorAll('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&(!e.readOnly||controlRole(e)==='combobox'));}
 function formAnswers(){
  const rows=[];for(const e of controls()){
   const q=label(e),role=controlRole(e);if(protectedQuestion(q)||/password|one.?time|verification code|captcha/i.test(q)||['password','file','hidden','submit','button'].includes(e.type))continue;
@@ -116,7 +126,7 @@ function formAnswers(){
 }
 function controlComplete(e,fields){
  const role=controlRole(e);if(role==='combobox')return customComplete(e);if(role==='checkbox'||e.type==='checkbox')return isChecked(e);if(role==='radio')return roleRadioGroup(e).some(isChecked);if(e.type==='radio')return fields.some(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form&&o.checked);
- if(e.type==='file')return !!e.files?.length;if(e.matches?.('[contenteditable="true"]'))return !!compact(e.textContent);return !!e.value&&!(e.validity&&!e.validity.valid);
+ if(e.type==='file')return !!e.files?.length;if(e.tagName==='SELECT')return !!e.value&&!e.selectedOptions[0]?.disabled&&validOptionLabel(e.selectedOptions[0]?.textContent)&&!(e.validity&&!e.validity.valid);if(e.matches?.('[contenteditable="true"]'))return !!compact(e.textContent);return !!e.value&&!(e.validity&&!e.validity.valid);
 }
 function formProgress(){
  const fields=controls(),groups=new Map();for(const e of fields.filter(isRequired)){const key=(e.type==='radio'?e.name:label(e))+'|'+(e.type==='radio'?'radio':controlRole(e)||e.type||e.tagName);groups.set(key,(groups.get(key)||false)||controlComplete(e,fields));}
@@ -155,17 +165,20 @@ async function prepareMissingAnswers(){
  for(const e of controls()){
   const fields=controls(),q=label(e),key=norm(q);
   if(prepared>=12)break;
-  if(attempted||!visible(e)||controlComplete(e,fields)||descriptors(e).some(protectedQuestion)||answer(e)!==null||q==='Required field'||q.length<3||q.length>4000||['file','password','checkbox','hidden','submit','button'].includes(e.type)||controlRole(e)==='checkbox')continue;
+  const dropdown=e.tagName==='SELECT'||controlRole(e)==='combobox';
+  if(attempted||!visible(e)||controlComplete(e,fields)||descriptors(e).some(protectedQuestion)||!dropdown&&answer(e)!==null||e.multiple||e.getAttribute('aria-multiselectable')==='true'||q==='Required field'||q.length<3||q.length>4000||['file','password','checkbox','hidden','submit'].includes(e.type)||e.type==='button'&&!dropdown||controlRole(e)==='checkbox')continue;
   if(!e.matches('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="radio"]'))continue;
   if(aiTried.has(key)&&Date.now()-aiTried.get(key)<60000)continue;
   aiTried.set(key,Date.now());const url=location.href,question=q;note.textContent='Gemini is preparing: '+q;
   try{
-   const choices=e.tagName==='SELECT'?[...e.options].filter(o=>!o.disabled&&o.value&&!/^(?:select|choose)\b/i.test(o.textContent.trim())).map(o=>o.textContent.trim()):e.type==='radio'?fields.filter(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form).map(optionText):controlRole(e)==='radio'?roleRadioGroup(e).map(optionText):[];
+   const choices=dropdown?await dropdownChoices(e):e.type==='radio'?fields.filter(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form).map(optionText):controlRole(e)==='radio'?roleRadioGroup(e).map(optionText):[];
+   if(dropdown&&(!choices.length||choices.length>80||new Set(choices.map(norm)).size!==choices.length||choices.some(c=>c.length>200))){if(isRequired(e))aiIssues.set(question,'The dropdown options could not be read unambiguously. Please choose this one yourself.');continue;}
    const result=await send('answer',{question,choices,answerFormat:e.type==='number'?'number':'text',maxLength:e.maxLength>0?e.maxLength:4000,fieldHelp:referencedText(e,'aria-describedby').slice(0,2000)}),state=await send('state');
    if(attempted||state.attempted||location.href!==url||!visible(e)||label(e)!==question||controlComplete(e,controls()))continue;
+   if(dropdown){const current=await dropdownChoices(e);if(JSON.stringify(current)!==JSON.stringify(choices)||!visible(e)||controlComplete(e,controls())||!choices.includes(result.answer?.trim()))continue;}
    if(typeof result.answer==='string'&&result.answer.trim()){
     packet.answers=packet.answers||{};Object.defineProperty(packet.answers,question,{value:result.answer.trim(),enumerable:true,configurable:true,writable:true});
-    packet.applicationOnlyQuestions=[...new Set([...(packet.applicationOnlyQuestions||[]),question])];aiIssues.delete(question);prepared++;
+    packet.applicationOnlyQuestions=[...new Set([...(packet.applicationOnlyQuestions||[]),question])];attemptedCustom.delete(e);aiIssues.delete(question);prepared++;
    }else if(isRequired(e))aiIssues.set(question,result.reason||'Save the missing fact in your profile.');
   }catch(error){if(isRequired(e))aiIssues.set(question,error.message);}
  }

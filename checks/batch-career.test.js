@@ -2,7 +2,7 @@ import {test,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,mkdtempSync} from 'node:fs';
 import {join} from 'node:path';
-import {supportRole,supportAssessment,salaryTarget,SUPPORT_INSTRUCTION} from '../support-career.js';
+import {supportRole,supportAssessment,salaryTarget,SUPPORT_INSTRUCTION,CANADA_SUPPORT_INSTRUCTION} from '../support-career.js';
 import {workEligibility} from '../work-eligibility.js';
 const root=process.env.APPLYPILOT_TEST_TMP||'data/test-tmp';mkdirSync(root,{recursive:true});process.env.DATABASE_PATH=join(mkdtempSync(join(root,'batch-')),'test.sqlite');
 const {db}=await import('../db.js');const {parseIntent,mergeProfileRoles}=await import('../discovery.js');
@@ -40,4 +40,14 @@ test('Canada requires incorporated engagement and salary comparisons disclose co
  assert(workEligibility({location:'Worldwide remote',description:'B2B contract for incorporated consultants'}, {incorporatedFromCanada:true}).eligible);
  assert(!workEligibility({location:'United States',description:'We can sponsor visas to Germany; for any other country, you need existing right to work.'}).eligible);
  const pay=[{currency:'USD',annualMin:90000,annualMax:100000}];assert(!salaryTarget(pay,120000,{}).eligible);const p=salaryTarget(pay,120000,{USD:1.35},'2026-10-05');assert(p.eligible);assert.equal(p.range.cadMin,121500);assert.equal(p.rateDate,'2026-10-05');
+});
+
+test('a Canada-only batch rejects old worldwide backlog and retains the search after reset',()=>{
+ db.prepare('UPDATE searches SET instruction=? WHERE user_id=? AND enabled=1').run(CANADA_SUPPORT_INSTRUCTION,'u');
+ db.exec("UPDATE application_batch_preferences SET current_batch='canada-only' WHERE user_id='u'");
+ const metadata={available:true,supportCareer:{strong:true},salaryTarget:{eligible:true,minimum:120000},eligibility:{eligible:true}};
+ job('old-global','saved','u',{...metadata,location:'London',description:'We offer visa sponsorship.'});
+ job('new-canada','saved','u',{...metadata,location:'Remote Canada',remote:true,description:'Incorporated contractors accepted.'});
+ const batch=populateBatch(db,'u');assert.deepEqual(batch.job_ids,['new-canada']);
+ resetSupportBatch(db,'u',{applicant_id:'p'});assert.equal(db.prepare("SELECT instruction FROM searches WHERE user_id='u' AND enabled=1").get().instruction,CANADA_SUPPORT_INSTRUCTION);
 });

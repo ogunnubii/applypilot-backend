@@ -7,6 +7,7 @@ import {installDrafts} from './answer-drafts.js';
 import {hasResearchDraftForQuestion,installResearch,markResearchDraftUsed} from './google-research.js';
 import {researchConsentWithdrawn} from './research-consent.js';
 import {automaticTextAnswer} from './automatic-answer.js';
+import {prepareHostedDropdown} from './dropdown-answer.js';
 import {supported as hostAllowed,employerPageIssue} from './local-policy.js';
 import {recoverWorkerJobs} from './local-state.js';
 import {Handoffs,serveHandoffs} from './handoff.js';
@@ -68,8 +69,11 @@ async function selections(page,p,j){
   const el=selects.nth(i),descriptor={...await fieldDescriptor(el),type:'select',populated:await el.evaluate(e=>!!e.value&&!e.selectedOptions?.[0]?.disabled&&!/^(?:select|choose)(?:\b|\.{3})/i.test(e.selectedOptions?.[0]?.textContent?.trim()||''))};if(descriptor.populated)continue;
   const q=descriptor.label||descriptor.ariaLabel||descriptor.name||descriptor.id;
   const options=await el.locator('option').evaluateAll(xs=>xs.map(x=>({label:x.textContent,value:x.value,disabled:x.disabled})));
-  const choice=hostedOptionChoice(descriptor,options,p,answers);
-  if(choice){if(!authorizeResearchFill(j,p,q))return false;await el.selectOption(choice.value);}
+  if(await el.evaluate(e=>e.multiple))continue;
+  const choice=await prepareHostedDropdown(db,j,p,descriptor,options,answers);
+  const current=await el.locator('option').evaluateAll(xs=>xs.map(x=>({label:x.textContent,value:x.value,disabled:x.disabled})));
+  const populated=await el.evaluate(e=>!!e.value&&!e.selectedOptions?.[0]?.disabled&&!/^(?:select|choose)\b/i.test(e.selectedOptions?.[0]?.textContent?.trim()||''));
+  if(choice&&!populated&&JSON.stringify(current)===JSON.stringify(options)){if(!authorizeResearchFill(j,p,q))return false;await el.selectOption(choice.value);if(choice.aiPrepared)await el.evaluate(e=>e.dataset.applypilotApplicationOnly='true');}
  }
  return true;
 }
@@ -99,17 +103,21 @@ async function customControls(page,p,j){
   const control=combos.nth(i),descriptor=await fieldDescriptor(control),question=descriptor.label||descriptor.ariaLabel||descriptor.description||descriptor.name||descriptor.id;
   const populated=await control.evaluate(e=>{const text=String(e.textContent||'').trim();return !!(e.value||e.getAttribute('aria-valuetext')||e.getAttribute('data-value')||e.getAttribute('aria-activedescendant')||(!e.matches('input')&&text&&!/^(?:select|choose)(?:\b|\.{3})/i.test(text)));}).catch(()=>false);if(populated)continue;
   if(!question||protectedHostedQuestion(question)){if(descriptor.required)unresolved.push(question||'Required selection');continue;}
-  const scopeIds=await control.evaluate(e=>[...new Set(`${e.getAttribute('aria-controls')||''} ${e.getAttribute('aria-owns')||''}`.trim().split(/\s+/).filter(Boolean))]);
+  let scopeIds=await control.evaluate(e=>[...new Set(`${e.getAttribute('aria-controls')||''} ${e.getAttribute('aria-owns')||''}`.trim().split(/\s+/).filter(Boolean))]);
   const marker=`combo-${i}-${Date.now()}`,optionLocator=page.locator('[role="option"]:visible');
   await optionLocator.evaluateAll((xs,value)=>xs.forEach(x=>x.setAttribute('data-applypilot-visible-before-combobox',value)),marker);
   const clicked=await control.click().then(()=>true,()=>false);
+  scopeIds=await control.evaluate(e=>[...new Set(`${e.getAttribute('aria-controls')||''} ${e.getAttribute('aria-owns')||''}`.trim().split(/\s+/).filter(Boolean))]);
   if(clicked)await page.waitForFunction(({ids,marker})=>{const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>1&&r.height>1&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0'};return [...document.querySelectorAll('[role="option"]')].some(option=>visible(option)&&(ids.some(id=>document.getElementById(id)?.contains(option))||(!ids.length&&option.getAttribute('data-applypilot-visible-before-combobox')!==marker)));},{ids:scopeIds,marker},{timeout:1200}).catch(()=>{});
   const rawOptions=await optionLocator.evaluateAll((xs,{ids,marker})=>{const groups=[];return xs.map((x,index)=>{const group=x.closest('[role="listbox"],[role="menu"],[role="tree"],[role="grid"]')||x.parentElement;let groupIndex=groups.indexOf(group);if(groupIndex<0){groups.push(group);groupIndex=groups.length-1;}return {index,label:(x.innerText||x.textContent||'').trim(),value:x.getAttribute('data-value')||x.getAttribute('value')||'',disabled:x.getAttribute('aria-disabled')==='true',scopeIds:ids.filter(id=>document.getElementById(id)?.contains(x)),newlyVisible:x.getAttribute('data-applypilot-visible-before-combobox')!==marker,group:String(groupIndex)};});},{ids:scopeIds,marker});
   const expanded=await control.getAttribute('aria-expanded')==='true',opened=clicked&&(expanded||rawOptions.some(option=>option.scopeIds.length||option.newlyVisible));
   const options=scopedHostedComboboxOptions(rawOptions,{scopeIds,opened});
-  const choice=hostedOptionChoice(descriptor,options,p,answers);
+  const choice=await prepareHostedDropdown(db,j,p,descriptor,options.map(o=>({...o,value:o.value||undefined})),answers);
+  const currentOptions=await optionLocator.evaluateAll(xs=>xs.map((x,index)=>({index,label:(x.innerText||x.textContent||'').trim(),disabled:x.getAttribute('aria-disabled')==='true'})));
+  const optionsChanged=options.some(o=>!currentOptions.some(c=>c.index===o.index&&c.label===o.label&&c.disabled===o.disabled));
+  const nowPopulated=await control.evaluate(e=>!!(e.getAttribute('aria-valuetext')||e.getAttribute('data-value')||e.matches('input')&&e.value||!e.matches('input')&&e.textContent?.trim()&&!/^(?:select|choose)\b/i.test(e.textContent.trim())));
   await page.locator('[data-applypilot-visible-before-combobox]').evaluateAll(xs=>xs.forEach(x=>x.removeAttribute('data-applypilot-visible-before-combobox'))).catch(()=>{});
-  if(choice){if(!authorizeResearchFill(j,p,question))return {unresolved,withdrawn:true};await optionLocator.nth(choice.index).click();}
+  if(choice&&!optionsChanged&&!nowPopulated){if(!authorizeResearchFill(j,p,question))return {unresolved,withdrawn:true};await optionLocator.nth(choice.index).click();if(choice.aiPrepared)await control.evaluate(e=>e.dataset.applypilotApplicationOnly='true');}
   else {await control.press('Escape').catch(()=>{});if(descriptor.required)unresolved.push(question);}
  }
  const groups=page.locator('[role="radiogroup"]:visible');

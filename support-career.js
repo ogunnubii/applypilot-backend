@@ -1,6 +1,12 @@
 // Search preferences, never claims about the applicant's experience.
 export const SUPPORT_INSTRUCTION='Support career pathway: AI support engineer, technical support engineer, cloud support engineer, developer support engineer, product support engineer, technical account manager, implementation consultant; eligibility: worldwide sponsorship, remote from Canada, or B2B; Canada incorporated contracts only';
 export const supportIntent=value=>/^Support career pathway:/i.test(String(value||''));
+export const CANADA_SUPPORT_INSTRUCTION=SUPPORT_INSTRUCTION.split(';')[0]+'; remote Canada only; eligibility: incorporated / C2C / B2B contracts only';
+export const remoteCanadaIntent=value=>/;\s*remote Canada only\s*(?:;|$)/i.test(String(value||''));
+export function supportSearchInstruction(db,userId,applicantId){
+ const rows=db.prepare('SELECT instruction FROM searches WHERE user_id=? AND applicant_id=? AND enabled=1 ORDER BY created_at DESC').all(userId,applicantId);
+ return rows.map(r=>r.instruction).find(supportIntent)||SUPPORT_INSTRUCTION;
+}
 export function supportRole(title){
  const s=String(title||'');
  if(/\b(?:staff|principal|head|director|vp|lead|manager of|intern|internship|sales|hardware|field service)\b/i.test(s))return false;

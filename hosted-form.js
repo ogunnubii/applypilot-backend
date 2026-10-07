@@ -3,8 +3,8 @@ import {fieldKind,knownAnswer,normalize,optionMatches,savedAnswer,sensitive} fro
 // Hosted automation is deliberately narrower than the answer library. These
 // are stable contact/profile facts; employment eligibility, compensation and
 // voluntary self-identification always remain human decisions.
-const PROFILE_KINDS=new Set(['name','first','last','email','phone','location','city','region','country','postal','linkedin','github','school','degree','discipline']);
-const CANONICAL={name:'Full name',first:'First name',last:'Last name',email:'Email address',phone:'Phone number',location:'Current location',city:'City',region:'Province / State',country:'Country',postal:'Postal code',linkedin:'LinkedIn',github:'GitHub',school:'School',degree:'Degree',discipline:'Field of study'};
+const PROFILE_KINDS=new Set(['name','first','last','email','phone','location','city','region','country','postal','linkedin','github','website','school','degree','discipline']);
+const CANONICAL={name:'Full name',first:'First name',last:'Last name',email:'Email address',phone:'Phone number',location:'Current location',city:'City',region:'Province / State',country:'Country',postal:'Postal code',linkedin:'LinkedIn',github:'GitHub',website:'Website',school:'School',degree:'Degree',discipline:'Field of study'};
 const AUTOCOMPLETE={name:'name','given-name':'first','family-name':'last',email:'email',tel:'phone','address-level2':'city','address-level1':'region','postal-code':'postal','country-name':'country'};
 
 function policyText(value){return String(value||'').normalize('NFKC').replace(/([a-z\d])([A-Z])/g,'$1 $2').replace(/[_/.*?\u2731:()-]+/g,' ').replace(/\s+/g,' ').trim();}

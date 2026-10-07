@@ -42,12 +42,15 @@
    location:['location','current location'],city:['location city','city','current city','city of residence','town','town city','city town'],country:['country','country of residence','current country','residence country'],
    region:['state','province','state province','province state'],postal:['postal code','zip code','zip postal code'],
    linkedin:['linkedin','linkedin profile','linkedin url','linkedin profile url'],github:['github','github profile','github url','github profile url'],
+   website:['website','website url','personal website','personal website url','portfolio','portfolio url','portfolio website','portfolio website url','website portfolio','website or portfolio','personal site','personal site url'],
    school:['school','university','college university','school name','university name'],degree:['degree','degree type'],discipline:['discipline','field of study','major']
   };
   function fieldKind(question){const q=normalize(question).replace(/[():/_-]/g,' ').replace(/\b(optional|required)\b/g,'').replace(/\s+/g,' ').trim();const direct=Object.keys(aliases).find(k=>aliases[k].includes(q));if(direct)return direct;
     // Anchored wording variants only: no fuzzy matching or employer/third-party URLs.
     const prompted=q.replace(/^(?:please\s+)?(?:provide|enter|share|list)\s+(?:a\s+)?(?:link\s+to\s+)?(?:your\s+)?/,'').replace(/^(?:what is|what's)\s+your\s+/,'');
-    const social=prompted.replace(/\s+(?:profile\s+)?(?:url|link)$/,'').replace(/\s+profile$/,'').replace(/\s+below$/,'').trim();
+    const personal=prompted.replace(/^your\s+/,'').replace(/\s+below$/,'').replace(/\s+link$/,'').trim();
+    if(aliases.website.includes(personal))return 'website';
+    const social=personal.replace(/\s+(?:profile\s+)?(?:url|link)$/,'').replace(/\s+profile$/,'').trim();
     if(['linkedin','github'].includes(social))return social;
     if(/^(?:please\s+)?(?:enter|provide|share)\s+your\s+/.test(q)||/^(?:what is|what's)\s+your\s+/.test(q)){
       return ['name','first','last','email','phone','city','country','region','postal'].find(k=>aliases[k].includes(prompted));
@@ -65,7 +68,7 @@
    const values=[...new Set(Object.keys(answers||{}).filter(k=>fieldKind(k)===kind&&!sensitive(k)).map(k=>String(answers[k]).trim()).filter(Boolean))];
    if(values.length>1)return null;if(values.length===1)return values[0];
    const p=profile||{},parts=String(p.location||'').split(',').map(x=>x.trim()),name=String(p.name||'').trim();
-   const direct={name,first:name.split(/\s+/)[0],last:name.split(/\s+/).slice(1).join(' '),email:p.email,phone:p.phone,location:p.location,city:p.city||(parts.length===3?parts[0]:null),country:p.country||(parts.length===3?parts[2]:null),region:p.region||(parts.length===3?parts[1]:null),postal:p.postal,linkedin:p.linkedin,github:p.github};
+   const direct={name,first:name.split(/\s+/)[0],last:name.split(/\s+/).slice(1).join(' '),email:p.email,phone:p.phone,location:p.location,city:p.city||(parts.length===3?parts[0]:null),country:p.country||(parts.length===3?parts[2]:null),region:p.region||(parts.length===3?parts[1]:null),postal:p.postal,linkedin:p.linkedin,github:p.github,website:p.website};
    return direct[kind]||null;
   }
   function optionMatches(question,option,answer,profile){

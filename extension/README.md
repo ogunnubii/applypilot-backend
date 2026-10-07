@@ -1,4 +1,4 @@
-Version 0.6.25 adds Add job links to open the bulk-link funnel, plus automatic popup refresh. The server checks batches and queues verified worldwide technology roles. Final Submit remains manual.
+Version 0.6.26 fills supported personal website prompts from your saved Website / portfolio, with separate LinkedIn and GitHub values. The server checks batches and queues verified worldwide technology roles. Final Submit remains manual.
 
 Version 0.6.22 adds Mark completed beside each unfinished application. It records your submission, removes local retry work and updates Completed without inventing an employer receipt. Completed and Confirmed are separate totals. Reload the existing extension to retain its records.
 
@@ -55,3 +55,7 @@ Single-application mode (0.6.25): enable Start autonomous application on the das
 
 ## 0.6.25
 Support-career batches of up to 20, per-question autosave with durable retry, and automatic reuse of completed factual answers. The helper panel no longer needs Save answers or Fill available answers controls. Batch mode prepares forms and leaves final Submit with the applicant.
+
+## 0.6.26
+
+Saved Website / portfolio facts now fill supported website prompts. LinkedIn and GitHub wording variants include Your profile and profile-link prompts. Each uses its own saved value; company and other people's links are not inferred. Final Submit behavior is unchanged.

@@ -33,7 +33,10 @@ test('real API autosaves drafts, learns completed factual answers, resumes once 
   const searchScope={roles:['Cloud Support Engineer'],localPlaces:['ontario'],remotePlaces:['canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true};
   const search=await api('/searches','POST',{applicant_id:'p',instruction:'Structured roles',scope:searchScope});assert.equal(search.status,201);
   const beforeTransition=JSON.stringify(db.prepare('SELECT * FROM jobs ORDER BY id').all());
+  const beforeState=await api('/saved-search-queue?applicant_id=p');assert.equal(beforeState.status,200);assert.equal(beforeState.data.mode,'legacy');assert.equal(beforeState.data.batch_enabled,true);assert.equal((await api('/saved-search-queue?applicant_id=other-owner')).status,409);
+
   const switched=await api('/application-batch','POST',{action:'saved-search',applicant_id:'p'});assert.equal(switched.status,200,JSON.stringify(switched));assert.equal(switched.data.focus.auto_submit,false);assert.equal(switched.data.focus.enabled,false);assert.equal(switched.data.focus.job_id,null);assert.equal(switched.data.focus.search_queue_only,true);assert.equal(JSON.stringify(db.prepare('SELECT * FROM jobs ORDER BY id').all()),beforeTransition);
+  const readback=await api('/saved-search-queue?applicant_id=p');assert.equal(readback.status,200);assert.equal(readback.data.mode,'saved-search');assert.equal(readback.data.paused,true);assert.equal(readback.data.batch_enabled,false);
   assert.equal((await api('/application-batch')).data.enabled,false);assert.equal(db.prepare('SELECT enabled FROM searches WHERE id=?').get(search.data.id).enabled,1);
   const rejectedLegacy=await api('/work-focus','PUT',{enabled:true,auto_submit:false});assert.equal(rejectedLegacy.status,200);assert.equal(rejectedLegacy.data.job_id,null,'legacy batch match needs a fresh current-scope discovery check');
 

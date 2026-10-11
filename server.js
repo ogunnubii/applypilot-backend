@@ -4,7 +4,7 @@ import {servePublicSite} from './public-site.js';
 import {populateBatch,batchSnapshot,resetSupportBatch,nextBatch,inActiveBatch,batchPreferences} from './application-batches.js';
 import {canCapture} from './answer-library.js';
 import {submissionDeclaration} from './local-policy.js';
-import {ensureFocusedJob,focusSnapshot,setWorkFocus,useSavedSearchQueue,savedSearchClaimProblem,focusAllowsSubmit,saveFormProgress,reserveAutonomousAttempt} from './single-application.js';
+import {ensureFocusedJob,focusSnapshot,setWorkFocus,useSavedSearchQueue,savedSearchQueueState,savedSearchClaimProblem,focusAllowsSubmit,saveFormProgress,reserveAutonomousAttempt} from './single-application.js';
 import {installFunnel,createFunnelBatch,funnelStatus,retryFunnelItem,processFunnel,enableWorldwideDiscovery} from './job-funnel.js';
 import {loadManualApplication} from './manual-applications.js';
 import {experienceFor,saveExperience,deleteExperience} from './experience-library.js';
@@ -96,7 +96,7 @@ if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
 }
 if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.28.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-receipt-phase-guard',extensionVersion:'0.6.28',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-queue-state-readback',extensionVersion:'0.6.28',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -150,6 +150,7 @@ if(path==='/api/saved-answer-recovery'&&req.method==='GET')return send(res,200,s
 if(path==='/api/answer-library'&&req.method==='GET')return send(res,200,{answers:db.prepare('SELECT a.*,j.company,j.title FROM answer_history a JOIN jobs j ON j.id=a.job_id WHERE a.user_id=? ORDER BY a.updated_at DESC LIMIT 500').all(uid).map(a=>({...a,canReuse:canReuse(a.question)}))});
 const libraryRoute=path.match(/^\/api\/answer-library\/([a-f0-9-]+)$/);
 if(libraryRoute&&['PUT','DELETE'].includes(req.method)){try{if(req.method==='DELETE')deleteLibrary(db,uid,libraryRoute[1]);else{const x=JSON.parse(await body(req));updateLibrary(db,uid,libraryRoute[1],x.answer,x.reuse===true);}return send(res,200,{ok:true});}catch(e){return send(res,400,{error:e.message});}}
+if(path==='/api/saved-search-queue'&&req.method==='GET'){try{return send(res,200,savedSearchQueueState(db,uid,{applicant_id:new URL(req.url,'http://localhost').searchParams.get('applicant_id')||undefined}));}catch(e){return send(res,409,{error:e.message||'Could not read saved search queue state'});}}
 if(path==='/api/application-batch'&&['GET','POST'].includes(req.method)){try{if(req.method==='GET')return send(res,200,populateBatch(db,uid)||{enabled:false});const x=JSON.parse(await body(req));if(x.action==='saved-search')return send(res,200,useSavedSearchQueue(db,uid,x));if(x.action==='next')return send(res,200,nextBatch(db,uid));if(x.action!=='reset')throw Error('Choose reset or next batch');const result=resetSupportBatch(db,uid,x);return send(res,200,result);}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/work-focus'&&['GET','PUT'].includes(req.method)){try{return send(res,200,req.method==='PUT'?setWorkFocus(db,uid,JSON.parse(await body(req))):ensureFocusedJob(db,uid));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/chat'&&req.method==='POST')return send(res,200,await chat(uid,JSON.parse(await body(req))));

@@ -26,6 +26,15 @@ export function inFlightApplication(db,userId,exceptId=''){
  const candidates=db.prepare("SELECT * FROM jobs WHERE user_id=? AND id!=? AND (status='running' OR local_phase='verifying' OR challenge='Submission in progress')").all(userId,exceptId);
  return candidates.find(job=>job.status==='running'||job.challenge==='Submission in progress'||!['submitted','interview','rejected','offer'].includes(job.status)||!receiptConfirmed(db,job));
 }
+// Read-only reconciliation for a lost transition response. Never selects a job,
+// populates a batch, changes authorization, or reveals another account's data.
+export function savedSearchQueueState(db,userId,{applicant_id}={}){
+ const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(userId),batch=db.prepare('SELECT * FROM application_batch_preferences WHERE user_id=?').get(userId);
+ const applicantId=applicant_id||focus?.queue_applicant_id||batch?.applicant_id||null;
+ if(applicantId&&!db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(applicantId,userId))throw Error('Choose your saved applicant profile.');
+ const blocker=inFlightApplication(db,userId);
+ return {mode:focus?.search_queue_only?'saved-search':'legacy',applicant_id:focus?.queue_applicant_id||null,checked_applicant_id:applicantId,batch_enabled:!!batch?.enabled,focus_enabled:!!focus?.enabled,auto_submit:!!focus?.auto_submit,paused:!focus?.enabled&&!focus?.auto_submit,active_structured_search:!!(applicantId&&currentSearchScope(db,{user_id:userId,applicant_id:applicantId})),blocker:blocker?{id:blocker.id,title:blocker.title,company:blocker.company,status:blocker.status,phase:blocker.local_phase||null,reason:blocker.status==='running'?'Application preparation is running':blocker.challenge==='Submission in progress'?'Submission is in progress':'A submission is still marked as awaiting verification; no employer receipt is confirmed'}:null};
+}
 export function useSavedSearchQueue(db,userId,{applicant_id}={}){
  const profile=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(applicant_id,userId);
  if(!profile)throw Error('Choose your saved applicant profile.');

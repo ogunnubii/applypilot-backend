@@ -45,7 +45,12 @@ window.addEventListener('storage',e=>{if(e.key==='applypilot-signout'){sessionSt
 function rememberOption(form){const label=document.createElement('label'),box=document.createElement('input');box.type='checkbox';box.name='remember';box.style.cssText='width:auto;display:inline;margin-right:8px';label.style.cssText='display:block;margin:12px 0';label.append(box,document.createTextNode('Keep me signed in on this computer for up to 30 days'));form.insertBefore(label,form.querySelector('button'));return box;}
 const $=s=>document.querySelector(s);let activeBatch={},activeFocus={},token=restoreSession(),busy=false,lastSignature='',pendingHandoff=null,externalRecords=[],overviewSignature='',readyAutoOpened=new Set();
 const el=(tag,text)=>{const e=document.createElement(tag);if(text)e.textContent=text;return e};
-async function api(path,method='GET',data){const r=await fetch(((location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pages.dev'))?'https://marvelous-vitality-production-c2d8.up.railway.app':'')+'/api'+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});const d=await r.json();if(!r.ok){const error=Error(d.error||'Request failed');error.status=r.status;throw error;}return d}
+async function api(path,method='GET',data){
+ const r=await fetch(((location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pages.dev'))?'https://marvelous-vitality-production-c2d8.up.railway.app':'')+'/api'+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});
+ const request=method+' /api'+path.split('?')[0];let d;
+ try{d=await r.json()}catch{const error=Error('Invalid server response (HTTP '+r.status+', '+request+').');error.status=r.status;throw error;}
+ if(!r.ok){const error=Error(typeof d?.error==='string'&&d.error.trim()?d.error:'Request failed (HTTP '+r.status+', '+request+').');error.status=r.status;throw error;}return d;
+}
 function field(form,label){const l=el('label',label),i=el('textarea');i.required=true;i.maxLength=4000;l.append(i);form.append(l);return i}
 function chatQuestionTools(parent,question,job,input,researchJobs=[job]){
  const disclosure=el('details');disclosure.className='answer-tools';disclosure.append(el('summary','Help draft an answer'));const tools=el('div');tools.className='chat-question-tools';tools.style.cssText='margin:8px 0 16px';
@@ -470,8 +475,17 @@ function renderBatchControl(batch={}){
  }
  const useSaved=el('button','Use saved search queue');useSaved.type='button';const savedNote=el('p','Leaves the support-only batch, pauses automation and clears its selection. Existing attempts, receipts and searches stay intact. Only fresh untouched matches from an enabled structured search can be selected after you reenable automation.');
  const savedLabel=el('label','Saved-search applicant profile '),savedSelect=el('select');savedSelect.setAttribute('aria-label','Saved-search applicant profile');savedLabel.append(savedSelect);useSaved.disabled=true;box.append(savedNote,savedLabel,useSaved);
- api('/applicants').then(data=>{for(const profile of data.applicants||[]){const option=el('option',profile.name);option.value=profile.id;savedSelect.append(option);}useSaved.disabled=!savedSelect.value;}).catch(e=>$('#notice').textContent=e.message);
- useSaved.onclick=async()=>{useSaved.disabled=true;try{const result=await api('/application-batch','POST',{action:'saved-search',applicant_id:savedSelect.value});$('#notice').textContent=result.message;await refresh(true);}catch(e){$('#notice').textContent=e.message;useSaved.disabled=false;}};
+ const queueStatus=el('p'),checkQueue=el('button','Check saved queue status');checkQueue.type='button';queueStatus.setAttribute('role','status');box.append(queueStatus,checkQueue);
+ const readQueue=async()=>{const state=await api('/saved-search-queue?applicant_id='+encodeURIComponent(savedSelect.value));if(!state||!['saved-search','legacy'].includes(state.mode)||typeof state.batch_enabled!=='boolean'||typeof state.paused!=='boolean')throw Error('Saved queue state response was incomplete');const switched=state.mode==='saved-search'&&!state.batch_enabled&&state.applicant_id===savedSelect.value;queueStatus.textContent=switched?'Saved search queue is active. '+(state.paused?'Automation is paused.':'Automation is enabled; review the Application automation control.'):'Support batch / legacy queue is still active. '+(state.active_structured_search?'Your structured search is saved.':'Save and enable a structured search for this profile first.');if(state.blocker)queueStatus.textContent+=' '+state.blocker.title+' at '+state.blocker.company+': '+state.blocker.reason+'.';return {state,switched};};
+ checkQueue.onclick=async()=>{checkQueue.disabled=true;try{await readQueue();useSaved.disabled=!savedSelect.value;}catch(e){queueStatus.textContent='Could not verify saved queue state: '+e.message;}finally{checkQueue.disabled=false;}};
+ savedSelect.onchange=()=>checkQueue.onclick();
+ api('/applicants').then(async data=>{for(const profile of data.applicants||[]){const option=el('option',profile.name);option.value=profile.id;savedSelect.append(option);}if(savedSelect.value){await readQueue();useSaved.disabled=false;}}).catch(e=>queueStatus.textContent='Could not verify saved queue state: '+e.message);
+ useSaved.onclick=async()=>{if(useSaved.disabled)return;useSaved.disabled=true;checkQueue.disabled=true;let mutationError=null;
+  try{await api('/application-batch','POST',{action:'saved-search',applicant_id:savedSelect.value});}catch(e){mutationError=e;}
+  try{const {switched}=await readQueue();if(switched){$('#notice').textContent=queueStatus.textContent;try{await refresh(true);}catch(e){$('#notice').textContent=queueStatus.textContent+' Dashboard refresh failed: '+e.message;}}else{$('#notice').textContent=(mutationError?'Queue transition failed: '+mutationError.message+'. ':'Queue transition was not confirmed. ')+queueStatus.textContent;useSaved.disabled=false;}}
+  catch(e){$('#notice').textContent=(mutationError?'Transition response: '+mutationError.message+'. ':'')+'Could not verify whether the queue changed: '+e.message+'. Use Check saved queue status before trying the transition again.';}
+  finally{checkQueue.disabled=false;}
+ };
  if(!location.search.includes('view=settings'))return;
  const details=el('details'),form=el('form'),message=el('p');message.setAttribute('role','status');details.append(el('summary','Replace queue and start a fresh batch'));
  const label=el('label','Applicant profile '),select=el('select');select.setAttribute('aria-label','Batch applicant profile');label.append(select);form.append(label);

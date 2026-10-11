@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {installBatches} from '../application-batches.js';
-import {installSingleApplication,inFlightApplication,receiptConfirmed,useSavedSearchQueue,setWorkFocus,focusSnapshot,savedSearchClaimProblem,reserveAutonomousAttempt} from '../single-application.js';
+import {installSingleApplication,inFlightApplication,receiptConfirmed,useSavedSearchQueue,savedSearchQueueState,setWorkFocus,focusSnapshot,savedSearchClaimProblem,reserveAutonomousAttempt} from '../single-application.js';
 import {normalizeSearchScope,scopeIntent} from '../search-scope.js';
 import {jobIntelligence} from '../job-intelligence.js';
 const scope=normalizeSearchScope({roles:['Platform Engineer'],localPlaces:['ontario'],remotePlaces:['canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true});
@@ -36,7 +36,7 @@ test('both dashboards expose the explicit transition and retain receipt-pending 
  for(const client of ['assistant-client.js','web/progress.js']){
   const source=readFileSync(new URL('../'+client,import.meta.url),'utf8');
   const dom=new JSDOM('<div id="home-summary"></div><p id="notice"></p>',{url:'https://example.test/?view=settings',runScripts:'outside-only'}),w=dom.window,calls=[];
-  w.$=s=>w.document.querySelector(s);w.el=(tag,text)=>{const el=w.document.createElement(tag);if(text)el.textContent=text;return el;};w.field=(form,label)=>{const x=w.document.createElement('input');form.append(x);return x;};w.refresh=async()=>{};w.api=async(path,method,data)=>{calls.push({path,method,data});return path==='/applicants'?{applicants:[{id:'p',name:'Fixture'}]}:{message:'Saved search queue selected. Automation is paused.'};};
+  w.$=s=>w.document.querySelector(s);w.el=(tag,text)=>{const el=w.document.createElement(tag);if(text)el.textContent=text;return el;};w.field=(form,label)=>{const x=w.document.createElement('input');form.append(x);return x;};w.refresh=async()=>{};let switched=false;w.api=async(path,method,data)=>{calls.push({path,method,data});if(path==='/applicants')return {applicants:[{id:'p',name:'Fixture'}]};if(path==='/application-batch'){switched=true;return {message:'Saved search queue selected. Automation is paused.'};}return {mode:switched?'saved-search':'legacy',batch_enabled:!switched,applicant_id:switched?'p':null,paused:true,active_structured_search:true};};
   w.eval(source.slice(source.indexOf('function renderBatchControl('),source.indexOf('function automaticSubmissionEnabled')));w.renderBatchControl({enabled:true,selected:20,completed:11});await new Promise(r=>setTimeout(r,0));
   const button=[...w.document.querySelectorAll('button')].find(x=>x.textContent==='Use saved search queue');assert(button);await button.onclick();assert.deepEqual(JSON.parse(JSON.stringify(calls.find(x=>x.path==='/application-batch').data)),{action:'saved-search',applicant_id:'p'});assert.match(w.document.querySelector('#notice').textContent,/paused/);assert(source.includes("activeFocus.search_queue_only&&(state==='awaiting'||card.dataset.confirmed==='true')"));dom.window.close();
  }
@@ -59,4 +59,14 @@ test('residual phase exemptions require genuine receipt evidence and never mask 
  db.exec("UPDATE jobs SET status='submitted',challenge='Submission in progress' WHERE id='live'");assert.equal(inFlightApplication(db,'u').id,'live');
  db.exec("UPDATE jobs SET status='needs_review',challenge='Unconfirmed submission',local_phase='verifying' WHERE id='live'");assert.equal(inFlightApplication(db,'u').id,'live','nonterminal uncertain verifying remains protected');
  db.close();
+});
+
+test('legacy focus migration preserves records and readback is strictly read-only and owner-scoped',()=>{
+ const {db,add}=fixture();db.exec('ALTER TABLE work_focus DROP COLUMN search_queue_only; ALTER TABLE work_focus DROP COLUMN queue_applicant_id');
+ const before=JSON.stringify({jobs:db.prepare('SELECT * FROM jobs').all(),members:db.prepare('SELECT * FROM application_batch_members').all(),searches:db.prepare('SELECT * FROM searches').all()});installSingleApplication(db);installSingleApplication(db);
+ assert.equal(JSON.stringify({jobs:db.prepare('SELECT * FROM jobs').all(),members:db.prepare('SELECT * FROM application_batch_members').all(),searches:db.prepare('SELECT * FROM searches').all()}),before);
+ add('foreign-live',{user_id:'u2',applicant_id:'p2',status:'running'});add('own-live',{status:'running'});
+ const dbBefore=JSON.stringify(db.prepare("SELECT * FROM work_focus ORDER BY user_id").all()),changes=db.prepare('SELECT total_changes() n').get().n;
+ const state=savedSearchQueueState(db,'u',{applicant_id:'p'});assert.equal(state.mode,'legacy');assert.equal(state.blocker.id,'own-live');assert.equal(state.blocker.title,'Platform Engineer');assert.equal(state.active_structured_search,true);assert(!JSON.stringify(state).includes('foreign-live'));assert(!JSON.stringify(state).includes('fixture@example.test'));assert.equal(db.prepare('SELECT total_changes() n').get().n,changes);assert.equal(JSON.stringify(db.prepare('SELECT * FROM work_focus ORDER BY user_id').all()),dbBefore);
+ assert.throws(()=>savedSearchQueueState(db,'u',{applicant_id:'p2'}),/saved applicant/);db.exec("DELETE FROM jobs WHERE id='own-live'");useSavedSearchQueue(db,'u',{applicant_id:'p'});const applied=savedSearchQueueState(db,'u',{applicant_id:'p'});assert.equal(applied.mode,'saved-search');assert.equal(applied.batch_enabled,false);assert.equal(applied.paused,true);db.close();
 });

@@ -5,7 +5,7 @@ import {servePublicSite} from './public-site.js';
 import {populateBatch,batchSnapshot,resetSupportBatch,nextBatch,inActiveBatch,batchPreferences} from './application-batches.js';
 import {canCapture} from './answer-library.js';
 import {submissionDeclaration} from './local-policy.js';
-import {ensureFocusedJob,focusSnapshot,setWorkFocus,useSavedSearchQueue,savedSearchQueueState,savedSearchClaimProblem,focusAllowsSubmit,saveFormProgress,reserveAutonomousAttempt} from './single-application.js';
+import {ensureFocusedJob,focusSnapshot,setWorkFocus,startOneApplication,useSavedSearchQueue,savedSearchQueueState,savedSearchClaimProblem,focusAllowsSubmit,saveFormProgress,reserveAutonomousAttempt} from './single-application.js';
 import {installFunnel,createFunnelBatch,funnelStatus,retryFunnelItem,processFunnel,enableWorldwideDiscovery} from './job-funnel.js';
 import {loadManualApplication} from './manual-applications.js';
 import {experienceFor,saveExperience,deleteExperience} from './experience-library.js';
@@ -97,7 +97,7 @@ if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
 }
 if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.29.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-queue-preflight',extensionVersion:'0.6.29',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-single-job-run',extensionVersion:'0.6.29',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -155,6 +155,7 @@ const unresolvedRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/park-unresolved$/)
 if(unresolvedRoute&&['GET','POST'].includes(req.method)){try{if(req.method==='GET')return send(res,200,unresolvedAttemptState(db,uid,unresolvedRoute[1]));const input=JSON.parse(await body(req));return send(res,200,parkUnresolvedAttempt(db,uid,unresolvedRoute[1],input.evidence));}catch(e){return send(res,e.message==='Application not found.'?404:409,{error:e.message});}}
 if(path==='/api/saved-search-queue'&&req.method==='GET'){try{return send(res,200,savedSearchQueueState(db,uid,{applicant_id:new URL(req.url,'http://localhost').searchParams.get('applicant_id')||undefined}));}catch(e){return send(res,409,{error:e.message||'Could not read saved search queue state'});}}
 if(path==='/api/application-batch'&&['GET','POST'].includes(req.method)){try{if(req.method==='GET')return send(res,200,populateBatch(db,uid)||{enabled:false});const x=JSON.parse(await body(req));if(x.action==='saved-search')return send(res,200,useSavedSearchQueue(db,uid,x));if(x.action==='next')return send(res,200,nextBatch(db,uid));if(x.action!=='reset')throw Error('Choose reset or next batch');const result=resetSupportBatch(db,uid,x);return send(res,200,result);}catch(e){return send(res,409,{error:e.message});}}
+if(path==='/api/work-focus/start-one'&&req.method==='POST'){try{const input=JSON.parse(await body(req));return send(res,200,startOneApplication(db,uid,input.job_id));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/work-focus'&&['GET','PUT'].includes(req.method)){try{return send(res,200,req.method==='PUT'?setWorkFocus(db,uid,JSON.parse(await body(req))):ensureFocusedJob(db,uid));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/chat'&&req.method==='POST')return send(res,200,await chat(uid,JSON.parse(await body(req))));
 if(path==='/api/status'&&req.method==='GET'){const heartbeat=db.prepare('SELECT heartbeat FROM worker_status WHERE id=1').get()?.heartbeat;return send(res,200,{workerOnline:!!heartbeat&&Date.now()-Date.parse(heartbeat)<45000,heartbeat:heartbeat||null,queue:db.prepare("SELECT status,COUNT(*) AS count FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived') GROUP BY status").all(uid)});}

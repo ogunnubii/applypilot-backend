@@ -41,6 +41,9 @@ export async function draftForJob(db,uid,id,question,options={}){
  if(typeof question!=='string'||!canDraft(question))throw Error('This question needs your own answer or employer verification.');
  const env=options.env||process.env;
  if(!(profile.gemini_facts_consent&&env.GEMINI_API_KEY)&&!(profile.ai_consent&&env.OPENAI_API_KEY&&env.OPENAI_MODEL))throw Error('AI drafting is not connected for the provider enabled in your profile.');
+ // Unsupported personal fields never call Gemini and must not consume its
+ // daily drafting budget or trigger resume/job-page retrieval.
+ if(profile.gemini_facts_consent&&env.GEMINI_API_KEY&&!canDraftProfessional(question))return {answer:'',reason:'This needs a saved personal answer or your own review.',sources:[],provider:'gemini',requiresReview:true};
  const answers=await resumeFacts(profile,reusableAnswers(db,profile)),experience=experienceFor(db,uid,profile.id),jobContext=await (options.context||draftJobContext)(job);
  const latest=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(profile.id,uid);
  if(!latest||latest.gemini_facts_consent!==profile.gemini_facts_consent||latest.ai_consent!==profile.ai_consent)throw Error('Answer drafting consent changed while preparing this answer.');

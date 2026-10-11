@@ -42,6 +42,13 @@ function fixture(){const db=new DatabaseSync(':memory:');db.exec(`PRAGMA foreign
  CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,title TEXT,company TEXT,url TEXT);
  INSERT INTO applicants VALUES('p','u','{"Professional background":"I build Kubernetes platforms and maintain CI pipelines."}',1,0,NULL),('other','v','{}',1,0,NULL);
  INSERT INTO jobs VALUES('j','u','p','Platform Engineer','Example','https://example.test/job');`);installLibrary(db);installDrafts(db);return db;}
+
+test('unsupported personal fields do not use drafting quota or make provider and context requests',async()=>{
+ const db=fixture();try{
+  const options={env:{GEMINI_API_KEY:'test'},context:async()=>{throw Error('Must not retrieve a job page');},fetchImpl:async()=>{throw Error('Must not call provider');}};
+  const result=await draftForJob(db,'u','j','Twitter / X profile',options);assert.equal(result.answer,'');assert.match(result.reason,/saved personal answer/);assert.equal(db.prepare('SELECT COUNT(*) n FROM draft_usage').get().n,0);
+ }finally{db.close();}
+});
 test('experience requires approval, enforces ownership and only uses the selected applicant',()=>{
  const db=fixture();try{const input={title:'Incident response',details:'I correlated ingress logs and restored the service.',approved:true};assert.throws(()=>saveExperience(db,'v','p',input),/Profile/);assert.throws(()=>saveExperience(db,'u','p',{...input,approved:false}),/Confirm/);const {id}=saveExperience(db,'u','p',input);assert.equal(experienceFor(db,'v','p').length,0);assert.equal(experienceFor(db,'u','p').length,1);assert.throws(()=>deleteExperience(db,'v','p',id));deleteExperience(db,'u','p',id);assert.equal(experienceFor(db,'u','p').length,0);}finally{db.close();}
 });

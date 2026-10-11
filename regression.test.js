@@ -163,13 +163,13 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   db.prepare("INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,challenge,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'needs_review','Unconfirmed submission',?,?)").run(id,'u','a','SRE','Example','https://jobs.lever.co/example/def','https://jobs.lever.co/example/def',now(),now());
   assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers,body:'{}'})).status,409);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/handoff/open',{method:'POST',headers,body:'{}'})).status,409);
-  assert.equal((await fetch(base+'/api/jobs/'+id+'/handoff/view',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/handoff/view',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('u2')},body:'{}'})).status,404);
   const save=await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers,body:JSON.stringify({question:'Why this role?',answer:'I enjoy infrastructure operations.',remember:true})});assert.equal(save.status,200);assert.equal(JSON.parse(db.prepare('SELECT answers_json FROM applicants WHERE id=?').get('a').answers_json)['Why this role?'],undefined);
   assert.equal((await (await fetch(base+'/api/jobs/'+id+'/answers',{headers})).json()).answers['Why this role?'],'I enjoy infrastructure operations.');
-  assert.equal((await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/answers',{method:'PUT',headers:{...headers,Authorization:'Bearer '+issueToken('u2')},body:'{}'})).status,404);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers,body:JSON.stringify({answers:{Question:'Answer'}})})).status,409);
   db.prepare("UPDATE jobs SET status='needs_review',challenge='Missing answers' WHERE id=?").run(id);
-  assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:JSON.stringify({answers:{Question:'Answer'}})})).status,404);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('u2')},body:JSON.stringify({answers:{Question:'Answer'}})})).status,404);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers,body:JSON.stringify({answers:{Question:'Answer'}})})).status,200);
   const continued=db.prepare('SELECT status,answers_json FROM jobs WHERE id=?').get(id);assert.equal(continued.status,'queued');assert.equal(JSON.parse(continued.answers_json).Question,'Answer');
   assert.equal((await fetch(base+'/api/jobs/'+id+'/continue',{method:'POST',headers,body:JSON.stringify({answers:{Question:'Changed'}})})).status,409);
@@ -179,9 +179,9 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   assert.equal((await fetch(base+'/api/jobs/'+id+'/confirm',{method:'POST',headers,body:JSON.stringify({receipt:'Your application was received. Confirmation 1234'})})).status,200);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(id).status,'submitted');
 
-  assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('u2')},body:'{}'})).status,404);
   db.prepare("UPDATE jobs SET status='needs_review',challenge='Missing answers' WHERE id=?").run(id);
-  assert.equal((await fetch(base+'/api/jobs/'+id+'/local/claim',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('other')},body:'{}'})).status,404);
+  assert.equal((await fetch(base+'/api/jobs/'+id+'/local/claim',{method:'POST',headers:{...headers,Authorization:'Bearer '+issueToken('u2')},body:'{}'})).status,404);
   assert.equal((await fetch(base+'/api/jobs/'+id+'/local/claim',{method:'POST',headers,body:'{}'})).status,200);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(id).status,'local_browser');
   assert.equal((await fetch(base+'/api/jobs/'+id+'/queue',{method:'POST',headers,body:'{}'})).status,409);

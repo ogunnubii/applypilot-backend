@@ -15,7 +15,9 @@ export function populateBatch(db,uid){
  db.exec('BEGIN IMMEDIATE');try{
   const size=db.prepare('SELECT COUNT(*) AS n FROM application_batch_members WHERE batch_id=?').get(p.current_batch).n;
   if(size<20){const rows=db.prepare(`SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status IN ('saved','queued') AND local_attempt_at IS NULL AND attempts=0 AND handoff_available=0 AND challenge IS NULL
-   AND NOT EXISTS(SELECT 1 FROM application_batch_members m WHERE m.job_id=jobs.id)`).all(uid,p.applicant_id).filter(j=>{let m={};try{m=JSON.parse(j.job_metadata_json||'{}')}catch{}return (!remoteCanadaOnly||workEligibility({...m,title:j.title},{remoteCanadaOnly:true,incorporatedFromCanada:true,allowCanadianEmployment:t4Fallback}).eligible)&&m.available===true&&m.supportCareer?.strong===true&&m.salaryTarget?.eligible===true&&m.salaryTarget.minimum===p.minimum_cad&&m.eligibility?.eligible===true&&!m.frenchApplication&&!employerHold(db,j);});
+   AND NOT EXISTS(SELECT 1 FROM application_batch_members m WHERE m.job_id=jobs.id)
+   AND NOT EXISTS(SELECT 1 FROM autonomous_attempts a WHERE a.job_id=jobs.id)
+   AND NOT EXISTS(SELECT 1 FROM events e WHERE e.job_id=jobs.id AND e.type IN ('submission_started','automatic_submission','manual_submission','applicant_reported_submission','submitted','manual_confirmation'))`).all(uid,p.applicant_id).filter(j=>{let m={};try{m=JSON.parse(j.job_metadata_json||'{}')}catch{}return (!remoteCanadaOnly||workEligibility({...m,title:j.title},{remoteCanadaOnly:true,incorporatedFromCanada:true,allowCanadianEmployment:t4Fallback}).eligible)&&m.available===true&&m.supportCareer?.strong===true&&m.salaryTarget?.eligible===true&&m.salaryTarget.minimum===p.minimum_cad&&m.eligibility?.eligible===true&&!m.frenchApplication&&!employerHold(db,j);});
    const preferred=rows.filter(j=>JSON.parse(j.job_metadata_json||'{}').eligibility?.kind!=='canada-employment-fallback');
    const active=db.prepare("SELECT 1 FROM jobs j JOIN application_batch_members m ON m.job_id=j.id WHERE m.batch_id=? AND j.status NOT IN ('submitted','interview','rejected','offer','archived','duplicate') LIMIT 1").get(p.current_batch);
    const selected=preferred.length?preferred:t4Fallback&&!active?rows:[];
@@ -36,7 +38,7 @@ export function resetSupportBatch(db,uid,{applicant_id,minimum_cad=120000,degree
    db.prepare("UPDATE jobs SET status='archived',handoff_available=0,updated_at=? WHERE id=?").run(at,j.id);
    db.prepare("INSERT INTO events(job_id,at,type,message) VALUES(?,?,'archived','Queue reset for support-career batches. History and possible submission attempts retained.')").run(j.id,at);archived++;
   }
-  db.prepare('UPDATE work_focus SET enabled=0,auto_submit=0 WHERE user_id=?').run(uid);
+  db.prepare('UPDATE work_focus SET enabled=0,auto_submit=0,skip_blocked=0 WHERE user_id=?').run(uid);
   db.prepare("UPDATE continuation_requests SET state='cancelled',message='Queue reset' WHERE user_id=? AND state IN ('queued','dispatching','review')").run(uid);
   db.prepare('UPDATE searches SET enabled=0 WHERE user_id=?').run(uid);
   db.prepare("UPDATE funnel_items SET status='excluded',message='Archived by queue reset',updated_at=? WHERE user_id=? AND status IN ('pending','checking')").run(at,uid);

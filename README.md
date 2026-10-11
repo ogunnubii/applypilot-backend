@@ -2,6 +2,18 @@
 
 ApplyPilot keeps the existing Node 24 API, SQLite database, discovery service, Playwright worker, dashboard and Manifest V3 extension. Applications use saved applicant facts and exact approved answers. The form worker no longer generates application answers with an AI model; the existing advisory chat remains separate.
 
+## Guarded autonomous applications
+
+Automatic submission is off by default. In Applications, choose **Enable automatic submission** explicitly for the selected job workflow. The authorization panel identifies the saved applicant profile, resume and approved answers shared with the listed employer application forms. Batch mode can use this opt-in; starting/resetting a batch returns to manual submission. Discovery and automatic preparation alone do not authorize submission.
+
+The optional **Continue with other eligible jobs when a form needs my input** setting continues to untouched eligible jobs when required answers, employer declarations, CAPTCHA, sign-in or unsupported forms block an application before submission. Blocked jobs remain visible for review. In hosted mode their pre-submit browser sessions are closed to free capacity; answer corrections can be saved and preparation requested again. Without this option the selected blocked job remains selected. A possible submission without a recognized receipt always stops the selected workflow for review and cannot be automatically retried.
+
+The cloud worker honors the profile's execution mode; choosing a Windows browser does not silently transfer applications to a cloud browser. The current extension supports the same explicit guarded final-submit authorization. Neither workflow guesses missing factual answers, accepts protected declarations, or solves verification challenges.
+
+Each automatic attempt is durably reserved before its single Submit click. Applicant consent, current authorization, active batch, application eligibility, employer limits and previous attempt evidence are rechecked before reservation. Only a new recognized receipt for the same employer job counts as Submitted. Filled/prepared pages and clicks without a receipt do not count as successful applications. This is bounded automation for supported forms, not a guarantee that every employer application can be completed unattended.
+
+Older sections below describe the manual-submit default. An explicit autonomous opt-in is the only exception to those final-submit stops.
+
 ## Windows quick start
 
 1. Install Node.js 24 or newer (including npm).
@@ -95,3 +107,15 @@ The dashboard’s **Your next steps** summary separates prepared forms awaiting 
 
 ## Gemini form preparation (0.6.7)
 The browser helper requests supported unanswered fields from the server, using cited public job context or separately consented professional facts. Native text/select and supported custom controls use exact saved values; no answer replaces user edits. Drafts remain application-specific. Unknown facts and verification stay visible for the applicant. Conditional steps are rechecked and final Submit is always manual. Enable Gemini professional-fact drafting in Profile; public-page consent alone never permits sending applicant facts. Paused forms are checked every minute, with per-question retry cooldowns and existing duplicate/attempt/continuation guards.
+
+### Separate accounts and sessions
+
+Public `/signup` creates an independent account with an email address and a 12–128 character password. `/login` and `/assistant` use the same private app shell. Signup never adopts, copies, or resets an existing user's profiles, resumes, answers, jobs or history. The original `/api/register` invitation-code route remains available when `REGISTRATION_CODE` is configured. Set `PUBLIC_SIGNUP=false` to disable public account creation; existing users can still sign in.
+
+Keep the existing `SESSION_SECRET` (at least 32 characters), SQLite database and resume volume on deployment. Account changes are additive: a durable logout denylist, account-attempt throttling, and ownership checks for new/changed job and search relationships. Existing unexpired signed tokens remain valid unless explicitly logged out. `/api/logout` revokes the presented session across API and hosted handoff access; ordinary tokens expire after 12 hours and opt-in remembered tokens after 30 days. The app and private API responses carry `X-Robots-Tag: noindex, nofollow`; authentication, not crawler directives, protects user data.
+
+No email-verification or password-recovery mail service is configured by this change. Signup must not be described as verifying mailbox ownership. Add a verified recovery flow before offering password-reset promises. API authorization still applies to the companion extension; users sign into their own account and must not share tokens. Account throttling uses the socket address rather than trusting arbitrary forwarded headers, so many users behind a shared reverse proxy can share the IP limit (40 account attempts per ten minutes, plus 12 per email). Configure trusted-proxy-aware limiting deliberately before high-volume launch.
+
+New public accounts are recorded separately and cannot opt into blocker emails or have pending blocker emails sent until mailbox ownership is verified. There is currently no email-verification endpoint, so this remains unavailable for new public accounts. Previously existing accounts and invitation-code registrations retain their established notification behavior. Public registration and its security marker are saved in one transaction.
+
+For a reverse proxy, `AUTH_TRUSTED_PROXY_IPS` optionally accepts a comma-separated allowlist of exact proxy IP addresses (no wildcard/CIDR). Only when the direct socket peer is allowlisted does account throttling inspect `X-Forwarded-For`; it walks from the nearest proxy to the first untrusted address, rejects malformed chains, and normalizes IPv4-mapped peers. Leave this unset unless the deployed proxy IPs and its append/overwrite behavior have been verified. Do not copy a browser-supplied forwarding header or trust arbitrary peers. If Railway cannot provide stable, verifiable peer addresses, retain the conservative shared-IP fallback and use platform edge limiting before high-volume public launch. No production proxy configuration is changed by this patch.

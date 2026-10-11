@@ -23,3 +23,13 @@ test('Failed sends retry with identical payload/key; resolved and opted-out jobs
  db.exec("UPDATE jobs SET status='submitted'");await sendBlockerEmails(db,{env,fetchImpl,time:1400000});assert.equal(requests.length,1);
  db.exec("UPDATE jobs SET status='paused'");await sendBlockerEmails(db,{env,fetchImpl,time:1400000});assert.equal(requests.length,2);assert.equal(requests[0].body,requests[1].body);assert.equal(requests[0].headers['Idempotency-Key'],requests[1].headers['Idempotency-Key']);db.close();
 });
+
+test('new public accounts cannot send blocker email even with forged preferences or stale pending mail',async()=>{
+ const db=fixture(),sent=[];const fetchImpl=async(url,opts)=>{sent.push(opts);return {ok:true};};
+ // Existing installations retain their established opt-in behavior.
+ await sendBlockerEmails(db,{env,fetchImpl,time:1000000});assert.equal(sent.length,1);
+ db.exec("INSERT INTO public_account_security(user_id) VALUES('u'); UPDATE blocker_emails SET state='pending',next_attempt=0; UPDATE jobs SET challenge='New blocker';");
+ await sendBlockerEmails(db,{env,fetchImpl,time:1400000});assert.equal(sent.length,1,'unverified mailbox cannot receive queued or new alerts');
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM blocker_emails').get().n,1,'no new email queued for unverified account');
+ db.close();
+});

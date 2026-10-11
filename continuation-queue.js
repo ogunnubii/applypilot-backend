@@ -4,7 +4,8 @@ const humanSteps=new Set(['Employer application limit','CAPTCHA','Sign-in','Unco
 const parse=(value,fallback)=>{try{return JSON.parse(value||'')??fallback;}catch{return fallback;}};
 export function continuationProblem(job){
  if(!job)return 'Application not found';
- if(job.local_attempt_at||job.attempt_event||['submitted','interview','rejected','offer'].includes(job.status))return 'A submission may already have occurred. Check the employer receipt.';
+ if(job.local_attempt_at||job.attempt_event||job.autonomous_attempt||['submitted','interview','rejected','offer'].includes(job.status))return 'A submission may already have occurred. Check the employer receipt.';
+ if(job.outside_active_batch)return 'This application is outside your active batch.';
  if(job.status!=='local_browser'||job.local_phase!=='blocked'||job.handoff_available)return 'This application is not waiting for saved answers in your browser.';
  if(!job.consent||!job.email||!job.has_resume)return 'Applicant consent, email and resume are required.';
  if(humanSteps.has(job.challenge)||/captcha|sign[- ]?in|log[- ]?in|verification|declaration|signature|consent|arbitrat|upload.*(?:review|fail)/i.test(job.progress_message||''))return 'Complete the employer-site step before continuing.';
@@ -14,10 +15,15 @@ export function continuationProblem(job){
  return '';
 }
 function signature(job){return JSON.stringify([job.url,job.required_fields_json,job.answers_json]);}
-function jobFor(db,uid,id){return db.prepare(`SELECT j.*,p.consent,p.email,p.resume_path IS NOT NULL AS has_resume,
- EXISTS(SELECT 1 FROM events e WHERE e.job_id=j.id AND e.type='submission_started') AS attempt_event,
+function jobFor(db,uid,id){const job=db.prepare(`SELECT j.*,p.consent,p.email,COALESCE(p.resume_path,'')!='' AS has_resume,
+ EXISTS(SELECT 1 FROM events e WHERE e.job_id=j.id AND e.type IN ('submission_started','automatic_submission','manual_submission','applicant_reported_submission','submitted','manual_confirmation')) AS attempt_event,
  (SELECT message FROM events e WHERE e.job_id=j.id AND e.type='local_browser' ORDER BY id DESC LIMIT 1) AS progress_message
- FROM jobs j JOIN applicants p ON p.id=j.applicant_id AND p.user_id=j.user_id WHERE j.user_id=? AND j.id=?`).get(uid,id);}
+ FROM jobs j JOIN applicants p ON p.id=j.applicant_id AND p.user_id=j.user_id WHERE j.user_id=? AND j.id=?`).get(uid,id);
+ if(!job)return job;
+ if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='autonomous_attempts'").get())job.autonomous_attempt=!!db.prepare('SELECT 1 FROM autonomous_attempts WHERE job_id=?').get(id);
+ if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='application_batch_preferences'").get()){const batch=db.prepare('SELECT current_batch FROM application_batch_preferences WHERE user_id=? AND enabled=1').get(uid);job.outside_active_batch=!!batch&&!db.prepare('SELECT 1 FROM application_batch_members WHERE batch_id=? AND user_id=? AND job_id=?').get(batch.current_batch,uid,id);}
+ return job;
+}
 export function installContinuations(db){db.exec(`CREATE TABLE IF NOT EXISTS continuation_requests(
  job_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,state TEXT NOT NULL,signature TEXT NOT NULL,
  requested_at TEXT NOT NULL,claim_id TEXT,claimed_at TEXT,message TEXT NOT NULL DEFAULT ''
@@ -45,13 +51,14 @@ export function claimContinuation(db,uid,check=()=> ''){
  try{
   expireDispatches(db,uid);
   if(db.prepare("SELECT 1 FROM continuation_requests WHERE user_id=? AND state='dispatching'").get(uid)){db.exec('COMMIT');return null;}
-  const focus=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(uid);
+  const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=? AND enabled=1').get(uid);
   const requests=db.prepare("SELECT * FROM continuation_requests WHERE user_id=? AND state='queued' ORDER BY requested_at,job_id").all(uid);
   for(const request of requests){
-   if(focus&&focus.job_id!==request.job_id)continue;
+   if(focus&&focus.job_id!==request.job_id&&(!focus.skip_blocked||focus.job_id))continue;
    if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='answer_save_state'").get()&&db.prepare('SELECT 1 FROM answer_save_state WHERE job_id=? AND editing=1').get(request.job_id))continue;
    const job=jobFor(db,uid,request.job_id),problem=continuationProblem(job)||(signature(job)!==request.signature?'The form or saved answers changed. Review this application before continuing.':check(job));
    if(problem){db.prepare("UPDATE continuation_requests SET state='review',message=? WHERE job_id=?").run(problem,request.job_id);continue;}
+   if(focus?.skip_blocked&&!focus.job_id)db.prepare('UPDATE work_focus SET job_id=? WHERE user_id=? AND enabled=1 AND job_id IS NULL').run(request.job_id,uid);
    const claimId=randomUUID();
    db.prepare("UPDATE continuation_requests SET state='dispatching',claim_id=?,claimed_at=?,message='' WHERE job_id=?").run(claimId,new Date().toISOString(),request.job_id);
    db.exec('COMMIT');return {jobId:request.job_id,claimId};

@@ -1,6 +1,8 @@
+import {installAccountPolicy,canEmailAccount} from './account-policy.js';
 import {createHash} from 'node:crypto';
 
 export function installNotifications(db) {
+  installAccountPolicy(db);
   db.exec(`CREATE TABLE IF NOT EXISTS notification_preferences(user_id TEXT PRIMARY KEY REFERENCES users(id), enabled INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS blocker_emails(key TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, first_attempt INTEGER, next_attempt INTEGER NOT NULL DEFAULT 0, sent_at TEXT, last_error TEXT);`);
 }
@@ -19,6 +21,7 @@ export async function sendBlockerEmails(db,{env=process.env,fetchImpl=fetch,time
   const jobs=db.prepare(`SELECT j.*,u.email FROM jobs j JOIN users u ON u.id=j.user_id JOIN notification_preferences p ON p.user_id=u.id AND p.enabled=1 WHERE j.status IN ('paused','needs_review') OR (p.enabled=1 AND j.status='local_browser' AND j.local_phase='blocked')`).all();
   const active=new Set();
   for (const job of jobs) {
+    if(!canEmailAccount(db,job.user_id))continue;
     const key=createHash('sha256').update(JSON.stringify([job.id,job.challenge,job.required_fields_json,job.local_phase])).digest('hex');active.add(key);
     const url=new URL('/automate.html',env.PUBLIC_ORIGIN);url.hash='job-'+job.id;
     const clean=s=>String(s||'').replace(/[\r\n]/g,' ').slice(0,180);

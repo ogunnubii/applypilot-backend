@@ -36,7 +36,7 @@ export function queueFoundApplications(db,userId,{applicantId=null}={}){
    const profile=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,userId);
    const imported=db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,companyKey(job.company),historyKey(job.title));
    const duplicate=priorApplication(db,userId,job)||imported;
-   const priorAttempt=job.local_attempt_at||Number(job.attempts)>0||job.handoff_available||db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('submission_started','submitted','manual_confirmation')").get(job.id);
+   const priorAttempt=job.local_attempt_at||Number(job.attempts)>0||job.handoff_available||['verifying','uncertain','submitted'].includes(job.local_phase)||db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('submission_started','automatic_submission','manual_submission','applicant_reported_submission','submitted','manual_confirmation')").get(job.id)||(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='autonomous_attempts'").get()&&db.prepare('SELECT 1 FROM autonomous_attempts WHERE job_id=?').get(job.id));
    const companyPolicy=policyFor(job);
    let reason='';
    if(priorAttempt)reason='Previous application work or a submission attempt exists. Check the existing employer session or receipt before continuing.';
@@ -47,6 +47,7 @@ export function queueFoundApplications(db,userId,{applicantId=null}={}){
    }else if(employerHold(db,job))reason=employerHold(db,job).message;
    else if(job.challenge)reason='Resolve the existing application blocker: '+job.challenge;
    else if(!profile?.consent||!profile.email||!profile.resume_path)reason='Profile consent, email and a resume are required before application preparation.';
+   else if(metadataFor(job).eligibility?.eligible===false)reason='This job does not meet the saved work eligibility requirements.';
    else if(metadataFor(job).available===false)reason='A current employer posting could not be verified. Check that the application link is still available.';
    else if(!supported(job.url))reason='A supported direct employer application link is required.';
    else if(researchConsentWithdrawn(db,job.id,profile.id))reason='Google public job-page drafting consent was withdrawn.';

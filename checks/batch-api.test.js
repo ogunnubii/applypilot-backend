@@ -23,5 +23,13 @@ test('real API autosaves drafts, learns completed factual answers, resumes once 
   const {operationSnapshot}=await import('../operation-evidence.js');assert.equal(operationSnapshot(db,'u').totals.worked,0);db.prepare("INSERT INTO events(job_id,at,type,message) VALUES(?,'2026','filled','Filled 3 standard fields')").run(job);assert.equal(operationSnapshot(db,'u').totals.worked,1);
   const reset=await api('/application-batch','POST',{action:'reset',applicant_id:'p',minimum_cad:120000,degree:'Electrical and Computer Engineering'});assert.equal(reset.status,200,JSON.stringify(reset));assert.equal(reset.data.archived,1);assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(done).status,'submitted');assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(job).status,'archived');assert.equal(operationSnapshot(db,'u').totals.worked,1,'queue clearing retains past form counts');assert.equal(JSON.parse(db.prepare('SELECT answers_json FROM jobs WHERE id=?').get(job).answers_json)['Preferred technology'],'Linux and SQL');
   assert.equal((await api('/jobs/'+job+'/answers','PUT',{...payload,resume:true})).status,409,'archived jobs cannot be changed by an old browser');
+  const fresh=randomUUID(),metadata={available:true,supportCareer:{strong:true},salaryTarget:{eligible:true,minimum:120000},eligibility:{eligible:true}};
+  db.prepare("INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,created_at,updated_at,job_metadata_json) VALUES(?,'u','p','Cloud Support Engineer',?,?,?,'saved','2026','2026',?)").run(fresh,fresh,'https://jobs.lever.co/'+fresh+'/role','https://jobs.lever.co/'+fresh+'/role',JSON.stringify(metadata));
+  db.exec("UPDATE applicants SET execution_mode='local' WHERE id='p'");
+  const autonomy=await api('/work-focus','PUT',{enabled:true,auto_submit:true,skip_blocked:true});assert.equal(autonomy.status,200,JSON.stringify(autonomy));assert.equal(autonomy.data.job_id,fresh);assert.equal(autonomy.data.auto_submit,true);assert.equal(autonomy.data.skip_blocked,true);assert.equal(autonomy.data.selected_job.execution_mode,'local');
+  const jobs=await api('/jobs');assert.equal(jobs.data.jobs.find(j=>j.id===fresh).execution_mode,'local','automatic submission does not reroute a local profile to cloud');assert.equal(jobs.data.batch.enabled,true,'enabling autonomy keeps the active batch');
+  assert.equal((await api('/work-focus','PUT',{enabled:true,auto_submit:'true'})).status,409,'ambiguous authority is rejected');
+  const stopped=await api('/work-focus','PUT',{enabled:false});assert.equal(stopped.status,200);assert.equal(stopped.data.auto_submit,false);assert.equal(stopped.data.skip_blocked,false);
+
  }finally{child.kill();await exited;db.close();}
 });

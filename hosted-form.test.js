@@ -65,7 +65,8 @@ test('setup captures each structured profile field under its canonical answer ke
 test('hosted worker preserves manual default and gates automatic submission behind focused authorization',()=>{
  const source=fs.readFileSync(new URL('./worker.js',import.meta.url),'utf8');
  assert.match(source,/Ready to submit — review the filled application and click Submit/);
- assert.match(source,/if\(focusAllowsSubmit\(db,job\)\)/);assert.match(source,/reserveAutonomousAttempt\(db,job.id,job.user_id,'hosted-worker'\);await submit.click\(\)/);
+ assert.match(source,/if\(focusAllowsSubmit\(db,job\)\)/);assert.match(source,/reserve:\(\)=>reserveAutonomousAttempt\(db,job.id,job.user_id,'hosted-worker'\)/);
+ const submission=fs.readFileSync(new URL('./hosted-submission.js',import.meta.url),'utf8');assert.match(submission,/reserve\(\);[\s\S]*await submit.click\(\)/);
  assert.doesNotMatch(source,/event\([^\n]+['"]automatic_submission['"]/);
  assert.doesNotMatch(source,/requiresHumanReview\(await page\.locator\(['"]body['"]\)/);
  assert.match(source,/if\(requiredMissing\.length\)/);

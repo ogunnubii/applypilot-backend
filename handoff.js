@@ -115,9 +115,9 @@ export class Handoffs {
   }finally{s.busy=false}
  }
 }
-export function serveHandoffs(handoffs,port=8081){
+export function serveHandoffs(handoffs,port=8081,authenticate=readToken){
  const server=createServer(async(req,res)=>{res.setHeader('cache-control','no-store');res.setHeader('content-type','application/json');try{
-  const uid=readToken(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid){res.writeHead(401);res.end(JSON.stringify({error:'Sign in required'}));return}
+  const uid=authenticate(req.headers.authorization?.replace(/^Bearer /i,''));if(!uid){res.writeHead(401);res.end(JSON.stringify({error:'Sign in required'}));return}
   const route=new URL(req.url,'http://localhost').pathname.match(/^\/([a-f0-9-]+)\/(view|click|drag|upload|text|key|scroll|resume|close)$/);if(!route)throw Error('Unknown action');
   let body='',size=0;for await(const b of req){size+=b.length;if(size>9000000)throw Error('Input too large');body+=b}
   const out=await handoffs.command(uid,route[1],route[2],body?JSON.parse(body):{});res.end(JSON.stringify(out));

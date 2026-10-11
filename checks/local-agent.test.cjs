@@ -11,13 +11,13 @@ async function fixture(html,{automatic=true,autofillOnly=false,prepareSteps=fals
  w.HTMLElement.prototype.getClientRects=function(){return this.type==='hidden'||this.closest('[hidden]')||this.style.display==='none'?[]:[{}];};
  let attempted=initialAttempt,auto=automatic;const messages=[],timers=[];
  const packet={job:{title:'Fixture role',attempted:initialAttempt},profile:{name:'Fixture Applicant',email:'fixture@example.test',phone:'123',location:'Fixture city'},answers,resume:{name:'resume.pdf',base64:''},automatic,autofillOnly,prepareSteps,autonomousSubmit:false};
- w.setInterval=fn=>{timers.push(fn);return timers.length;};w.clearInterval=()=>{};
+ w.setInterval=fn=>{timers.push(fn);return timers.length;};w.clearInterval=id=>{timers[id-1]=null;};
  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:packet};if(m.action==='state')return {ok:true,data:{attempted,automatic:auto&&!attempted,autofillOnly,prepareSteps,autonomousSubmit:false}};if(m.action==='attempt'){assert(!attempted,'attempt must not repeat');attempted=true;}if(m.action==='progress'&&m.blocked)auto=false;return {ok:true,data:{}};}}};
  before(w);
  w.eval(fs.readFileSync(path.join(root,'extension/policy.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'extension/content.js'),'utf8'));
  // Wait for preparation to finish its conditional-control settling pass.
  for(let n=0;n<100&&!messages.some(m=>m.action==='progress'&&m.blocked||m.action==='step'||m.action==='receipt');n++)await settle();
- return {w,messages,timers,close:()=>w.close(),tick:async()=>{for(const fn of [...timers])await fn();await settle();}};
+ return {w,messages,timers,close:()=>w.close(),tick:async()=>{for(const fn of [...timers].filter(Boolean))await fn();await settle();}};
 }
 test('Unknown required facts block, while exact saved facts fill and existing edits survive',async()=>{
  const f=await fixture('<form><label>Full name<input id="name" required></label><label>Phone<input id="phone" value="user edit"></label><label>Work authorization<select id="auth" required><option value="">Choose</option><option value="no">No</option></select></label><label>Degree<input id="degree" required></label><button>Submit application</button></form>',{answers:{'Work authorization':'No'}});
@@ -38,6 +38,23 @@ test('Chrome campaign autofill-only mode advances Next, fills the final step, an
   assert(f.messages.some(m=>m.action==='progress'&&m.readyForSubmit===true&&m.progress.required===m.progress.filled));
   assert.equal(clicks,0);assert(!f.messages.some(m=>m.action==='attempt'));await f.tick();assert.equal(clicks,0);
  }finally{f.close();}
+});
+
+test('Gemini preparation sends liveness while awaiting its answer and clears it before handing back Submit',async()=>{
+ let release,entered,pulse,heartbeatCount=0;const answer=new Promise(r=>release=r),waiting=new Promise(r=>entered=r);
+ const pending=fixture('<form><label>Full name<input required></label><label>Describe your support experience<textarea required></textarea></label><button type="button">Submit application</button></form>',{
+  autofillOnly:true,prepareSteps:true,before:w=>{
+   const interval=w.setInterval;w.setInterval=(fn,ms)=>{if(ms===15000)pulse=fn;return interval(fn,ms);};
+   const send=w.chrome.runtime.sendMessage;w.chrome.runtime.sendMessage=async m=>{
+    if(m.action==='preparation-heartbeat')heartbeatCount++;
+    if(m.action==='answer'){entered();return {ok:true,data:{answer:await answer}};}
+    const result=await send(m);if(m.action==='packet')result.data.aiAssistance=true;return result;
+   };
+  }
+ });
+ await waiting;const before=heartbeatCount;await pulse();assert.equal(heartbeatCount,before+1);
+ release('I supported the synthetic fixture system.');const f=await pending;
+ try{assert.equal(f.w.document.querySelector('textarea').value,'I supported the synthetic fixture system.');assert(f.messages.some(m=>m.readyForSubmit));assert(!f.timers.includes(pulse),'completed preparation must clear its heartbeat');assert(!f.messages.some(m=>m.action==='attempt'));}finally{f.close();}
 });
 
 test('CAPTCHA, MFA, legal text, payments and custom controls require human interaction',async()=>{

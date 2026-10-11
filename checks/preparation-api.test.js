@@ -36,6 +36,12 @@ test('real campaign API gives Chrome manual preparation packets, prevents other 
   assert.equal((await api('/jobs/'+job.id+'/local/packet','GET',undefined,'other')).status,404);
   assert.equal((await api('/preparation-campaign','PUT',{enabled:false})).status,200);
   assert.equal((await api('/jobs/'+job.id+'/local/packet')).data.prepareSteps,false);
+  assert.equal((await api('/jobs/'+job.id+'/local/step','POST',{})).status,409,'paused campaign blocks a cached Next permission');
+  assert.equal((await api('/preparation-campaign','POST',{applicant_id:'p',target:200,batch_size:20})).status,200);
+  assert.equal((await api('/jobs/'+job.id+'/local/step','POST',{})).status,200);
+  db.prepare("UPDATE preparation_members SET excluded_at='2026',exclusion_reason='Fixture exclusion' WHERE job_id=?").run(job.id);
+  assert.equal((await api('/jobs/'+job.id+'/local/packet')).data.prepareSteps,false);
+  assert.equal((await api('/jobs/'+job.id+'/local/step','POST',{})).status,409,'excluded member cannot keep advancing');
  }finally{child.kill();await exited;db.close();}
 });
 

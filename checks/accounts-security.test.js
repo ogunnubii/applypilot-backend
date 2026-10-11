@@ -27,7 +27,7 @@ test('public signup, existing owner preservation, tenant boundaries and durable 
  const start=async()=>{child=spawn(process.execPath,['server.js'],{cwd:resolve('.'),env:{...process.env,PORT:String(port),BIND_HOST:'127.0.0.1',PUBLIC_ORIGIN:base,PUBLIC_SIGNUP:'true'},stdio:['ignore','pipe','pipe']});child.stdout.on('data',x=>log+=x);child.stderr.on('data',x=>log+=x);for(let i=0;i<80;i++){try{if((await api('/api/health')).status===200)return;}catch{}await new Promise(r=>setTimeout(r,50));}throw Error(log);};
  try{
   await start();
-  assert.equal((await api('/api/health')).data.release,'2026-10-11-title-rotation-eligibility');
+  assert.equal((await api('/api/health')).data.release,'2026-10-11-preparation-recovery');
   const dashboard=await api('/assistant'),csp=dashboard.headers.get('content-security-policy');
   assert.match(csp,/img-src 'self' data:;/);assert.match(csp,/script-src 'self';/);assert.match(csp,/connect-src 'self';/);assert.doesNotMatch(csp,/script-src[^;]*(?:data:|unsafe-inline|unsafe-eval|\*)/);
   const homepage=await api('/');assert.equal(homepage.status,200);assert.equal(homepage.headers.get('x-robots-tag'),'index, follow');assert.match(homepage.data,/<h1[ >]/);

@@ -96,9 +96,9 @@ if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-typ
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
-if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.30.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
+if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.31.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-title-rotation-eligibility',extensionVersion:'0.6.30',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-preparation-recovery',extensionVersion:'0.6.31',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -312,7 +312,8 @@ if(localRoute){
   if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
   const bytes=await readFile(p.resume_path);if(bytes.length>limit)throw Error('Resume too large');
   const applicationAnswers=JSON.parse(j.answers_json||'{}');if(!p.google_research_consent)for(const [question,answer] of Object.entries(applicationAnswers))if(isResearchDraft(db,j.id,question,answer))delete applicationAnswers[question];
-  return send(res,200,{prepareSteps:!!(preparationCampaign(db,uid)?.enabled&&preparationMember(db,j)),autonomousSubmit:metadataFor(j).manualReview||globalThis.ApplyPilotPolicy.customApplication(j.url)?false:focusAllowsSubmit(db,j),job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...reusableAnswers(db,p),...applicationAnswers},aiAssistance:!!((p.google_research_consent||p.gemini_facts_consent)&&process.env.GEMINI_API_KEY||p.ai_consent&&process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),applicationOnlyQuestions:db.prepare('SELECT question FROM research_drafts WHERE job_id=? UNION SELECT question FROM fact_drafts WHERE job_id=?').all(j.id,j.id).map(row=>row.question),excludeFrench:excludesFrench(db,uid),resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
+  const campaign=preparationCampaign(db,uid),member=preparationMember(db,j);
+  return send(res,200,{prepareSteps:!!(campaign?.enabled&&member&&member.campaign_id===campaign.id&&!member.excluded_at),autonomousSubmit:metadataFor(j).manualReview||globalThis.ApplyPilotPolicy.customApplication(j.url)?false:focusAllowsSubmit(db,j),job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...reusableAnswers(db,p),...applicationAnswers},aiAssistance:!!((p.google_research_consent||p.gemini_facts_consent)&&process.env.GEMINI_API_KEY||p.ai_consent&&process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),applicationOnlyQuestions:db.prepare('SELECT question FROM research_drafts WHERE job_id=? UNION SELECT question FROM fact_drafts WHERE job_id=?').all(j.id,j.id).map(row=>row.question),excludeFrench:excludesFrench(db,uid),resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
  }
  if(action==='answer'&&req.method==='POST'){
   const x=JSON.parse(await body(req));try{return send(res,200,await prepareFormAnswer(db,uid,j.id,x.question,{expectedOwner:owner,choices:x.choices,answerFormat:x.answerFormat==='number'?'number':'text',maxLength:Number.isInteger(x.maxLength)&&x.maxLength>0?Math.min(x.maxLength,4000):4000,fieldHelp:text(x.fieldHelp,2000),check:job=>{const focus=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(uid);return focus&&focus.job_id!==job.id?'This application is parked.':employerHold(db,job)?.message||((policy=>policy.allowed?'':policy.message)(companyApplicationPolicy(db,job.applicant_id,job)))||'';}}));}catch(error){return send(res,400,{error:error.message});}
@@ -337,6 +338,8 @@ if(localRoute){
   return send(res,200,{marked});
  }
  if(action==='step'&&req.method==='POST'){
+  const campaign=preparationCampaign(db,uid),member=preparationMember(db,j);
+  if(member&&(!campaign?.enabled||member.excluded_at||member.campaign_id!==campaign.id))return send(res,409,{error:'This preparation campaign is paused or this form is outside its current selection.'});
   const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
   if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
   if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});

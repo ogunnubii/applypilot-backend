@@ -34,6 +34,32 @@ async function listedJobs(){
 }
 async function initialize(){const s=await read();if(!s.automaticDefault)await chrome.storage.local.set({automaticDefault:true,enabled:true,userPaused:false});if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
 async function saveRecord(record){const s=await read();s.records[record.id]=record;await chrome.storage.local.set({records:s.records});}
+async function probeForm(record){
+ let timer;try{return await Promise.race([chrome.tabs.sendMessage(record.tabId,{action:'preparation-status'},{frameId:record.frameId||0}),new Promise(resolve=>{timer=setTimeout(()=>resolve(null),2000);})]);}catch{return null;}finally{clearTimeout(timer);}
+}
+// Recover only an interrupted, unattempted campaign form in its exact existing
+// tab. Never reopen a lost form, reload a page, or replay a submission.
+async function recoverPreparation(jobs,preparation,state){
+ if(!preparation?.enabled||state.userPaused)return false;
+ for(const job of jobs.filter(j=>j.preparation).sort((a,b)=>a.queue_position-b.queue_position)){
+  const r=state.records[job.id];
+  if(!r||r.attempted||Object.keys(r.pendingClicks||{}).length||r.phase==='submitted'||r.phase==='prepared'||r.recoveryCount>=1||job.status!=='local_browser'||job.local_attempt_at||job.employer_hold||job.metadata?.available===false)continue;
+  if(!r.interrupted&&!/^Browser stopped responding\./.test(job.last_message||''))continue;
+  const tab=Number.isInteger(r.tabId)?await chrome.tabs.get(r.tabId).catch(()=>null):null;
+  if(!tab||!P.sameApplication(tab.url,r.url)||(await chrome.tabs.query({})).filter(t=>P.sameApplication(t.url,r.url)).length!==1)continue;
+  r.interrupted=false;r.recoveryCount=(r.recoveryCount||0)+1;await saveRecord(r);
+  try{
+   const packet=await api('/jobs/'+job.id+'/local/packet');
+   if(packet.job.attempted||packet.prepareSteps!==true||packet.autonomousSubmit===true)continue;
+   const live=await probeForm(r);
+   if(live?.attempted)continue;
+   if(live?.stopped){continue;} // A real question/verification/ready state stays parked.
+   if(live?.busy){r.auto=true;r.phase='ready';r.touched=Date.now();await saveRecord(r);return true;}
+   await openJob(job.id,true);return true;
+  }catch(e){await chrome.storage.local.set({error:'Preparation recovery paused: '+e.message});}
+ }
+ return false;
+}
 async function openJob(id,auto=true,focus=false){
  const s=await read();let record=s.records[id];
  const claim=await api('/jobs/'+id+'/local/claim','POST',{});
@@ -77,12 +103,13 @@ async function tick(){
  for(const r of Object.values((await read()).records))if(Object.keys(r.pendingAnswers||{}).length)await flushAnswerOutbox(r);
  await retrySubmissionRecords();
 
- const s=await read();if(!s.enabled)return;
+ const s=await read();if(!s.enabled||s.userPaused)return;
  const active=Object.values(s.records).find(r=>r.auto&&['ready','verifying'].includes(r.phase));
  if(active){
   const tab=Number.isInteger(active.tabId)?await chrome.tabs.get(active.tabId).catch(()=>null):null;
   if(tab&&P.sameApplication(tab.url,active.url)&&Date.now()-active.touched<90000)return;
-  active.phase='blocked';active.auto=false;await saveRecord(active);
+  if(tab&&P.sameApplication(tab.url,active.url)&&!active.attempted){const live=await probeForm(active);if(live?.busy&&!live.attempted){active.touched=Date.now();await saveRecord(active);return;}}
+  active.phase='blocked';active.auto=false;active.interrupted=!active.attempted;await saveRecord(active);
   await api('/jobs/'+active.id+'/local/progress','POST',{blocked:true,fields:[],message:active.attempted?'Submission uncertain; check employer receipt.':'Browser stopped responding. Reopen from extension.'}).catch(()=>{});
  }
  const waiting=Object.values(s.records).find(r=>r.siteRetryAt&&r.siteRetryAt<=Date.now());
@@ -103,7 +130,9 @@ async function tick(){
   }
   waiting.auto=false;waiting.phase='blocked';await saveRecord(waiting);
  }
- const fresh=await read();let jobs,preparation;try{({jobs,preparation}=await api('/jobs'));}catch(e){await chrome.storage.local.set({error:e.message});return;}const candidates=jobs.filter(j=>(!preparation?.enabled||j.preparation)&&eligible(j,fresh));const queue=[...new Set([...fresh.queue,...candidates.map(j=>j.id)])].filter(id=>candidates.some(j=>j.id===id)).sort((a,b)=>(Number(candidates.find(j=>j.id===a)?.queue_position)||Infinity)-(Number(candidates.find(j=>j.id===b)?.queue_position)||Infinity)||Number(candidates.find(j=>j.id===b)?.match_score||0)-Number(candidates.find(j=>j.id===a)?.match_score||0));await chrome.storage.local.set({queue,error:''});const id=queue[0];if(!id)return;
+ const fresh=await read();let jobs,preparation;try{({jobs,preparation}=await api('/jobs'));}catch(e){await chrome.storage.local.set({error:e.message});return;}
+ if(await recoverPreparation(jobs,preparation,fresh))return;
+ const candidates=jobs.filter(j=>(!preparation?.enabled||j.preparation)&&eligible(j,fresh));const queue=[...new Set([...fresh.queue,...candidates.map(j=>j.id)])].filter(id=>candidates.some(j=>j.id===id)).sort((a,b)=>(Number(candidates.find(j=>j.id===a)?.queue_position)||Infinity)-(Number(candidates.find(j=>j.id===b)?.queue_position)||Infinity)||Number(candidates.find(j=>j.id===b)?.match_score||0)-Number(candidates.find(j=>j.id===a)?.match_score||0));await chrome.storage.local.set({queue,error:''});const id=queue[0];if(!id)return;
  try{await openJob(id,true);await chrome.storage.local.set({queue:queue.slice(1),error:''});}
  catch(e){if([400,409].includes(e.status)){await saveRecord({id,url:candidates.find(j=>j.id===id).url,auto:false,phase:'blocked',touched:Date.now()});await chrome.storage.local.set({queue:queue.slice(1),error:'Skipped blocked application: '+e.message});}else await chrome.storage.local.set({error:e.message});}
 }
@@ -170,6 +199,10 @@ async function handle(m,sender){
  if(m.action==='packet'){b.frameId=sender.frameId;const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);b.autonomousSubmit=packet.autonomousSubmit===true;b.prepareSteps=packet.prepareSteps===true;await saveRecord(b);return {...packet,automatic:!b.attempted&&s.enabled&&!s.userPaused&&(b.auto||b.autonomousSubmit||b.prepareSteps),autofillOnly:!b.autonomousSubmit};}
  if(m.action==='attention-position'){const {jobs,preparation}=await listedJobs(),member=jobs.find(j=>j.id===b.id)?.preparation;if(preparation?.enabled&&member)return {position:member.position,total:preparation.target};const waiting=P.attentionOrder(jobs),index=waiting.findIndex(j=>j.id===b.id);return {position:index<0?0:index+1,total:waiting.length};}
  if(m.action==='state')return {attempted:b.attempted,automatic:!b.attempted&&s.enabled&&!s.userPaused&&(b.auto||b.autonomousSubmit||b.prepareSteps),autofillOnly:!b.autonomousSubmit,prepareSteps:!!b.prepareSteps,autonomousSubmit:!!b.autonomousSubmit,refreshEnabled:!!s.enabled&&!s.userPaused,phase:b.phase};
+ if(m.action==='preparation-heartbeat'){
+  if(!s.enabled||s.userPaused||b.attempted||b.phase==='submitted')return {continue:false};
+  b.touched=Date.now();await saveRecord(b);return {continue:true};
+ }
  if(m.action==='assistance'){b.assisted=true;await saveRecord(b);return api('/jobs/'+b.id+'/local/assistance','POST',{kind:'human'});}
  if(m.action==='answer'){if(b.attempted)throw Error('Submission already started.');return api('/jobs/'+b.id+'/local/answer','POST',{question:m.question,choices:m.choices,answerFormat:m.answerFormat,maxLength:m.maxLength,fieldHelp:m.fieldHelp});}
  if(m.action==='research-answer')return api('/jobs/'+b.id+'/local/research-answer','POST',{question:m.question});
@@ -198,7 +231,7 @@ async function handle(m,sender){
  }
  if(m.action==='progress'){
   if(Number(m.filled)>0){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;}
-  b.touched=Date.now();if(m.blocked){b.phase=m.readyForSubmit===true?'prepared':'blocked';b.auto=false;}await saveRecord(b);
+  b.touched=Date.now();b.interrupted=false;if(m.blocked){b.phase=m.readyForSubmit===true?'prepared':'blocked';b.auto=false;}await saveRecord(b);
   const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,filled:m.filled,progress:m.progress,formLanguage:m.formLanguage,readyForSubmit:m.readyForSubmit===true,url:sender.url});if(m.blocked)await tick();return result;
  }
  if(m.action==='capture')return api('/jobs/'+b.id+'/local/capture','POST',{fields:m.fields});
@@ -216,7 +249,7 @@ let chain=Promise.resolve();
 function serial(fn){const result=chain.then(fn);chain=result.catch(()=>{});return result;}
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{(['list','dashboard-status','state','attention-position','answer','research-answer'].includes(m.action)?handle(m,sender):serial(()=>handle(m,sender))).then(data=>reply({ok:true,data})).catch(e=>reply({ok:false,error:e.message}));return true;});
 chrome.alarms.onAlarm.addListener(a=>{if(a.name==='queue')return serial(tick).catch(()=>{});});
-chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:!s.userPaused,error:'Browser restarted. Existing unfinished applications remain paused; new eligible jobs continue automatically.'});}));
+chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.interrupted=!r.attempted&&r.auto&&r.phase==='ready';r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted'&&r.phase!=='prepared')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:!s.userPaused,error:'Browser restarted. Eligible preparation resumes in its existing tab after sign-in; previous submission attempts remain protected.'});}));
 chrome.runtime.onInstalled.addListener(()=>serial(initialize));
 chrome.tabs.onRemoved.addListener(id=>serial(async()=>{const s=await read();for(const r of Object.values(s.records))if(r.tabId===id){r.tabId=null;r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records});await tick();}).catch(()=>{}));
 

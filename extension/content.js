@@ -194,6 +194,15 @@ async function prepareMissingAnswers(){
 // Let conditional controls settle and fill newly revealed fields before calling
 // a step blocked. Each pass uses a fresh DOM and never clicks navigation/Submit.
 async function fill(){
+ if(attempted||siteIssue())return fillWithFacts();
+ // Long AI requests are still active preparation. Keep the local worker alive
+ // without changing readiness, clearing missing questions, or claiming success.
+ let heartbeatBusy=false;
+ const pulse=async()=>{if(heartbeatBusy||attempted)return;heartbeatBusy=true;try{await send('preparation-heartbeat');}catch{}finally{heartbeatBusy=false;}};
+ const heartbeat=setInterval(pulse,15000);void pulse();
+ try{return await fillWithFacts();}finally{clearInterval(heartbeat);}
+}
+async function fillWithFacts(){
  if(!packet)packet=await send('packet');attempted=attempted||!!packet.job.attempted;if(!bar)mount();
  let total=0;
  if(packet.excludeFrench&&P.frenchApplication({title:packet.job.title,language:document.documentElement.lang,required_fields_json:JSON.stringify(controls().map(label))})){stopped=true;clearInterval(timer);note.textContent='French-language application excluded by your preference.';await send('progress',{blocked:true,fields:controls().map(label),formLanguage:'fr',message:note.textContent});return 0;}
@@ -345,7 +354,10 @@ document.addEventListener('submit',e=>{
  const form=e.target,submitter=e.submitter&&isSubmitAction(e.submitter)?e.submitter:buttons().find(b=>b.form===form&&isSubmitAction(b));
  if(submitter&&Date.now()-lastNativeSubmitClickAt>1000){recordAssistance();void observeManualSubmission();}
 },true);
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.action==='fill'){resumeFill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}});
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{
+ if(m.action==='preparation-status'){reply({busy:!!busy,stopped:!!stopped,attempted:!!attempted,started:!!started});return;}
+ if(m.action==='fill'){resumeFill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}
+});
 begin();
 })();
 

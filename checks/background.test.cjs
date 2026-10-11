@@ -8,10 +8,10 @@ function harness(shared={}){
   if(!args)return [{result:{ready:true}}];
   const [,route,method,data,device]=args;shared.calls.push({route,method,data,device});
   if(shared.offlineAnswers&&route.endsWith('/answers'))throw Error('Fixture connection unavailable');
-  if(route==='/jobs')return [{result:{data:{jobs}}}];
+  if(route==='/jobs')return [{result:{data:{jobs,preparation:shared.preparation}}}];
   const [,id,action]=route.match(/\/jobs\/([^/]+)\/local\/(.*)/)||[];
   if(action==='claim'){shared.claims[id]||={attempted:false};return [{result:{data:shared.claims[id]}}];}
-  if(action==='packet')return [{result:{data:{job:{...jobs.find(j=>j.id===id),attempted:shared.claims[id]?.attempted},profile:{},answers:{}}}}];
+  if(action==='packet')return [{result:{data:{job:{...jobs.find(j=>j.id===id),attempted:shared.claims[id]?.attempted},profile:{},answers:{},prepareSteps:shared.preparation?.enabled===true,autonomousSubmit:false}}}];
   if(action==='attempt'){shared.claims[id].attempted=true;return [{result:{data:{ok:true}}}];}
   return [{result:{data:{ok:true}}}];
  }}};
@@ -20,8 +20,46 @@ function harness(shared={}){
  vm.runInContext(fs.readFileSync(path.join(root,'background.js'),'utf8'),context);
  const popup={url:'chrome-extension://fixture/popup.html'};
  const send=(action,data={},sender=popup)=>new Promise(resolve=>events.message({action,...data},sender,resolve));
- return {shared,events,send,jobs,sender:id=>({tab:{id:shared.store.records[id].tabId},url:shared.tabs.find(t=>t.id===shared.store.records[id].tabId).url,frameId:0})};
+ return {shared,events,send,jobs,chrome,sender:id=>({tab:{id:shared.store.records[id].tabId},url:shared.tabs.find(t=>t.id===shared.store.records[id].tabId).url,frameId:0})};
 }
+
+test('interrupted campaign resumes once in its exact existing form, without navigating or submitting',async()=>{
+ const h=harness({preparation:{enabled:true}});h.jobs.forEach((j,i)=>{j.preparation={position:i+1};j.queue_position=i+1;});
+ await h.send('start');const r=h.shared.store.records.a,tabId=r.tabId;h.jobs[0].status='local_browser';
+ r.touched=Date.now()-100000;let fills=0;h.chrome.tabs.sendMessage=async(id,m)=>{if(m.action==='fill')fills++;return null;};
+ await h.events.alarm({name:'queue'});assert.equal(h.shared.store.records.a.tabId,tabId);assert.equal(h.shared.store.records.a.recoveryCount,1);assert.equal(fills,1);assert(h.shared.store.records.a.auto);
+ h.shared.store.records.a.touched=Date.now()-100000;await h.events.alarm({name:'queue'});assert.equal(fills,1,'no endless recovery loop');assert(h.shared.store.records.b.auto);assert(!h.shared.calls.some(c=>c.route.endsWith('/attempt')));
+});
+
+test('preparation heartbeat retains activity without clearing blockers or manufacturing ready evidence',async()=>{
+ const h=harness();await h.send('open',{id:'a'});h.shared.store.records.a.touched=0;
+ const before=h.shared.calls.length;assert.equal((await h.send('preparation-heartbeat',{},h.sender('a'))).data.continue,true);
+ assert(h.shared.store.records.a.touched>0);assert.equal(h.shared.calls.length,before);
+ await h.send('stop');assert.equal((await h.send('preparation-heartbeat',{},h.sender('a'))).data.continue,false);
+});
+
+test('a busy responsive form is not timed out while Gemini prepares its answers',async()=>{
+ const h=harness();await h.send('start');h.shared.store.records.a.touched=Date.now()-100000;
+ h.chrome.tabs.sendMessage=async()=>({busy:true,attempted:false});await h.events.alarm({name:'queue'});
+ assert(h.shared.store.records.a.auto);assert(!h.shared.store.records.b);assert(!h.shared.calls.some(c=>/Browser stopped/.test(c.data?.message||'')));
+});
+
+test('recovery never reopens missing tabs, resumes attempts, overrides Stop, or restarts a real form blocker',async()=>{
+ for(const kind of ['lost','attempt','server-attempt','duplicate','stop','captcha','ready','outside']){
+  const h=harness({preparation:{enabled:true}});h.jobs[0].preparation={position:1};h.jobs[0].queue_position=1;
+  await h.send('start');const r=h.shared.store.records.a;r.auto=false;r.phase='blocked';r.interrupted=true;h.jobs[0].status='local_browser';
+  let fills=0;h.chrome.tabs.sendMessage=async(id,m)=>{if(m.action==='fill')fills++;return kind==='captcha'?{stopped:true,attempted:false}:null;};
+  if(kind==='lost')h.shared.tabs=h.shared.tabs.filter(t=>t.id!==r.tabId);
+  if(kind==='attempt')r.attempted=true;
+  if(kind==='server-attempt')h.shared.claims.a.attempted=true;
+  if(kind==='duplicate')h.shared.tabs.push({...h.shared.tabs.find(t=>t.id===r.tabId),id:99});
+  if(kind==='stop')await h.send('stop');
+  if(kind==='ready')r.phase='prepared';
+  if(kind==='outside')h.jobs[0].preparation=null;
+  const tabs=h.shared.tabs.length,claims=h.shared.calls.filter(c=>c.route.endsWith('/claim')).length;
+  await h.events.alarm({name:'queue'});assert.equal(fills,0,kind);assert.equal(h.shared.tabs.length,tabs,kind);assert.equal(h.shared.calls.filter(c=>c.route.endsWith('/claim')).length,claims,kind);
+ }
+});
 test('Blocked application retains its tab and queue automatically advances to the next job',async()=>{
  const h=harness();assert((await h.send('start')).ok);assert(h.shared.store.records.a.auto);const firstTab=h.shared.store.records.a.tabId;
  assert((await h.send('progress',{fields:['Degree'],message:'Missing Degree',blocked:true},h.sender('a'))).ok);
@@ -116,3 +154,4 @@ test('matching embedded Greenhouse frame gets its packet and unrelated frames re
  assert(!(await h.send('packet',{}, {...sender,url:sender.url.replace('trivago','other')})).ok);
  await h.send('open',{id:'a',auto:false});assert.equal(h.shared.tabs.filter(t=>t.url.includes('8794953002')).length,1,'reuse parent without duplicating application');
 });
+

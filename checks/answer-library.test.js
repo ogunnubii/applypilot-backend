@@ -3,9 +3,18 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse,reusableAnswers} from '../answer-library.js';
 import {installResearch} from '../google-research.js';
-import {canonicalLinkedIn} from '../profile-links.js';
+import {canonicalLinkedIn,canonicalGitHub} from '../profile-links.js';
 import {automaticTextAnswer} from '../automatic-answer.js';
 function fixture(){const db=new DatabaseSync(':memory:');db.exec("CREATE TABLE applicants(id TEXT PRIMARY KEY,answers_json TEXT);CREATE TABLE jobs(id TEXT PRIMARY KEY,answers_json TEXT NOT NULL DEFAULT '{}');INSERT INTO applicants VALUES('p','{}');INSERT INTO jobs(id) VALUES('j');");installLibrary(db);installResearch(db);return {db,j:{id:'j',applicant_id:'p',user_id:'u'}};}
+
+test('the same approved GitHub profile fills despite URL variants, while different accounts and repository links do not',()=>{
+ const {db}=fixture();try{
+  const p={id:'p',user_id:'u',answers_json:JSON.stringify({'GitHub':'https://github.com/Fixture','GitHub Profile':'github.com/fixture/','Your GitHub URL':'https://github.com/fixture?utm_source=example'})};
+  const answers=reusableAnswers(db,p);assert.equal(globalThis.ApplyPilotPolicy.knownAnswer('Github Profile',{},answers),'https://github.com/fixture');
+  p.answers_json=JSON.stringify({'GitHub':'https://github.com/fixture','GitHub Profile':'https://github.com/someone-else'});assert.equal(Object.keys(reusableAnswers(db,p)).length,0);
+  for(const value of ['on','GitHub','https://github.com/fixture/repository','https://github.com.evil.test/fixture','https://user:pass@github.com/fixture','https://github.com/fixture?redirect=other'])assert.equal(canonicalGitHub(value),null);
+ }finally{db.close();}
+});
 
 test('LinkedIn formatting differences and malformed captures do not suppress a valid profile; different identities still conflict',()=>{
  const {db}=fixture(),url='https://www.linkedin.com/in/fixture';
@@ -28,3 +37,4 @@ test('Captured answers are durable drafts; sensitive values excluded and account
 test('Reuse is explicit, scoped answers stay private to job, corrections revoke prior memory and delete removes it',()=>{const {db,j}=fixture();try{assert(!canReuse('Are you eligible to work in Canada?'));assert(!canReuse('How did you hear about this role?'));captureAnswers(db,j,[{question:'Do you have two years of Go experience?',answer:'Yes'}]);const row=db.prepare('SELECT * FROM answer_history').get();updateLibrary(db,'u',row.id,'Yes',true);assert.equal(Object.keys(JSON.parse(db.prepare('SELECT answers_json FROM applicants').get().answers_json)).length,1);captureAnswers(db,j,[{question:row.question,answer:'No'}]);assert.deepEqual(JSON.parse(db.prepare('SELECT answers_json FROM applicants').get().answers_json),{});assert.equal(db.prepare('SELECT reusable FROM answer_history').get().reusable,0);updateLibrary(db,'u',row.id,'No',true);deleteLibrary(db,'u',row.id);assert.deepEqual(JSON.parse(db.prepare('SELECT answers_json FROM applicants').get().answers_json),{});}finally{db.close();}});
 
 test('Confirmed ordinary memory is scoped, conflicts excluded and opt-out respected',()=>{const {db,j}=fixture();const p={id:'p',user_id:'u',answers_json:'{}'};try{captureAnswers(db,j,[{question:'University name',answer:'Example University'},{question:'Years of experience',answer:'10'},{question:'Are you authorized to work in Canada?',answer:'Yes'}]);assert.deepEqual({...reusableAnswers(db,p)},{});confirmLibrary(db,j);assert.equal(reusableAnswers(db,p)['University name'],'Example University');assert.equal(reusableAnswers(db,p)['Years of experience'],undefined);assert.equal(reusableAnswers(db,{...p,user_id:'other'})['University name'],undefined);const row=db.prepare("SELECT * FROM answer_history WHERE question='University name'").get();updateLibrary(db,'u',row.id,row.answer,false);assert.equal(reusableAnswers(db,p)['University name'],undefined);updateLibrary(db,'u',row.id,row.answer,true);captureAnswers(db,{...j,id:'j2'},[{question:'School',answer:'Different University'}]);confirmLibrary(db,{...j,id:'j2'});assert.equal(reusableAnswers(db,p)['University name'],undefined);assert.equal(reusableAnswers(db,p).School,undefined);}finally{db.close();}});
+

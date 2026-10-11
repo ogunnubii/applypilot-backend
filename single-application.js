@@ -142,7 +142,8 @@ function preparationProblem(db,job){
  return '';
 }
 const isBlocked=job=>['paused','needs_review'].includes(job.status)||job.status==='local_browser'&&job.local_phase==='blocked';
-export function startOneApplication(db,userId,jobId){
+export function startOneApplication(db,userId,jobId,{auto_submit=true}={}){
+ if(typeof auto_submit!=='boolean')throw Error('Choose an explicit submission mode.');
  db.exec('BEGIN IMMEDIATE');try{
   const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(userId),job=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,userId);
   if(!job||!focus?.search_queue_only)throw Error('Choose a fresh application from your saved search queue.');
@@ -151,9 +152,9 @@ export function startOneApplication(db,userId,jobId){
   if(current&&db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='continuation_requests'").get()&&db.prepare("SELECT 1 FROM continuation_requests WHERE job_id=? AND user_id=? AND state='dispatching'").get(current.id,userId))throw Error('A continuation is still dispatching for the selected application.');
   if(current&&current.id!==job.id&&!receiptConfirmed(db,current)&&!(isBlocked(current)&&!hasSubmissionEvidence(db,current))&&!['archived','duplicate'].includes(current.status))throw Error('Resolve the selected application before starting another.');
   const problem=preparationProblem(db,job)||savedSearchProblem(db,job,focus,true);if(problem)throw Error(problem);
-  if(metadataFor(job).manualReview||globalThis.ApplyPilotPolicy.customApplication(job.url))throw Error('This employer requires your final review and Submit click.');
+  if(auto_submit&&(metadataFor(job).manualReview||globalThis.ApplyPilotPolicy.customApplication(job.url)))throw Error('This employer requires your final review and Submit click.');
   if(db.prepare('SELECT execution_mode FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,userId)?.execution_mode!=='cloud')throw Error('Choose hosted worker mode before starting a hosted application.');
-  db.prepare('UPDATE work_focus SET enabled=1,auto_submit=1,skip_blocked=0,stop_after_receipt=1,job_id=? WHERE user_id=?').run(job.id,userId);
+  db.prepare('UPDATE work_focus SET enabled=1,auto_submit=?,skip_blocked=0,stop_after_receipt=1,job_id=? WHERE user_id=?').run(auto_submit?1:0,job.id,userId);
   if(job.status==='saved')db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=?").run(now(),job.id);
   db.exec('COMMIT');return focusSnapshot(db,userId);
  }catch(error){db.exec('ROLLBACK');throw error;}

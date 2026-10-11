@@ -11,6 +11,19 @@ function fixture(path=':memory:'){
  const db=new DatabaseSync(path);db.exec("PRAGMA foreign_keys=ON; CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id,applicant_id,status,challenge,local_phase,local_attempt_at,attempts,local_owner,lease_at,handoff_available,confirmation,updated_at);CREATE TABLE events(job_id,at,type,message);CREATE TABLE work_focus(user_id PRIMARY KEY,enabled,auto_submit,skip_blocked,job_id);CREATE TABLE continuation_requests(user_id,job_id,state);INSERT INTO jobs VALUES('j','u','p','submitted','Applicant reported submission','verifying','2026-10-05T04:00:44Z',1,'original-browser',NULL,0,NULL,'2026-10-05T04:00:44Z');INSERT INTO events VALUES('j','2026-10-05T04:00:44Z','applicant_reported_submission','Reported without receipt');INSERT INTO work_focus VALUES('u',1,1,1,'j'),('other',1,1,1,'other-job');");installUnresolvedAttempts(db);return db;
 }
 const row=db=>db.prepare("SELECT * FROM jobs WHERE id='j'").get();
+test('a stopped hosted attempt can stay unresolved without losing counts or permitting retries',()=>{
+ const db=fixture();db.exec("CREATE TABLE autonomous_attempts(job_id,owner,created_at);INSERT INTO autonomous_attempts VALUES('j','hosted-worker','2026');DELETE FROM events;UPDATE jobs SET status='needs_review',challenge='Unconfirmed submission',local_owner=NULL;INSERT INTO events VALUES('j','2026','submission_started','Intent'),('j','2026','automatic_submission','Reserved'),('j','2026','needs_review','No receipt')");
+ const before=row(db),state=unresolvedAttemptEligibility(db,before);assert.equal(state.eligible,true);
+ parkUnresolvedAttempt(db,'u','j',state.evidence);assert.deepEqual(row(db),before);assert(unresolvedAttemptQuarantined(db,row(db)));assert.equal(inFlightApplication(db,'u'),undefined);
+ assert(applicationEvidence({...row(db),attempt_event:true}).awaiting);assert(!applicationEvidence(row(db)).confirmed);
+ assert.throws(()=>db.exec("UPDATE jobs SET status='queued' WHERE id='j'"),/retries/);db.close();
+});
+test('hosted unresolved parking refuses an active browser, missing reservation or unfinished worker',()=>{
+ for(const mutation of ["UPDATE jobs SET handoff_available=1","DELETE FROM autonomous_attempts","INSERT INTO events VALUES('j','2026','running','Restarted')","UPDATE jobs SET local_owner='browser'"]){
+  const db=fixture();db.exec("CREATE TABLE autonomous_attempts(job_id,owner,created_at);INSERT INTO autonomous_attempts VALUES('j','hosted-worker','2026');UPDATE jobs SET status='needs_review',challenge='Unconfirmed submission',local_owner=NULL;INSERT INTO events VALUES('j','2026','needs_review','No receipt')");
+  db.exec(mutation);assert.equal(unresolvedAttemptEligibility(db,row(db)).eligible,false,mutation);db.close();
+ }
+});
 test('explicit owner-bound marker preserves uncertain outcome and job evidence, pauses only owner and never repeats execution',()=>{
  const db=fixture(),before=row(db),other=db.prepare("SELECT * FROM work_focus WHERE user_id='other'").get(),evidence=unresolvedAttemptEligibility(db,before).evidence;
  assert.throws(()=>parkUnresolvedAttempt(db,'other','j',evidence),/not found/);assert.throws(()=>unresolvedAttemptState(db,'other','j'),/not found/);assert.equal(db.prepare('SELECT COUNT(*) n FROM unresolved_attempt_quarantines').get().n,0);

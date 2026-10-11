@@ -209,7 +209,8 @@ if(await submit.count()!==1||await next.count()>0)return set(job,'needs_review',
  const result=await submitHostedApplication({page,job,submit,review,
   reserve:()=>reserveAutonomousAttempt(db,job.id,job.user_id,'hosted-worker'),
   wait:ms=>browserPage.waitForTimeout(ms),
-  recordLimit:text=>recordEmployerLimit(db,job.user_id,job.id,text,{source:'Employer response after automatic attempt'})});
+  recordLimit:text=>recordEmployerLimit(db,job.user_id,job.id,text,{source:'Employer response after automatic attempt'}),
+  recordDiagnostic:message=>event(job.id,'submission_diagnostic',message)});
  if(result.status==='submitted')confirmLibrary(db,job);
  return set(job,result.status,result.message,result.challenge||null,result.confirmation||null);
 }
@@ -231,6 +232,7 @@ return set(job,'needs_review','Application exceeded the 15-step limit','Step lim
 async function main(){recoverWorkerJobs();let browser=await chromium.launch({headless:true});console.log('ApplyPilot worker running');
  db.prepare('UPDATE jobs SET handoff_available=0').run();
  handoffs=new Handoffs({
+  onDiagnostic:(job,message)=>event(job.id,'submission_diagnostic',message),
   onClose:(job,message)=>{db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id);event(job.id,'handoff_closed',message)},
   onPossibleSubmit:job=>{if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('manual_submission','submission_started') LIMIT 1").get(job.id)){event(job.id,'manual_submission','Applicant clicked the employer submit control.');event(job.id,'submission_started','Submission intent saved before the employer action.');}db.prepare("UPDATE jobs SET challenge='Unconfirmed submission',updated_at=? WHERE id=?").run(now(),job.id)},
   onSubmitted:(job,receiptText)=>{confirmLibrary(db,job);set(job,'submitted','Employer confirmed receipt during human handoff',null,receiptText);db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id)},

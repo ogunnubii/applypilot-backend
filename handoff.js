@@ -2,6 +2,7 @@ import {supported,sameApplication,receipt} from './local-policy.js';
 import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
 import {readToken} from './auth.js';
+import {watchSubmission} from './submission-diagnostics.js';
 const intermediateAction=/\b(next|continue|review|proceed)\b|sign\s*in|log\s*in/i;
 const explicitFinalAction=/\bsubmit\b|\bsend\s+(?:my\s+)?application\b|\bcomplete\s+(?:my\s+)?application\b/i;
 export function isFinalSubmitControl(control){
@@ -51,7 +52,7 @@ async function enterSubmitControl(page){
  return null;
 }
 export class Handoffs {
- constructor({onResume,onClose,onSubmitted,onPossibleSubmit,max=3,clock=Date.now}){Object.assign(this,{onResume,onClose,onSubmitted,onPossibleSubmit,max,clock});this.sessions=new Map()}
+ constructor({onResume,onClose,onSubmitted,onPossibleSubmit,onDiagnostic=()=>{},max=3,clock=Date.now}){Object.assign(this,{onResume,onClose,onSubmitted,onPossibleSubmit,onDiagnostic,max,clock});this.sessions=new Map()}
  full(){return this.sessions.size>=this.max}
  async hold(job,context,page){
   if(this.sessions.has(job.id))return;
@@ -60,6 +61,7 @@ export class Handoffs {
   const session={job,context,page,created:this.clock(),touched:this.clock(),busy:false,ready:job.challenge==='Ready to submit',attempted:['Submission in progress','Unconfirmed submission'].includes(job.challenge),initialReceipt:!!receipt(initial),chooser:null};
   const attach=p=>p.on?.('filechooser',chooser=>{session.chooser=chooser});context.pages().forEach(attach);context.on?.('page',attach);
   this.sessions.set(job.id,session);
+  session.diagnostic=watchSubmission(page);
  }
  async expire(){for(const [id,s] of this.sessions){const expired=s.ready?this.clock()-s.created>12*60*60*1000:(this.clock()-s.touched>15*60*1000||this.clock()-s.created>45*60*1000);if(!s.busy&&expired){this.sessions.delete(id);await s.context.close().catch(()=>{});this.onClose(s.job,s.ready?'Ready-to-submit browser expired after 12 hours. Reopen the application to prepare it again.':'Live browser expired. Saved answers remain; reopen to restart the form.')}}}
  async command(uid,id,action,data={}){
@@ -77,7 +79,7 @@ export class Handoffs {
    if(action==='click'){
     if(!Number.isFinite(data.x)||!Number.isFinite(data.y)||data.x<0||data.y<0||data.x>1100||data.y>800)throw Error('Invalid click');
     const possible=isFinalSubmitControl(await framePointControl(p,data.x,data.y));
-    if(possible){s.attempted=true;await this.onPossibleSubmit(s.job);}
+    if(possible){s.attempted=true;await this.onPossibleSubmit(s.job);s.diagnostic.start();}
     await p.mouse.click(data.x,data.y);s.touched=this.clock();
    }else if(action==='drag'){
     if(!Array.isArray(data.points)||data.points.length<2||data.points.length>40||data.points.some(v=>!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x<0||v.x>1100||v.y<0||v.y>800))throw Error('Invalid drag');
@@ -96,7 +98,7 @@ export class Handoffs {
     if(!['Tab','Shift+Tab','Enter','Backspace','Delete','ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Home','End','PageDown','PageUp','Escape','ControlOrMeta+A','Space'].includes(data.key))throw Error('Unsupported key');
     if(data.key==='Enter'){
      const possible=!!await enterSubmitControl(p);
-     if(possible){s.attempted=true;await this.onPossibleSubmit(s.job);}
+     if(possible){s.attempted=true;await this.onPossibleSubmit(s.job);s.diagnostic.start();}
     }
     await p.keyboard.press(data.key);s.touched=this.clock();
    }else if(action==='scroll'){
@@ -106,8 +108,9 @@ export class Handoffs {
    }else if(action!=='view')throw Error('Unsupported browser action');
    // Input acknowledgements do not wait for image capture. The next view checks receipts.
    if(data.render===false&&['click','drag','text','key','scroll'].includes(action))return {accepted:true};
+   if(s.attempted){const note=await s.diagnostic.describe();if(note&&note!==s.lastDiagnostic){s.lastDiagnostic=note;this.onDiagnostic(s.job,note);}}
    let content='';if(s.attempted&&!s.initialReceipt)for(const frame of p.frames())if(sameApplication(p.url(),s.job.url)&&sameApplication(frame.url(),s.job.url))content+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
-   if(s.attempted&&!s.initialReceipt&&receipt(content)){this.onSubmitted(s.job,receipt(content));this.sessions.delete(id);await s.context.close();return {submitted:true}}
+   if(s.attempted&&!s.initialReceipt&&receipt(content)){this.onSubmitted(s.job,receipt(content));this.sessions.delete(id);s.diagnostic.stop();await s.context.close();return {submitted:true}}
    const image=await p.screenshot({type:'jpeg',quality:60,timeout:10000});
    const frameId=createHash('sha256').update(image).digest('hex');
    const url=new URL(p.url());return {image:data.frameId===frameId?undefined:image.toString('base64'),frameId,width:1100,height:800,host:url.hostname,uploadRequested:!!s.chooser,expiresAt:s.ready?s.created+12*60*60*1000:Math.min(s.touched+15*60*1000,s.created+45*60*1000)};

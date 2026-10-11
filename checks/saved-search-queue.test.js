@@ -6,6 +6,15 @@ import {installSingleApplication,inFlightApplication,receiptConfirmed,startOneAp
 import {normalizeSearchScope,scopeIntent} from '../search-scope.js';
 import {jobIntelligence} from '../job-intelligence.js';
 const scope=normalizeSearchScope({roles:['Platform Engineer'],localPlaces:['ontario'],remotePlaces:['canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true,preferRemote:true});
+test('one-job preparation cannot reserve a Submit and remains selected for applicant review',()=>{
+ const {db,add}=fixture();useSavedSearchQueue(db,'u',{applicant_id:'p'});add('manual');add('later');
+ const f=startOneApplication(db,'u','manual',{auto_submit:false});assert.equal(f.enabled,true);assert.equal(f.auto_submit,false);assert.equal(f.stop_after_receipt,true);
+ db.exec("UPDATE jobs SET status='running' WHERE id='manual'");
+ assert.throws(()=>reserveAutonomousAttempt(db,'manual','u','hosted-worker'),/not enabled/);
+ db.exec("UPDATE jobs SET status='needs_review',challenge='Ready to submit',handoff_available=1 WHERE id='manual'");
+ assert.equal(ensureFocusedJob(db,'u').job_id,'manual');assert.equal(ensureFocusedJob(db,'u').auto_submit,false);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM autonomous_attempts').get().n,0);db.close();
+});
 function fixture(){
  const db=new DatabaseSync(':memory:');db.exec(`CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id,applicant_id,company,title,url,normalized_url,status,local_owner,local_attempt_at,local_phase,challenge,confirmation,attempts DEFAULT 0,handoff_available DEFAULT 0,match_score DEFAULT 90,created_at,updated_at,job_metadata_json DEFAULT '{}');CREATE TABLE applicants(id,user_id,consent,email,resume_path,execution_mode,focus);CREATE TABLE events(job_id,at,type,message);CREATE TABLE external_application_history(id,user_id,company,title,status,company_key,title_key);CREATE TABLE research_draft_usage(job_id,question);CREATE TABLE searches(id,user_id,applicant_id,enabled,instruction,created_at,scope_json);CREATE TABLE employer_limits(user_id,applicant_id,employer_key,hold_until,message);INSERT INTO applicants VALUES('p','u',1,'fixture@example.test','fixture.pdf','cloud','Platform Engineer'),('p2','u2',1,'other@example.test','other.pdf','cloud','Platform Engineer');`);
  installBatches(db);installSingleApplication(db);

@@ -24,13 +24,20 @@ function hasConfirmedReceipt(db,job){
 export function unresolvedAttemptEligibility(db,job){
  const denied=reason=>({eligible:false,reason,evidence:null});
  if(!job)return denied('Application not found.');
- if(job.status!=='submitted')return denied('Only an applicant-reported submitted record can be kept unresolved here. Active or preparing applications cannot be parked.');
+ const reported=job.status==='submitted'&&job.challenge==='Applicant reported submission';
+ const hosted=job.status==='needs_review'&&job.challenge==='Unconfirmed submission'&&!job.local_owner;
+ if(!reported&&!hosted)return denied('Only a stopped, unconfirmed submission can be kept unresolved here. Active or preparing applications cannot be parked.');
  if(job.handoff_available!==0)return denied('A live or unverified hosted handoff must be resolved first.');
  if(job.challenge==='Submission in progress')return denied('Submission is explicitly in progress and cannot be parked.');
  if(hasConfirmedReceipt(db,job))return denied('An employer receipt is already confirmed; parking is unnecessary.');
- if(job.challenge!=='Applicant reported submission'||!['verifying','uncertain'].includes(job.local_phase))return denied('This record is not a recognized applicant-reported unresolved submission.');
+ if(!['verifying','uncertain'].includes(job.local_phase))return denied('This record is not a recognized unresolved submission.');
  if(!job.local_attempt_at)return denied('Submission attempt evidence is missing.');
- if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='applicant_reported_submission' LIMIT 1").get(job.id))return denied('The applicant-reported submission event is missing.');
+ if(reported&&!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='applicant_reported_submission' LIMIT 1").get(job.id))return denied('The applicant-reported submission event is missing.');
+ if(hosted){
+  const reservation=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='autonomous_attempts'").get()&&db.prepare("SELECT 1 FROM autonomous_attempts WHERE job_id=? AND owner='hosted-worker'").get(job.id);
+  const latest=db.prepare("SELECT type FROM events WHERE job_id=? AND type IN ('running','resumed','queued','submission_started','automatic_submission','manual_submission','manual_submission_retry','needs_review') ORDER BY rowid DESC LIMIT 1").get(job.id);
+  if(!reservation||latest?.type!=='needs_review')return denied('The hosted attempt has not reached a verified stopped state.');
+ }
  if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='continuation_requests'").get()&&db.prepare("SELECT 1 FROM continuation_requests WHERE user_id=? AND job_id=? AND state='dispatching'").get(job.user_id,job.id))return denied('A browser continuation is still dispatching.');
  const events=db.prepare('SELECT rowid,type,at FROM events WHERE job_id=? AND type IN ('+evidenceTypes.map(()=>'?').join(',')+') ORDER BY rowid').all(job.id,...evidenceTypes);
  const evidence=createHash('sha256').update(JSON.stringify([job.id,job.user_id,job.applicant_id,job.status,job.local_phase,job.challenge,job.local_attempt_at,job.attempts,job.local_owner,job.handoff_available,job.confirmation,events])).digest('hex');

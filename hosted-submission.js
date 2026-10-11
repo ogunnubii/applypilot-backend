@@ -1,9 +1,10 @@
 import {sameApplication,receipt,submissionDeclaration} from './local-policy.js';
 import {applicationLimit} from './employer-limits.js';
+import {watchSubmission} from './submission-diagnostics.js';
 
 // Reservation is durable before the only possible click. Errors after reservation
 // must remain uncertain; neither timeouts nor an unrelated receipt allow a replay.
-export async function submitHostedApplication({page,job,submit,review,reserve,wait,recordLimit}){
+export async function submitHostedApplication({page,job,submit,review,reserve,wait,recordLimit,recordDiagnostic=()=>{}}){
  const blocked=(message,challenge)=>({status:'needs_review',message,challenge});
  if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');
  const before=await page.locator('body').innerText();
@@ -16,6 +17,7 @@ export async function submitHostedApplication({page,job,submit,review,reserve,wa
  // reservation; reserve rechecks current authorization and applicant consent.
  if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');
  reserve();
+ const diagnostic=watchSubmission(page);diagnostic.start();
  try{
   await submit.click();
   for(let i=0;i<30;i++){
@@ -31,6 +33,8 @@ export async function submitHostedApplication({page,job,submit,review,reserve,wa
   }
  }catch{
   return blocked('Submission was started, but its result could not be verified. Check the employer receipt before retrying.','Unconfirmed submission');
+ }finally{
+  try{recordDiagnostic(await diagnostic.describe());}catch{}finally{diagnostic.stop();}
  }
  return blocked('Submit was clicked once. Waiting for a verifiable employer receipt; automatic retry is disabled.','Unconfirmed submission');
 }

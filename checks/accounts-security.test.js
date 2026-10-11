@@ -8,13 +8,15 @@ import {createServer} from 'node:net';
 import {randomUUID,createHmac} from 'node:crypto';
 
 test('public signup, existing owner preservation, tenant boundaries and durable logout',{timeout:45000},async()=>{
+ // All names, contacts and resume markers below are synthetic fixtures in a temporary database.
+ const ownerPassword=randomUUID(),newPassword=randomUUID();
  const dir=mkdtempSync(join(tmpdir(),'applypilot-accounts-'));
- process.env.DATABASE_PATH=join(dir,'test.sqlite');process.env.SESSION_SECRET='test-only-account-security-secret-long-enough';
+ process.env.DATABASE_PATH=join(dir,'test.sqlite');process.env.SESSION_SECRET=randomUUID()+randomUUID();
  const {db}=await import('../db.js'),{issueToken,hashPassword,verifyPassword,readToken}=await import('../auth.js');
  const {installAccounts,allowAuthAttempt,authClientAddress}=await import('../account-security.js');installAccounts(db);
  const owner=randomUUID(),profile=randomUUID(),job=randomUUID(),answer=randomUUID(),search=randomUUID(),resume=join(dir,'owner.pdf');
  writeFileSync(resume,'%PDF-1.4\nPRIVATE ORIGINAL OWNER RESUME');
- db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(owner,'owner@example.test',hashPassword('Owner-password-12345'),'2026');
+ db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(owner,'owner@example.test',hashPassword(ownerPassword),'2026');
  db.prepare("INSERT INTO applicants(id,user_id,name,email,resume_path,answers_json,created_at) VALUES(?,?,?,?,?,'{\"Phone\":\"PRIVATE OWNER PHONE\"}','2026')").run(profile,owner,'Original Owner','owner@example.test',resume);
  db.prepare("INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,created_at,updated_at) VALUES(?,?,?,'Private Role','Private Company','https://jobs.lever.co/private/role','https://jobs.lever.co/private/role','saved','2026','2026')").run(job,owner,profile);
  db.prepare("INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,enabled,created_at) VALUES(?,?,?,'private search','[]',0,'2026')").run(search,owner,profile);
@@ -25,7 +27,7 @@ test('public signup, existing owner preservation, tenant boundaries and durable 
  const start=async()=>{child=spawn(process.execPath,['server.js'],{cwd:resolve('.'),env:{...process.env,PORT:String(port),BIND_HOST:'127.0.0.1',PUBLIC_ORIGIN:base,PUBLIC_SIGNUP:'true'},stdio:['ignore','pipe','pipe']});child.stdout.on('data',x=>log+=x);child.stderr.on('data',x=>log+=x);for(let i=0;i<80;i++){try{if((await api('/api/health')).status===200)return;}catch{}await new Promise(r=>setTimeout(r,50));}throw Error(log);};
  try{
   await start();
-  assert.equal((await api('/api/health')).data.release,'2026-10-11-hosted-input-events');
+  assert.equal((await api('/api/health')).data.release,'2026-10-11-receipt-status-labels');
   const homepage=await api('/');assert.equal(homepage.status,200);assert.equal(homepage.headers.get('x-robots-tag'),'index, follow');assert.match(homepage.data,/<h1[ >]/);
   const sitemap=await api('/sitemap.xml');assert.equal(sitemap.status,200);assert(!/\/(?:assistant|signup|login|setup|api)\b/.test(sitemap.data));
   db.prepare("INSERT INTO answer_history(id,user_id,applicant_id,job_id,question,answer,updated_at) VALUES(?,?,?,?,'Phone','PRIVATE OWNER PHONE','2026')").run(answer,owner,profile,job);
@@ -34,7 +36,7 @@ test('public signup, existing owner preservation, tenant boundaries and durable 
   assert.equal((await api('/api/signup',{method:'POST',data:{email:'bad',password:'short'}})).status,400);
   assert.equal((await api('/api/signup',{method:'POST',raw:'{"email":'})).status,400,'interrupted payload creates no account');
   assert.equal(db.prepare('SELECT count(*) n FROM users').get().n,1);
-  const signup=await api('/api/signup',{method:'POST',data:{email:' New@Example.Test ',password:'New-password-12345'}});assert.equal(signup.status,201,JSON.stringify(signup));
+  const signup=await api('/api/signup',{method:'POST',data:{email:' New@Example.Test ',password:newPassword}});assert.equal(signup.status,201,JSON.stringify(signup));
   const token=signup.data.token,uid=signup.data.user.id;assert.notEqual(uid,owner);assert.equal(signup.data.user.email,'new@example.test');assert.equal(signup.data.user.emailVerified,false);
   for(const table of ['applicants','jobs','searches','work_focus','application_batch_preferences','notification_preferences'])assert.equal(db.prepare('SELECT COUNT(*) n FROM '+table+' WHERE user_id=?').get(uid).n,0,'new account has no copied data or automatically enabled work: '+table);
   assert.equal((await api('/api/me',{token})).data.user.id,uid);
@@ -43,10 +45,10 @@ test('public signup, existing owner preservation, tenant boundaries and durable 
   assert.equal((await api('/api/notifications',{token:ownerToken,method:'PUT',data:{enabled:true}})).status,200,'existing owner notification permissions preserved');
   assert.equal((await api('/api/notifications',{token:ownerToken,method:'PUT',data:{enabled:false}})).status,200);
 
-  assert.equal((await api('/api/signup',{method:'POST',data:{email:'NEW@example.test',password:'New-password-12345'}})).status,409);
+  assert.equal((await api('/api/signup',{method:'POST',data:{email:'NEW@example.test',password:newPassword}})).status,409);
   assert.equal((await api('/api/login',{method:'POST',data:{email:'new@example.test',password:'wrong'}})).status,401);
   assert.equal((await api('/api/login',{method:'POST',data:{email:'new@example.test',password:{bad:true}}})).status,401);
-  const login=await api('/api/login',{method:'POST',data:{email:'new@example.test',password:'New-password-12345',remember:true}});assert.equal(login.status,200);assert.notEqual(login.data.token,token);
+  const login=await api('/api/login',{method:'POST',data:{email:'new@example.test',password:newPassword,remember:true}});assert.equal(login.status,200);assert.notEqual(login.data.token,token);
   for(const [path,key]of [['/api/applicants','applicants'],['/api/jobs','jobs'],['/api/answer-library','answers'],['/api/searches','searches'],['/api/activity','events'],['/api/application-history','records']]){const r=await api(path,{token});assert.equal(r.status,200,path);assert.deepEqual(r.data[key],[],path);}
   for(const [path,method,data]of [
    ['/api/applicants/'+profile,'PUT',{name:'Intruder'}],['/api/applicants/'+profile+'/resume','GET'],['/api/applicants/'+profile+'/resume','POST',{}],['/api/applicants/'+profile+'/resume-previous','GET'],['/api/applicants/'+profile+'/experience','GET'],

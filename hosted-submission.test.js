@@ -11,6 +11,17 @@ test('autonomous submission reserves before its only click and confirms only a n
  const f=fixture();const result=await submitHostedApplication(f.input);assert.equal(result.status,'submitted');assert.deepEqual(f.events,['reserve','click']);assert.equal(f.clicks,1);
  await submitHostedApplication(f.input);assert.equal(f.clicks,1);
 });
+
+test('sent-to receipt after one matching application click confirms without repeating the attempt',async()=>{
+ const f=fixture({after:'Your job application has been sent to Randstad Canada.'});
+ const result=await submitHostedApplication(f.input);
+ assert.equal(result.status,'submitted');
+ assert.equal(result.confirmation,'Your job application has been sent to Randstad Canada.');
+ await submitHostedApplication(f.input);
+ assert.equal(f.clicks,1);
+ const mismatch=fixture({after:'Your job application has been sent to Randstad Canada.',redirect:'https://jobs.lever.co/other/role-456'});
+ assert.equal((await submitHostedApplication(mismatch.input)).challenge,'Unconfirmed submission');
+});
 test('unknown required answer, CAPTCHA, existing receipt and legal declaration stop before reservation',async()=>{
  for(const options of [{check:{missing:['Years of experience']}},{check:{captcha:true,missing:[]}},{check:{signIn:true,missing:[]}},{check:{pending:true,missing:[]}},{disabled:true},{before:'Your application has been received'},{before:'By submitting you agree to our terms'}]){
   const f=fixture(options);assert.equal((await submitHostedApplication(f.input)).status,'needs_review');assert.equal(f.attempts,0);assert.equal(f.clicks,0);

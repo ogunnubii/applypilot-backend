@@ -49,6 +49,15 @@ test('historical verified receipts with residual verifying phase do not block or
  const before=JSON.stringify(db.prepare('SELECT * FROM jobs ORDER BY id').all());assert.equal(inFlightApplication(db,'u'),undefined);
  const result=useSavedSearchQueue(db,'u',{applicant_id:'p'});assert.equal(result.focus.enabled,false);assert.equal(JSON.stringify(db.prepare('SELECT * FROM jobs ORDER BY id').all()),before);db.close();
 });
+
+test('an actual sent-to receipt clears a historical verification blocker without erasing attempts',()=>{
+ const {db,add}=fixture();add('sent',{status:'submitted'});
+ db.exec("UPDATE jobs SET local_phase='verifying',local_attempt_at='2026',attempts=1,confirmation='Your job application has been sent to Randstad Canada.' WHERE id='sent';INSERT INTO events VALUES('sent','2026','manual_confirmation','Recorded employer email');");
+ assert.equal(inFlightApplication(db,'u'),undefined);
+ assert.equal(useSavedSearchQueue(db,'u',{applicant_id:'p'}).focus.auto_submit,false);
+ const job=db.prepare("SELECT * FROM jobs WHERE id='sent'").get();
+ assert.equal(job.attempts,1);assert.equal(job.local_attempt_at,'2026');assert(receiptConfirmed(db,job));db.close();
+});
 test('residual phase exemptions require genuine receipt evidence and never mask running or uncertain work',()=>{
  const {db,add}=fixture();db.exec("UPDATE jobs SET local_phase='verifying',confirmation='Thank you for applying' WHERE status='submitted'");
  add('reported',{status:'submitted'});db.exec("UPDATE jobs SET local_phase='verifying',challenge='Applicant reported submission',confirmation='Thank you for applying',local_attempt_at='2026' WHERE id='reported';INSERT INTO events VALUES('reported','2026','applicant_reported_submission','Reported only')");

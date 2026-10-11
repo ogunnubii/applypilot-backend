@@ -41,7 +41,16 @@
   function sameApplication(a,b) { try { return supported(a) && supported(b) && identity(a) === identity(b); } catch { return false; } }
   const submissionDeclaration = value => /\bby\s+(?:clicking|selecting|pressing|submitting|sending|completing)[\s\S]{0,240}?\b(?:agree|accept|certify|attest|consent|acknowledge|declare|authorize|waive)\b/i.test(String(value));
   const sensitive = value => /\b(certify|certification of accuracy|attest|perjury|legally binding|AI policy|arbitrat(?:ion|e)|waive|waiver|agree that|electronic signature|e-signature|signature|agree to|accept the terms|terms and conditions|acknowledge|declare that|accurate and complete|consent|criminal|convictions|authorize.*(?:background|credit)|payment|application fee|pay now|purchase|checkout|credit card|card number|cardholder|bank account|social security|national insurance|passport number|ssn)\b/i.test(String(value));
-  const receipt = value => (String(value).match(/(?:your )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b[^\n]{0,100}|thank(?:s| you) for (?:applying|your application)\b[^\n]{0,100}/i)||[])[0] || '';
+  const receipt = value => {
+    const text=String(value);
+    const existing=text.match(/(?:your )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b[^\n]{0,100}|thank(?:s| you) for (?:applying|your application)\b[^\n]{0,100}/i);
+    if(existing)return existing[0];
+    // Randstad's actual receipt uses "sent to". Require the affirmative sentence
+    // on its own line, not a future instruction, quotation or pending message.
+    // Callers still require a matching application and a recorded receipt event.
+    const sent=(text.match(/(?:^|[\r\n])\s*(?:(?:Applicant verified|Browser extension observed): )?(Your job application has been sent to [^\r\n.!?]{2,100}[.!])(?=\s|$)/i)||[])[1]||'';
+    return /\b(?:pending|not|awaiting|queued|failed)\b/i.test(sent)?'':sent;
+  };
   function savedAnswer(question, answers) {
     if (sensitive(question)||normalize(question)==='required field') return null;
     const keys = Object.keys(answers || {}).filter(k => normalize(k) === normalize(question));

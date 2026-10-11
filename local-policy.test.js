@@ -1,6 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {supported,sameApplication,sensitive,savedAnswer,receipt} from './local-policy.js';
+import {applicationEvidence} from './operation-evidence.js';
+
+test('sent-to employer receipts require an affirmative completed sentence',()=>{
+ const message='Your job application has been sent to Randstad Canada.';
+ assert.equal(receipt(message),message);
+ assert.equal(receipt('job application confirmation\n'+message+'\nReference: fixture'),message);
+ for(const prefix of ['Applicant verified: ','Browser extension observed: '])assert.equal(receipt(prefix+message),message);
+ for(const text of [
+  'Your job application has not been sent to Randstad Canada.',
+  'Your job application will be sent to Randstad Canada.',
+  'Your job application is being sent to Randstad Canada.',
+  'Once you submit, your job application has been sent to Randstad Canada.',
+  'The next page will say "Your job application has been sent to Randstad Canada."',
+  'Your job application has been sent to',
+  'Your job application has been sent to Randstad Canada, pending submission',
+  'Your job application has been sent to Randstad Canada, pending submission.',
+ ])assert.equal(receipt(text),'',text);
+ assert.equal(applicationEvidence({confirmation:message,receipt_event:0}).confirmed,false);
+ assert.equal(applicationEvidence({confirmation:message,receipt_event:1}).confirmed,true);
+ assert.equal(applicationEvidence({confirmation:'Applicant verified: '+message,receipt_event:1}).confirmed,true);
+});
 
 test('ATS allowlist and job identity reject lookalikes and other applications',()=>{
  for(const url of ['https://jobs.ashbyhq.com/example/123','https://jobs.smartrecruiters.com/example/123','https://apply.workable.com/example/j/123','https://example.bamboohr.com/careers/123','https://example.recruitee.com/o/123','https://example.wd1.myworkdayjobs.com/en-US/jobs/job/123'])assert(supported(url));

@@ -1,4 +1,5 @@
-import {currentScopeAssessment} from './search-scope.js';
+import {matchAssessment} from './matching.js';
+import {currentScopeAssessment,currentSearchScope,scopeIntent,searchScopeSignature} from './search-scope.js';
 import {prioritizeApplications} from './application-diversity.js';
 import {applicationEvidence} from './operation-evidence.js';
 import {employerHold} from './employer-limits.js';
@@ -15,7 +16,45 @@ export function installSingleApplication(db){
  db.exec(`CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT);
  CREATE TABLE IF NOT EXISTS application_progress(job_id TEXT PRIMARY KEY,required_total INTEGER NOT NULL,required_filled INTEGER NOT NULL,updated_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS autonomous_attempts(job_id TEXT PRIMARY KEY,owner TEXT NOT NULL,created_at TEXT NOT NULL);`);
- for(const column of ['auto_submit','skip_blocked'])if(!db.prepare('PRAGMA table_info(work_focus)').all().some(c=>c.name===column))db.exec('ALTER TABLE work_focus ADD COLUMN '+column+' INTEGER NOT NULL DEFAULT 0');
+ for(const column of ['auto_submit','skip_blocked','search_queue_only'])if(!db.prepare('PRAGMA table_info(work_focus)').all().some(c=>c.name===column))db.exec('ALTER TABLE work_focus ADD COLUMN '+column+' INTEGER NOT NULL DEFAULT 0');
+ if(!db.prepare('PRAGMA table_info(work_focus)').all().some(c=>c.name==='queue_applicant_id'))db.exec("ALTER TABLE work_focus ADD COLUMN queue_applicant_id TEXT");
+}
+// Explicit queue transition; historical attempts are never cleared or retried.
+export function inFlightApplication(db,userId,exceptId=''){
+ return db.prepare("SELECT id FROM jobs WHERE user_id=? AND id!=? AND (status='running' OR local_phase='verifying' OR challenge='Submission in progress') LIMIT 1").get(userId,exceptId);
+}
+export function useSavedSearchQueue(db,userId,{applicant_id}={}){
+ const profile=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(applicant_id,userId);
+ if(!profile)throw Error('Choose your saved applicant profile.');
+ if(!currentSearchScope(db,{user_id:userId,applicant_id}))throw Error('Save and enable a structured search for this profile first.');
+ db.exec('BEGIN IMMEDIATE');try{
+  if(inFlightApplication(db,userId))throw Error('An application is still running or verifying a submission. Let it finish or resolve it before changing queues.');
+  db.prepare('UPDATE application_batch_preferences SET enabled=0 WHERE user_id=?').run(userId);
+  db.prepare("INSERT INTO work_focus(user_id,enabled,job_id,auto_submit,skip_blocked,search_queue_only,queue_applicant_id) VALUES(?,0,NULL,0,0,1,?) ON CONFLICT(user_id) DO UPDATE SET enabled=0,job_id=NULL,auto_submit=0,skip_blocked=0,search_queue_only=1,queue_applicant_id=excluded.queue_applicant_id").run(userId,applicant_id);
+  db.exec('COMMIT');
+ }catch(e){db.exec('ROLLBACK');throw e;}
+ return {batch:{enabled:false},focus:focusSnapshot(db,userId),message:'Saved search queue selected. Automation is paused. Previous applications and searches are preserved; enable automatic submission separately when ready.'};
+}
+function savedSearchProblem(db,job,focus,candidate=false){
+ if(!focus?.search_queue_only)return '';
+ if(job.applicant_id!==focus.queue_applicant_id)return 'This application is outside the selected saved-search profile.';
+ const scope=currentSearchScope(db,job),metadata=metadataFor(job);
+ if(!scope)return 'An enabled structured search is required.';
+ if(metadata.searchScopeSignature!==searchScopeSignature(scope))return 'Run the active structured search to verify this job against its current scope.';
+ if(metadata.available!==true||!Number.isFinite(Date.parse(metadata.checkedAt||''))||Date.now()-Date.parse(metadata.checkedAt)>=86400000)return 'A fresh employer posting check is required.';
+ const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,job.user_id),intent=scopeIntent(scope);
+ if(scope.includeRelatedRoles)intent.roles.push(...String(p?.focus||'').split(/[;,]/).map(x=>x.trim().toLowerCase()).filter(Boolean));
+ if(!matchAssessment({...metadata,title:job.title},intent,p?.focus).strong||currentScopeAssessment(db,job)?.eligibility?.eligible!==true)return 'A strong, eligible match to the saved structured search is required.';
+ if(candidate&&(!['saved','queued'].includes(job.status)||Number(job.attempts)||job.local_owner||job.handoff_available||job.challenge||hasSubmissionEvidence(db,job)))return 'Only untouched applications can enter the saved search queue.';
+ return '';
+}
+export function savedSearchClaimProblem(db,job){
+ const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(job.user_id);
+ if(!focus?.search_queue_only)return '';
+ if(!focus.enabled||focus.job_id!==job.id)return 'Saved search automation is paused or another application is selected.';
+ if(inFlightApplication(db,job.user_id,job.id))return 'Another application is still running or verifying a submission.';
+ if(job.status==='local_browser'&&!hasSubmissionEvidence(db,job))return savedSearchProblem(db,job,focus);
+ return savedSearchProblem(db,job,focus,true);
 }
 export function receiptConfirmed(db,job){
  return !!job&&applicationEvidence({...job,receipt_event:db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('submitted','manual_confirmation') LIMIT 1").get(job.id)}).confirmed;
@@ -56,8 +95,10 @@ function selectFocusedJob(db,userId){
  if(!safeToMove)return;
  const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND status IN ('saved','queued','paused','needs_review','local_browser')").all(userId)
   .filter(job=>job.id!==current?.id&&!hasSubmissionEvidence(db,job)&&!preparationProblem(db,job));
- const untouched=rows.filter(job=>['saved','queued'].includes(job.status)&&!Number(job.attempts)&&!job.handoff_available&&!job.local_owner&&!job.challenge);
- const candidates=focus.skip_blocked?untouched:untouched.length?untouched:rows.filter(job=>!['saved','queued'].includes(job.status));
+ const modeRows=focus.search_queue_only?rows.filter(job=>!savedSearchProblem(db,job,focus,true)):rows;
+ if(focus.search_queue_only&&inFlightApplication(db,userId,current?.id||''))return;
+ const untouched=modeRows.filter(job=>['saved','queued'].includes(job.status)&&!Number(job.attempts)&&!job.handoff_available&&!job.local_owner&&!job.challenge);
+ const candidates=focus.search_queue_only||focus.skip_blocked?untouched:untouched.length?untouched:rows.filter(job=>!['saved','queued'].includes(job.status));
  const next=prioritizeApplications(db,userId,candidates)[0];
  db.prepare('UPDATE work_focus SET job_id=? WHERE user_id=?').run(next?.id||null,userId);
  if(next?.status==='saved')db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND status='saved' AND attempts=0 AND local_attempt_at IS NULL AND handoff_available=0").run(now(),next.id);
@@ -71,7 +112,7 @@ export function focusSnapshot(db,userId){
  const f=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(userId);
  const job=f?.job_id?db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(f.job_id,userId):null;
  const p=job?db.prepare('SELECT * FROM application_progress WHERE job_id=?').get(job.id):null;
- return {enabled:!!f?.enabled,auto_submit:!!f?.auto_submit,skip_blocked:!!f?.skip_blocked,job_id:f?.job_id||null,
+ return {enabled:!!f?.enabled,search_queue_only:!!f?.search_queue_only,queue_applicant_id:f?.queue_applicant_id||null,auto_submit:!!f?.auto_submit,skip_blocked:!!f?.skip_blocked,job_id:f?.job_id||null,
   selected_job:job?{id:job.id,title:job.title,company:job.company,status:job.status,challenge:job.challenge,execution_mode:db.prepare('SELECT execution_mode FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,userId)?.execution_mode||'cloud'}:null,
   parked:db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived','submitted','interview','rejected','offer') AND id!=COALESCE(?,'')").get(userId,f?.job_id||null).n,
   progress:p?{required:p.required_total,filled:p.required_filled,percent:p.required_total?Math.floor(p.required_filled*100/p.required_total):null,updated_at:p.updated_at}:null,
@@ -84,6 +125,8 @@ export function setWorkFocus(db,userId,{enabled,auto_submit,skip_blocked,next}={
  db.exec('BEGIN IMMEDIATE');
  try{
   const old=focusSnapshot(db,userId);
+  if(old.search_queue_only&&!currentSearchScope(db,{user_id:userId,applicant_id:old.queue_applicant_id}))throw Error('Save and enable a structured search before reenabling automation.');
+  if(old.search_queue_only&&inFlightApplication(db,userId,old.job_id||''))throw Error('Another application is still running or verifying a submission.');
   if(next&&old.job_id&&!old.confirmed)throw Error('The selected application needs an employer confirmation before moving on.');
   db.prepare('INSERT INTO work_focus(user_id,enabled,job_id,auto_submit,skip_blocked) VALUES(?,1,NULL,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=1,auto_submit=excluded.auto_submit,skip_blocked=excluded.skip_blocked').run(userId,auto_submit===true?1:0,skip_blocked===true?1:0);
   selectFocusedJob(db,userId);db.exec('COMMIT');
@@ -103,6 +146,8 @@ export function reserveAutonomousAttempt(db,jobId,userId,owner){
   if(j.status==='local_browser'&&j.local_owner!==owner)throw Error('This application belongs to another browser.');
   if(hasSubmissionEvidence(db,j))throw Error('A submission may already have occurred. Check the employer receipt.');
   const problem=preparationProblem(db,j);if(problem)throw Error(problem);
+  const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(userId);
+  if(focus?.search_queue_only){if(inFlightApplication(db,userId,j.id))throw Error('Another application is still running or verifying a submission.');const scopeProblem=savedSearchProblem(db,j,focus);if(scopeProblem)throw Error(scopeProblem);}
   if(metadataFor(j).manualReview||globalThis.ApplyPilotPolicy.customApplication(j.url))throw Error('This employer form requires your review and Submit click.');
   if(j.status==='running'&&(owner!=='hosted-worker'||j.local_owner||db.prepare('SELECT execution_mode FROM applicants WHERE id=?').get(j.applicant_id)?.execution_mode!=='cloud'))throw Error('The selected execution environment is no longer authorized.');
   if(j.status==='local_browser'&&['blocked','uncertain','verifying'].includes(j.local_phase))throw Error('The employer form needs review before automatic submission.');

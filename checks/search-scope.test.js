@@ -67,7 +67,7 @@ test('out-of-scope queued work cannot starve another applicant in hosted claim s
  const code=source.slice(source.indexOf('function claim(){'),source.indexOf('\nasync function pageIssue'));
  const rows=[{id:'blocked',user_id:'one',metadata:{eligibility:{eligible:false}}},{id:'allowed',user_id:'two',metadata:{eligibility:{eligible:true}}}],updates=[];
  const db={exec(){},prepare(sql){return {all:()=>sql.startsWith('SELECT user_id FROM work_focus')?[]:rows,run:(...args)=>updates.push(args)}}};
- const claim=new Function('handoffs','db','ensureFocusedJob','prioritizeApplications','now','event',code+';return claim;')({full:()=>false},db,()=>{},(_db,_user,jobs)=>jobs,()=>new Date().toISOString(),()=>{});
+ const claim=new Function('handoffs','db','ensureFocusedJob','prioritizeApplications','now','event','savedSearchClaimProblem',code+';return claim;')({full:()=>false},db,()=>{},(_db,_user,jobs)=>jobs,()=>new Date().toISOString(),()=>{},()=> '');
  assert.equal(claim().id,'allowed');assert.equal(updates.length,1);assert.equal(updates[0][2],'allowed');
 });
 test('Setup imports structured scope through the existing signed-in form and rejects invalid JSON before any request',async()=>{

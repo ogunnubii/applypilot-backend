@@ -154,3 +154,15 @@ Historical receipts and uncertain attempts are not rewritten or retried. Disable
 superseded searches when replacing a search so their discovery work does not keep
 refreshing older rankings. Older searches without a structured scope retain their
 legacy interpretation; no existing search is silently converted.
+
+### Leave a support-only batch without discarding applications
+
+In Applications, choose the applicant under **Use saved search queue**, then click
+that button. This explicit transition disables the support-only batch and pauses
+work focus/automatic submission. It clears only the old selection; jobs, batch
+membership, searches, receipts, attempts, and answers remain intact. A running or
+verifying application blocks the transition until resolved. Reenable automation
+separately when ready. Only untouched, fresh, strong eligible matches verified
+against the currently enabled structured scope can enter this queue; run that
+search again after changing scope or upgrading from legacy discovery metadata.
+Old uncertain attempts remain available for receipt review and cannot be retried.

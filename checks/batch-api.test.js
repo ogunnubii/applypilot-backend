@@ -30,6 +30,13 @@ test('real API autosaves drafts, learns completed factual answers, resumes once 
   const jobs=await api('/jobs');assert.equal(jobs.data.jobs.find(j=>j.id===fresh).execution_mode,'local','automatic submission does not reroute a local profile to cloud');assert.equal(jobs.data.batch.enabled,true,'enabling autonomy keeps the active batch');
   assert.equal((await api('/work-focus','PUT',{enabled:true,auto_submit:'true'})).status,409,'ambiguous authority is rejected');
   const stopped=await api('/work-focus','PUT',{enabled:false});assert.equal(stopped.status,200);assert.equal(stopped.data.auto_submit,false);assert.equal(stopped.data.skip_blocked,false);
+  const searchScope={roles:['Cloud Support Engineer'],localPlaces:['ontario'],remotePlaces:['canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true};
+  const search=await api('/searches','POST',{applicant_id:'p',instruction:'Structured roles',scope:searchScope});assert.equal(search.status,201);
+  const beforeTransition=JSON.stringify(db.prepare('SELECT * FROM jobs ORDER BY id').all());
+  const switched=await api('/application-batch','POST',{action:'saved-search',applicant_id:'p'});assert.equal(switched.status,200,JSON.stringify(switched));assert.equal(switched.data.focus.auto_submit,false);assert.equal(switched.data.focus.enabled,false);assert.equal(switched.data.focus.job_id,null);assert.equal(switched.data.focus.search_queue_only,true);assert.equal(JSON.stringify(db.prepare('SELECT * FROM jobs ORDER BY id').all()),beforeTransition);
+  assert.equal((await api('/application-batch')).data.enabled,false);assert.equal(db.prepare('SELECT enabled FROM searches WHERE id=?').get(search.data.id).enabled,1);
+  const rejectedLegacy=await api('/work-focus','PUT',{enabled:true,auto_submit:false});assert.equal(rejectedLegacy.status,200);assert.equal(rejectedLegacy.data.job_id,null,'legacy batch match needs a fresh current-scope discovery check');
+
 
  }finally{child.kill();await exited;db.close();}
 });

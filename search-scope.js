@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {workEligibility} from './work-eligibility.js';
 // Explicit discovery constraints, separate from ranking preferences. No applicant
 // facts are inferred from a request to prioritize sponsorship or contract work.
@@ -93,3 +94,5 @@ export function currentScopeAssessment(db,job){
  const eligibility=scopedWorkEligibility(posting,scope);
  return {eligibility,searchPriority:scopePriority(scope,eligibility,posting)};
 }
+
+export function searchScopeSignature(scope){return createHash('sha256').update(JSON.stringify(normalizeSearchScope(scope))).digest('hex');}

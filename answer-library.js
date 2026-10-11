@@ -1,4 +1,5 @@
 import {hasFactDraft} from './draft-provenance.js';
+import {canonicalLinkedIn} from './profile-links.js';
 import {randomUUID} from 'node:crypto';
 import {sensitive} from './local-policy.js';
 import {canResearchQuestion,hasResearchDraftForQuestion} from './google-research.js';
@@ -47,6 +48,10 @@ export function reusableAnswers(db,p){
  const result=Object.create(null);
  // Unapproved captures and answers explicitly excluded from reuse must not
  // suppress approved profile facts. Conflicts among approved facts still pause.
- for(const entries of groups.values()){if(new Set(entries.map(([,a])=>normalize(a))).size!==1)continue;for(const [q,a]of entries)result[q]=a;}
+ for(const [kind,raw] of groups){
+  const entries=kind==='linkedin'?raw.map(([q,a])=>[q,canonicalLinkedIn(a)]).filter(([,a])=>a):raw;
+  if(new Set(entries.map(([,a])=>normalize(a))).size!==1)continue;
+  for(const [q,a]of entries)result[q]=a;
+ }
  return result;
 }

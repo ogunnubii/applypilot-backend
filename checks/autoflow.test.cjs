@@ -318,7 +318,7 @@ test('hosted worker stops an HTTP 503 before inspecting or submitting a form and
  const page={setDefaultTimeout(){},goto:async()=>{gotoCount++;return {status:()=>503};},waitForTimeout:async()=>{},locator(selector){if(selector==='body')return {innerText:async()=>'Error 503\nService Unavailable'};if(selector==='form,input:visible,textarea:visible,select:visible')return {count:async()=>0};throw Error('Must not inspect/fill an error page: '+selector);},isClosed:()=>false};
  const context={newPage:async()=>page,close:async()=>{closed=true;}};const browser={newContext:async()=>context};
  const code=sources['worker.js'].replace(/import\s+[^;]+;/g,'').replace(/main\(\)\.catch[\s\S]*$/,'');
- const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold','retainBlockedSession','employmentContext',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,ctx.ApplyPilotPolicy.employerPageIssue,()=>null,(await import('../hosted-submission.js')).retainBlockedSession,(await import('../employment-answers.js')).employmentContext);
+ const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold','retainBlockedSession','employmentContext','currentSearchScope',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,ctx.ApplyPilotPolicy.employerPageIssue,()=>null,(await import('../hosted-submission.js')).retainBlockedSession,(await import('../employment-answers.js')).employmentContext,()=>null);
  await run({id:'j',user_id:'u',applicant_id:'p',url:'https://job-boards.greenhouse.io/example/jobs/42'},browser);
  assert.equal(gotoCount,1);assert.equal(status,'needs_review');assert.equal(challenge,'Employer site unavailable');assert(closed);
  assert(events.some(e=>e.message.includes('HTTP 503')));assert(!events.some(e=>['filled','submitted'].includes(e.type)));
@@ -407,7 +407,7 @@ test('discovery updates existing pay without resetting attempts and queues every
  const intelligence=pureModule('job-intelligence.js',{matchAssessment,workEligibility});
  const fetch=async url=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify(String(url).includes('/job-board/example')?{jobs:[old,best,lower,excluded]}:String(url).includes('arbeitnow')?{data:[],links:{}}:{jobs:[]})});
  const {priorApplication}=pureModule('application-dedup.js',{companyKey:key});
- const discovery=pureModule('discovery.js',{db,event:()=>{},now,normalizeURL:v=>v,randomUUID,companyKey:key,historyKey:key,matchAssessment,locationPriority:()=>5,workEligibility,...intelligence,priorApplication,pipelineEnabled:()=>false,fetch});
+ const discovery=pureModule('discovery.js',{db,event:()=>{},now,normalizeURL:v=>v,randomUUID,companyKey:key,historyKey:key,matchAssessment,locationPriority:()=>5,workEligibility,...intelligence,priorApplication,pipelineEnabled:()=>false,fetch,ashbyPosting:(await import('../ashby-posting.js')).ashbyPosting});
  const [one,two]=await Promise.all([discovery.runSearch('s','u'),discovery.runSearch('s','u')]);assert.equal(one,two);assert.equal(one.added,2);assert.equal(one.queued,2);
  const previous=db.prepare("SELECT * FROM jobs WHERE id='old'").get();assert.equal(previous.status,'local_browser');assert.equal(previous.attempts,2);assert.equal(previous.local_attempt_at,'2026-01-01');assert.equal(previous.notes,'Do not overwrite');assert(JSON.parse(previous.job_metadata_json).pay.length);
  const rows=db.prepare("SELECT title,status FROM jobs WHERE id!='old' ORDER BY title").all();assert.deepEqual(rows.map(r=>[r.title,r.status]),[[best.title,'queued'],[lower.title,'queued']]);
@@ -454,7 +454,7 @@ test('recommendations include eligible related roles for review while automatic 
  assert.equal(pureModule('job-intelligence.js').nextApplication([{id:'related',status:'saved',job_metadata_json:JSON.stringify(metadata)}]),null);
  w.close();
  const boardSource=sources['discovery.js'].slice(sources['discovery.js'].indexOf('async function listBoard'),sources['discovery.js'].indexOf('const defaultBoards'));
- const board=new Function('cachedJSON','readJSON',boardSource+';return listBoard;')(async()=>({jobs:[{title:'Private posting',isListed:false,jobUrl:'https://jobs.ashbyhq.com/example/12345678-1234-1234-1234-123456789abc'}]}),()=>{});
+ const board=new Function('cachedJSON','readJSON','ashbyPosting',boardSource+';return listBoard;')(async()=>({jobs:[{title:'Private posting',isListed:false,jobUrl:'https://jobs.ashbyhq.com/example/12345678-1234-1234-1234-123456789abc'}]}),()=>{},(await import('../ashby-posting.js')).ashbyPosting);
  assert.equal((await board('https://jobs.ashbyhq.com/example')).length,0);
  assert.equal((await board('https://jobs.ashbyhq.com/example',{includeUnlisted:true})).length,1,'manual tracked private postings are not mistaken for removed jobs');
 });
@@ -726,7 +726,7 @@ test('hosted worker records an explicit employer application limit without filli
  const page={setDefaultTimeout(){},goto:async()=>({status:()=>200}),waitForTimeout:async()=>{},locator(selector){if(selector==='body')return {innerText:async()=>ashbyLimitMessage};if(selector==='form,input:visible,textarea:visible,select:visible')return {count:async()=>0};throw Error('Limit page must not be filled: '+selector);},isClosed:()=>false};
  const context={newPage:async()=>page,close:async()=>{closed=true;}},browser={newContext:async()=>context};
  const code=sources['worker.js'].replace(/import\s+[^;]+;/g,'').replace(/main\(\)\.catch[\s\S]*$/,'');
- const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold','applicationLimit','recordEmployerLimit','retainBlockedSession','employmentContext',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,()=>null,()=>null,m.applicationLimit,()=>{recorded++;},(await import('../hosted-submission.js')).retainBlockedSession,(await import('../employment-answers.js')).employmentContext);
+ const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold','applicationLimit','recordEmployerLimit','retainBlockedSession','employmentContext','currentSearchScope',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,()=>null,()=>null,m.applicationLimit,()=>{recorded++;},(await import('../hosted-submission.js')).retainBlockedSession,(await import('../employment-answers.js')).employmentContext,()=>null);
  await run({id:'j',user_id:'u',applicant_id:'p',url:'https://jobs.ashbyhq.com/ashby/j'},browser);
  assert.equal(recorded,1);assert.equal(status,'needs_review');assert.equal(challenge,'Employer application limit');assert(closed);assert(!events.some(e=>['filled','submitted','submission_started'].includes(e.type)));
 });
@@ -762,7 +762,7 @@ test('saved-answer recovery reuses approved facts, resumes once, and isolates at
  const stubValues={
   './answer-library.js':{reusableAnswers:(_db,p)=>JSON.parse(p.answers_json||'{}'),canReuse:q=>!/(?:salary|authorization|why)/i.test(q)},
   './employer-limits.js':{employerHold:()=>null},'./company-application-policy.js':{companyApplicationPolicy:()=>({allowed:true})},
-  './research-consent.js':{researchConsentWithdrawn:()=>false},
+  './research-consent.js':{researchConsentWithdrawn:()=>false},'./search-scope.js':{scopedWorkEligibility:()=>({eligible:false})},
   './continuation-queue.js':{requestContinuation:()=>{throw Error('inject continuation')}}
  };
  const load=async spec=>{

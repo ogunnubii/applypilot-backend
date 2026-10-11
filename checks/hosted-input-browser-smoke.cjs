@@ -9,11 +9,12 @@ const path=require('node:path');
  const {fillHostedText}=await import('../hosted-input.js');
  const {hostedFieldAnswer}=await import('../hosted-form.js');
  const {submitHostedApplication}=await import('../hosted-submission.js');
+ const {hostedFormState}=await import('../hosted-form-state.js');
  const worker=fs.readFileSync(path.join(__dirname,'../worker.js'),'utf8');
  const fillSource=worker.slice(worker.indexOf('async function fieldDescriptor('),worker.indexOf('function authorizeResearchFill('));
- const fill=new Function('hostedFieldAnswer','fillHostedText',fillSource+';return fill;')(hostedFieldAnswer,fillHostedText);
+ const fill=new Function('hostedFieldAnswer','fillHostedText','hostedFormState',fillSource+';return fill;')(hostedFieldAnswer,fillHostedText,hostedFormState);
  const reviewSource=worker.slice(worker.indexOf('async function review(page)'),worker.indexOf('\nasync function custom(page'));
- const review=new Function(reviewSource+';return review;')();
+ const review=new Function('hostedFormState',reviewSource+';return review;')(hostedFormState);
  const browser=await chromium.launch({headless:true,...(process.env.TEST_BROWSER_PATH?{executablePath:process.env.TEST_BROWSER_PATH}:{})});
  try{
   const context=await browser.newContext();

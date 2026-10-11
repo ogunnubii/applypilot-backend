@@ -1,3 +1,4 @@
+import {scopedWorkEligibility} from './search-scope.js';
 // Employer eligibility questions use explicit applicant answers, never model
 // inference, search preferences, nationality or an inferred immigration status.
 const clean=value=>String(value??'').normalize('NFKC').replace(/[\u2013\u2014]/g,'-').replace(/[?*]+$/g,'').replace(/\s+/g,' ').trim().toLowerCase();
@@ -7,21 +8,31 @@ function questionKind(value){
  const q=clean(value);
  if(/^are you (?:over (?:the age of )?(?:18|eighteen)(?: years old| years of age)?|at least (?:18|eighteen)(?: years old| years of age)?)$/.test(q))return 'adult';
  if(/^(?:when (?:can|could) you start(?: a new role| work| employment)?|(?:what is your )?(?:earliest start date|availability to start|available to start|notice period))$/.test(q))return 'availability';
- const where='(?:canada|the country (?:where|in which) (?:the|this) (?:job|role|position) is located|this country)';
+ const where='(?:canada|the (?:country|location) (?:where|in which) (?:the|this) (?:job|role|position) is (?:located|based)|this country)';
  if(new RegExp('^are you (?:legally )?(?:authori[sz]ed|eligible|permitted) to work in '+where+'$').test(q))return 'authorization';
- if(new RegExp('^(?:will you now or in the future|do you(?: now or in the future)?) require sponsorship(?: for (?:an? )?(?:employment )?visa(?: status)?)?(?: in '+where+')?$').test(q))return 'sponsorship';
+ if(new RegExp('^(?:will you now or in the future|do you(?: now or in the future)?) require (?:visa )?sponsorship(?: for (?:an? )?(?:employment )?visa(?: status)?)?(?: in '+where+')?$').test(q))return 'sponsorship';
  return null;
 }
 function canadaJob(job){
  let m;try{m=JSON.parse(job?.job_metadata_json||'{}');}catch{return false;}
  const location=String(m.location||'');
  // Multi-country/global roles do not establish the country of employment.
- if(/\b(?:united states|us|usa|u\.s\.|uk|united kingdom|france|germany|india|australia|worldwide|global|anywhere|europe)\b|\bOntario\s*,\s*(?:CA|OR)\b/i.test(location))return false;
+ if(/\b(?:united states|us|usa|uk|united kingdom|france|germany|india|australia|worldwide|global|anywhere|europe)\b|\bu\.s\.?(?=\W|$)|\bOntario\s*,\s*(?:CA|OR)\b/i.test(location))return false;
  return /\b(?:canada|ontario|british columbia|alberta|quebec|nova scotia|new brunswick|manitoba|saskatchewan|newfoundland|prince edward island)\b/i.test(location)||clean(m.country)==='canada'&&!location.includes('/');
 }
-export function employmentContext(profile,job){
+function selectedCanadianRemoteJob(job,scope){
+ // An explicit Canada remote-search choice can select the Canadian option in
+ // a multi-country posting. Residence alone does not establish this choice,
+ // and it never supplies the applicant's authorization or sponsorship facts.
+ if(scope?.remoteFromCountry!=='canada'||!scope.authorizedCountries?.includes('canada'))return false;
+ let metadata;try{metadata=JSON.parse(job?.job_metadata_json||'{}');}catch{return false;}
+ if(metadata.remote!==true||!/\bcanada\b/i.test(metadata.location||''))return false;
+ const posting={...metadata,title:job.title};
+ return scopedWorkEligibility(posting,scope).eligible===true;
+}
+export function employmentContext(profile,job,scope=null){
  let saved={},application={};try{saved=JSON.parse(profile?.answers_json||'{}');application=JSON.parse(job?.answers_json||'{}');}catch{}
- return {canada:canadaJob(job),facts:Object.fromEntries(Object.values(EMPLOYMENT_KEYS).filter(k=>typeof saved[k]==='string').map(k=>[k,saved[k]])),application};
+ return {canada:canadaJob(job)||selectedCanadianRemoteJob(job,scope),facts:Object.fromEntries(Object.values(EMPLOYMENT_KEYS).filter(k=>typeof saved[k]==='string').map(k=>[k,saved[k]])),application};
 }
 export function approvedEmploymentAnswer(field,profile){
  const context=profile?.employment_context;if(!context)return null;

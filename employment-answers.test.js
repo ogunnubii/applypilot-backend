@@ -8,6 +8,43 @@ const auth='Are you authorized to work in the country where the job is located?'
 const visa='Will you now or in the future require sponsorship for employment visa status in this country?';
 function profile(location='Toronto, Ontario, Canada',saved=facts,application={}){const p={answers_json:JSON.stringify(saved)},j={job_metadata_json:JSON.stringify({location}),answers_json:JSON.stringify(application)};return {...p,employment_context:employmentContext(p,j)};}
 const options=[{label:'Yes',value:'yes'},{label:'No',value:'no'}];
+
+test('observed location-based eligibility wording uses only approved country facts',()=>{
+ const authorization='Are you legally authorized to work in the location where this role is based?';
+ const sponsorship='Will you now or in the future require visa sponsorship?';
+ assert.equal(hostedOptionChoice({label:authorization},options,profile())?.value,'yes');
+ assert.equal(hostedOptionChoice({label:sponsorship},options,profile())?.value,'no');
+ for(const label of [authorization,sponsorship]){
+  assert.equal(hostedOptionChoice({label},options,profile('Remote U.S.; Remote - Canada')),null);
+  assert.equal(hostedOptionChoice({label},options,profile('Canada',{})),null);
+  assert.equal(hostedOptionChoice({label:label+' I certify this is true'},options,profile()),null);
+ }
+});
+
+test('explicit Canadian remote search selects Canada among advertised locations without asserting US eligibility',()=>{
+ const scope={roles:['Senior Platform Engineer'],aliases:[],localPlaces:[],remotePlaces:['canada'],remoteWorldwide:true,remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true};
+ const metadata={location:'Remote U.S.; Remote - Canada',remote:true,description:'Build CI/CD and deployment infrastructure for our remote engineering team.',employmentType:'Full time'};
+ const make=(changes={},choice=scope,saved=facts)=>{
+  const p={location:'Toronto, Canada',answers_json:JSON.stringify(saved)};
+  const job={title:'Senior Platform Engineer',job_metadata_json:JSON.stringify({...metadata,...changes}),answers_json:'{}'};
+  return {...p,employment_context:employmentContext(p,job,choice)};
+ };
+ const authorization='Are you legally authorized to work in the location where this role is based?';
+ const sponsorship='Will you now or in the future require visa sponsorship?';
+ assert.equal(hostedOptionChoice({label:authorization},options,make())?.value,'yes');
+ assert.equal(approvedHostedRadioIndex(options.map(o=>({...o,question:sponsorship})),{},make()),1);
+ for(const p of [
+  make({},null),make({}, {...scope,authorizedCountries:[]}),
+  make({location:'Remote U.S.'}),make({location:'Global'}),
+  make({remote:false}),make({location:'Hybrid U.S.; Canada'}),
+  make({description:'Must be authorized to work in the United States.'}),
+  make({description:''}),make({},scope,{})
+ ])assert.equal(hostedOptionChoice({label:authorization},options,p),null);
+ for(const label of ['Are you legally authorized to work in the United States?','Will you now or in the future require visa sponsorship in the United States?']){
+  assert.equal(hostedOptionChoice({label},options,make()),null);
+ }
+ assert.equal(hostedOptionChoice({label:authorization,description:'This question is about our US location.'},options,make()),null);
+});
 test('explicit scoped profile answers fill text, menus and yes/no controls without AI',()=>{
  const p=profile();
  assert.equal(hostedFieldAnswer({label:'When can you start a new role?'},p)?.answer,'Immediately');

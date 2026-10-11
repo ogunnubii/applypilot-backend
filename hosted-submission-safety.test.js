@@ -20,7 +20,7 @@ test('hosted flow checks exact job identity before filling, final click and rece
 });
 test('hosted validation ignores disabled controls but rejects invalid nonempty values',()=>{
  assert(hostedFormState.toString().includes("e.disabled||e.matches(':disabled')"));
- assert(hostedFormState.toString().includes("typeof e.checkValidity==='function'&&!e.checkValidity()"));
+ assert(hostedFormState.toString().includes("e.willValidate&&e.validity?.valid===false"));
 });
 test('actual hosted review detects invalid saved values and ignores disabled required inputs',async()=>{
  const {JSDOM}=await import('jsdom');

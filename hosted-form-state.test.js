@@ -34,7 +34,7 @@ test('four contact/upload values cannot hide the three missing custom questions'
   const inputs=f.d.querySelectorAll('input');inputs[0].value='Fixture Applicant';inputs[1].value='4165550132';inputs[2].value='fixture@example.test';
   Object.defineProperty(f.d.querySelector('[type=file]'),'files',{value:[{name:'fixture.pdf'}]});
   // jsdom's native validity uses its private FileList, not the fixture's files getter.
-  f.d.querySelector('[type=file]').checkValidity=()=>true;
+  Object.defineProperty(f.d.querySelector('[type=file]'),'validity',{value:{valid:true}});
   let state=f.read();assert.equal(state.required,7);assert.equal(state.filled,4);assert.deepEqual([...state.missing],['Location','Work authorization','Sponsorship']);
   f.d.querySelector('[role=combobox]').value='Toronto, Ontario, Canada';
   f.d.querySelector('[type=radio]').checked=true;
@@ -58,6 +58,16 @@ test('hidden steps, optional fields and disabled native controls do not inflate 
 test('native invalid values and framework errors stay blockers after required fields are populated',()=>{
  const f=fixture('<label>Optional email<input type="email" value="invalid"></label>'+field('Name','<input value="Fixture" aria-invalid="true">'));
  try{assert.deepEqual([...f.read().missing],['Optional email','Name']);assert.equal(f.read().filled,0);}finally{f.dom.window.close();}
+});
+
+test('repeated validation never emits invalid events or changes employer form state',()=>{
+ const f=fixture('<form><label>Email<input type="email" required value="invalid"></label></form>');
+ try{let invalidEvents=0;f.d.querySelector('input').addEventListener('invalid',()=>invalidEvents++);for(let i=0;i<5;i++)assert.equal(f.read().missing.length,1);assert.equal(invalidEvents,0);}finally{f.dom.window.close();}
+});
+
+test('visible upload progress holds submission even when the file input has a value',()=>{
+ const f=fixture(field('Resume','<input type="file"><div role="progressbar">Uploading</div>'));
+ try{assert.equal(f.read().pending,true);f.d.querySelector('[role=progressbar]').hidden=true;assert.equal(f.read().pending,false);}finally{f.dom.window.close();}
 });
 test('native radio and ARIA radio group completeness is grouped by question',()=>{
  const f=fixture('<fieldset><legend>Schedule</legend><input type="radio" name="schedule" required><input type="radio" name="schedule"></fieldset><div role="radiogroup" aria-required="true" aria-label="Office"><div role="radio" aria-checked="false">A</div><div role="radio" aria-checked="false">B</div></div>');

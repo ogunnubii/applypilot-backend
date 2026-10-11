@@ -30,7 +30,9 @@ export function hostedFormState(target) {
   if(!visible(e)&&!(file&&wrapper&&visible(wrapper)))continue;
   if(e.type==='hidden'||['submit','button','reset'].includes(e.type))continue;
   const descriptor=describe(e),label=descriptor.label||descriptor.ariaLabel||descriptor.name||'Required field';
-  const invalid=e.getAttribute('aria-invalid')==='true'||(typeof e.checkValidity==='function'&&!e.checkValidity());
+  // checkValidity() fires invalid events and can mutate React form state.
+  // Inspection must be passive, including while diagnosing a previous click.
+  const invalid=e.getAttribute('aria-invalid')==='true'||(e.willValidate&&e.validity?.valid===false);
   let filled;
   if(yesno)filled=!!e.querySelector('button[aria-pressed="true"]');
   else if(file)filled=!!e.files?.length;
@@ -49,5 +51,6 @@ export function hostedFormState(target) {
  const fields=[...groups.values()];
  let captcha=[...document.querySelectorAll('iframe[src*="captcha"],iframe[title*="challenge" i],.g-recaptcha,.h-captcha')].some(visible);
  if([...document.querySelectorAll('[name="g-recaptcha-response"],[name="h-captcha-response"]')].some(e=>e.value?.trim()))captcha=false;
- return {captcha,signIn:[...document.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"]')].some(visible),pending:[...document.querySelectorAll('form[aria-busy="true"],input[aria-busy="true"],textarea[aria-busy="true"],select[aria-busy="true"],[role="form"][aria-busy="true"]')].some(visible),missing:[...new Set(fields.filter(f=>f.invalid||f.required&&!f.filled).map(f=>f.label))],required:fields.filter(f=>f.required).length,filled:fields.filter(f=>f.required&&f.filled).length};
+ const pending=[...document.querySelectorAll('form[aria-busy="true"],input[aria-busy="true"],textarea[aria-busy="true"],select[aria-busy="true"],[role="form"][aria-busy="true"],.ashby-application-form-field-entry [aria-busy="true"],.ashby-application-form-field-entry [role="progressbar"]')].some(visible);
+ return {captcha,signIn:[...document.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"]')].some(visible),pending,missing:[...new Set(fields.filter(f=>f.invalid||f.required&&!f.filled).map(f=>f.label))],required:fields.filter(f=>f.required).length,filled:fields.filter(f=>f.required&&f.filled).length};
 }

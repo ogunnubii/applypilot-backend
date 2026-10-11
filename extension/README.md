@@ -1,3 +1,5 @@
+Version 0.6.32 uses the server-approved profile facts before AI, recognizes observed LinkedIn/location wording and Lever radio question labels, and recovers saved answers for paused Local browser forms. Employment eligibility stays scoped to explicit saved country facts. Final Submit and unknown facts remain under user control.
+
 Version 0.6.31 keeps preparation alive during long AI requests and recovers interrupted unattempted campaign forms once in their exact existing tab. No page reload, lost-form reopening, or submission retry is performed. Stop and campaign pause remain enforced.
 
 Version 0.6.30 adds title-rotating preparation campaigns. It prepares up to 20 unfinished forms at a time toward a 200-application target, advances supported non-submit steps, and leaves every final Submit to the applicant. Keep Chrome and a signed-in dashboard open. Unknown facts and employer verification still need the applicant. Prepared and ready counts are separate from employer receipts.
@@ -69,4 +71,3 @@ Saved Website / portfolio facts now fill supported website prompts. LinkedIn and
 
 ## 0.6.27
 Reads offered options from native and custom dropdowns, maps supported professional facts to exact choices, and preserves manual edits. Ambiguous options, missing facts and protected declarations stay for review. Canada-only remote incorporated-contract searches remain scoped after refresh.
-

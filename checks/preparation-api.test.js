@@ -28,6 +28,30 @@ test('real campaign API gives Chrome manual preparation packets, prevents other 
   assert.equal((await api('/jobs/'+outside.id+'/local/claim','POST',{})).status,409);
   assert.equal((await api('/jobs/'+job.id+'/local/claim','POST',{})).status,200);
   const packet=await api('/jobs/'+job.id+'/local/packet');assert.equal(packet.status,200);assert.equal(packet.data.prepareSteps,true);assert.equal(packet.data.autonomousSubmit,false);
+  assert.equal(packet.data.savedFactsAvailable,true);
+  db.prepare("UPDATE applicants SET location='Toronto, Ontario, Canada',answers_json=? WHERE id='p'").run(JSON.stringify({'LinkedIn':'https://www.linkedin.com/in/fixture','Available to start':'Immediately','Work authorization - Canada':'Yes'}));
+  for(const [question,answer,choices] of [
+   ['Can you please share a link to your LinkedIn Profile?','https://www.linkedin.com/in/fixture',[]],
+   ['Where are you currently located? (City & Country)','Toronto, Ontario, Canada',[]],
+   ['Legal Name','Fixture',[]],
+   ['What is your earliest start date?','Immediately',[]],
+   ['When can you start a new role?','Immediately',[]],
+   ['Are you legally authorized to work in the country you are applying for? ✱','yes',['yes','no']]
+  ]){
+   const result=await api('/jobs/'+job.id+'/local/answer','POST',{question,choices});assert.equal(result.status,200,JSON.stringify(result));assert.equal(result.data.answer,answer,question);assert.equal(result.data.source,'saved_profile');
+  }
+  for(const request of [
+   {question:'What is your earliest start date?',choices:['Next month','In six months']},
+   {question:'What is your earliest start date?',answerFormat:'number'},
+   {question:'Are you legally authorized to work in the country you are applying for?',fieldHelp:'Answer for our United States office.',choices:['Yes','No']},
+   {question:'What is your desired salary?'},
+   {question:'Your manager LinkedIn profile'},
+   {question:'I certify that these answers are accurate'}
+  ])assert.equal((await api('/jobs/'+job.id+'/local/answer','POST',request)).data.answer,'',JSON.stringify(request));
+  const original=db.prepare('SELECT job_metadata_json FROM jobs WHERE id=?').get(job.id).job_metadata_json;
+  db.prepare('UPDATE jobs SET job_metadata_json=? WHERE id=?').run(JSON.stringify({location:'San Francisco, United States'}),job.id);
+  assert.equal((await api('/jobs/'+job.id+'/local/answer','POST',{question:'Are you legally authorized to work in the country you are applying for?',choices:['Yes','No']})).data.answer,'');
+  db.prepare('UPDATE jobs SET job_metadata_json=? WHERE id=?').run(original,job.id);
   assert.equal((await api('/work-focus','PUT',{enabled:true,auto_submit:true})).status,409);
   assert.equal((await api('/jobs/'+job.id+'/local/attempt','POST',{automatic:true,human:false,clickId:randomUUID(),url:job.url,before:'Fixture'})).status,409);
   const progress=await api('/jobs/'+job.id+'/local/progress','POST',{readyForSubmit:true,url:job.url,blocked:true,fields:[],filled:3,message:'Ready to submit',progress:{required:3,filled:3}});assert.equal(progress.status,200,JSON.stringify(progress));
@@ -44,4 +68,3 @@ test('real campaign API gives Chrome manual preparation packets, prevents other 
   assert.equal((await api('/jobs/'+job.id+'/local/step','POST',{})).status,409,'excluded member cannot keep advancing');
  }finally{child.kill();await exited;db.close();}
 });
-

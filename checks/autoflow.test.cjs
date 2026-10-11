@@ -215,7 +215,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.31",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.32",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -526,7 +526,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.31'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.32'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{
@@ -762,7 +762,7 @@ test('saved-answer recovery reuses approved facts, resumes once, and isolates at
  const stubValues={
   './answer-library.js':{reusableAnswers:(_db,p)=>JSON.parse(p.answers_json||'{}'),canReuse:q=>!/(?:salary|authorization|why)/i.test(q)},
   './employer-limits.js':{employerHold:()=>null},'./company-application-policy.js':{companyApplicationPolicy:()=>({allowed:true})},
-  './research-consent.js':{researchConsentWithdrawn:()=>false},'./search-scope.js':{scopedWorkEligibility:()=>({eligible:false})},
+  './research-consent.js':{researchConsentWithdrawn:()=>false},'./search-scope.js':{scopedWorkEligibility:()=>({eligible:false}),currentSearchScope:()=>null},
   './continuation-queue.js':{requestContinuation:()=>{throw Error('inject continuation')}}
  };
  const load=async spec=>{
@@ -775,7 +775,7 @@ test('saved-answer recovery reuses approved facts, resumes once, and isolates at
  const facts=JSON.stringify({'LinkedIn Profile':'https://linkedin.com/in/example'});
  for(const [id,u,consent,a] of [['p','u',1,facts],['q','other',1,JSON.stringify({'LinkedIn Profile':'https://linkedin.com/in/other'})],['no','u',0,facts],['off','off',1,facts],['conflict','u',1,JSON.stringify({'LinkedIn':'one','LinkedIn profile':'two'})]])db.prepare("INSERT INTO applicants VALUES(?,?,?,'email','resume','Example','Toronto, Ontario, Canada',?)").run(id,u,consent,a);
  const question='Please provide a link to your LinkedIn profile';const add=(id,{u='u',p='p',attempt=null,status='local_browser',challenge=null,questions=[question],answers={},handoff=0}={})=>db.prepare("INSERT INTO jobs VALUES(?,?,?,?,?,?,?, ?,?,?,?,'Company','Role')").run(id,u,p,status,'blocked',attempt,handoff,challenge,JSON.stringify(questions),JSON.stringify(answers),'2026-10-01');
- add('ready');add('partial',{questions:[question,'What products have you worked on?']});add('attempted',{attempt:'y'});add('event');db.exec("INSERT INTO events(job_id,at,type,message) VALUES('event','t','submission_started','attempt')");
+ add('ready',{challenge:'Local browser'});add('partial',{questions:[question,'What products have you worked on?']});add('attempted',{attempt:'y'});add('event');db.exec("INSERT INTO events(job_id,at,type,message) VALUES('event','t','submission_started','attempt')");
  add('other',{u:'other',p:'q'});add('noconsent',{p:'no'});add('off',{u:'off',p:'off'});add('held');add('readySubmit',{challenge:'Ready to submit'});add('sensitive',{challenge:'Sensitive action'});add('captcha',{challenge:'CAPTCHA'});add('done',{status:'submitted'});add('conflict',{p:'conflict'});add('existing',{answers:{[question]:'https://linkedin.com/in/edited'}});add('handoff',{handoff:1});add('inflight');db.exec("INSERT INTO continuation_requests VALUES('inflight','dispatching')");
  installSavedRecovery(db);const calls=[],options={userId:'u',check:(_db,j)=>j.id==='held'?'hold':'',continueJob(db,u,id,check){
   const j=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);assert.equal(check(j),'');const a=JSON.parse(j.answers_json);if(JSON.parse(j.required_fields_json).some(q=>!a[q]))throw Error('partial');calls.push(id);db.prepare('INSERT INTO continuation_requests VALUES(?,?)').run(id,'queued');return {state:'queued'};
@@ -896,7 +896,7 @@ test('application AI preparation preserves concurrent edits, owner changes, cons
  const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(':memory:');
  db.exec("CREATE TABLE applicants(id TEXT,user_id TEXT,consent INTEGER,gemini_facts_consent INTEGER,ai_consent INTEGER,google_research_consent INTEGER);CREATE TABLE jobs(id TEXT,user_id TEXT,applicant_id TEXT,status TEXT,local_owner TEXT,local_attempt_at TEXT,handoff_available INTEGER,url TEXT,answers_json TEXT,updated_at TEXT);CREATE TABLE events(job_id TEXT,type TEXT);INSERT INTO applicants VALUES('p','u',1,1,0,1);INSERT INTO jobs VALUES('j','u','p','local_browser','device',NULL,0,'https://example.test/job','{}','now');");
  const src=sources['form-answer.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
- const {prepareFormAnswer}=new Function('canResearchQuestion','researchForJob','markResearchDraftUsed','canDraftProfessional','draftForJob','researchConsentWithdrawn',src+';return {prepareFormAnswer};')(()=>false,()=>{throw Error('wrong provider')},()=>{},()=>true,()=>{},()=>false);
+ const {prepareFormAnswer}=new Function('canResearchQuestion','researchForJob','markResearchDraftUsed','canDraftProfessional','draftForJob','researchConsentWithdrawn','hostedFieldAnswer','reusableAnswers','employmentContext','currentSearchScope',src+';return {prepareFormAnswer};')(()=>false,()=>{throw Error('wrong provider')},()=>{},()=>true,()=>{},()=>false,()=>null,()=>({}),()=>({}),()=>null);
  const q='Describe your technical experience',good={answer:'I build Kubernetes platforms.',provider:'gemini',sources:['Skills']};
  await assert.rejects(prepareFormAnswer(db,'other','j',q),/cannot be prepared/);
  await assert.rejects(prepareFormAnswer(db,'u','j',q,{check:()=> 'Employer hold'}),/Employer hold/);
@@ -959,4 +959,3 @@ test('Gemini exact option answers fill native select and radio fields without cl
  w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);for(let i=0;i<100&&!messages.some(m=>m.action==='progress'&&m.blocked);i++)await new Promise(r=>setTimeout(r,25));
  assert.equal(w.document.querySelector('select').value,'Kubernetes');assert(w.document.querySelector('input[value="yes"]').checked);assert(!w.document.querySelector('input[value="no"]').checked);assert(messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')));assert(!messages.some(m=>m.action==='attempt'));w.close();
 });
-

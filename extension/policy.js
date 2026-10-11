@@ -71,7 +71,7 @@
   const aliases={
    name:['full name','your full name','name','your name','first and last name','your first and last name','first & last name','your first & last name'],first:['first name','given name'],last:['last name','family name','surname'],
    email:['email','email address','your email','your email address'],phone:['phone','phone number','telephone','telephone number','mobile','mobile phone','mobile number','contact number','contact phone number','primary phone number'],
-   location:['location','current location'],city:['location city','city','current city','city of residence','town','town city','city town'],country:['country','country of residence','current country','residence country'],
+   location:['location','current location','where are you currently located city & country','where are you currently located city and country','where are you currently located city country'],city:['location city','city','current city','city of residence','town','town city','city town'],country:['country','country of residence','current country','residence country'],
    region:['state','province','state province','province state'],postal:['postal code','zip code','zip postal code'],
    linkedin:['linkedin','linkedin profile','linkedin url','linkedin profile url'],github:['github','github profile','github url','github profile url'],
    website:['website','website url','personal website','personal website url','portfolio','portfolio url','portfolio website','portfolio website url','website portfolio','website or portfolio','personal site','personal site url'],
@@ -79,7 +79,7 @@
   };
   function fieldKind(question){const q=normalize(question).replace(/[():/_-]/g,' ').replace(/\b(optional|required)\b/g,'').replace(/\s+/g,' ').trim();const direct=Object.keys(aliases).find(k=>aliases[k].includes(q));if(direct)return direct;
     // Anchored wording variants only: no fuzzy matching or employer/third-party URLs.
-    const prompted=q.replace(/^(?:please\s+)?(?:provide|enter|share|list)\s+(?:a\s+)?(?:link\s+to\s+)?(?:your\s+)?/,'').replace(/^(?:what is|what's)\s+your\s+/,'');
+    const prompted=q.replace(/^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:provide|enter|share|list)\s+(?:a\s+)?(?:link\s+to\s+)?(?:your\s+)?/,'').replace(/^(?:what is|what's)\s+your\s+/,'');
     const personal=prompted.replace(/^your\s+/,'').replace(/\s+below$/,'').replace(/\s+link$/,'').trim();
     if(aliases.website.includes(personal))return 'website';
     const social=personal.replace(/\s+(?:profile\s+)?(?:url|link)$/,'').replace(/\s+profile$/,'').trim();

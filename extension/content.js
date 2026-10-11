@@ -18,10 +18,11 @@ function questionContainer(e){return e.closest?.('[data-automation-id*="formFiel
 function normalizeDescriptor(value){return norm(value).replace(/\b(?:optional|required)\b/g,'').replace(/\s+/g,' ').trim();}
 function descriptors(e,metadata=true){
  const values=[],add=value=>{value=compact(value);if(value&&normalizeDescriptor(value)!=='required field'&&!values.some(v=>normalizeDescriptor(v)===normalizeDescriptor(value)))values.push(value);};
+ const container=questionContainer(e),containerLabel=container?.querySelector?.('.application-label,[data-automation-id*="label"],[class*="question-label"],[class*="field-label"]')?.textContent;
  const group=e.closest?.('fieldset,[role="radiogroup"],[role="group"]');
- if(e.type==='radio'||controlRole(e)==='radio'){add(group?.querySelector?.(':scope > legend')?.textContent);add(group&&referencedText(group,'aria-labelledby'));add(group?.getAttribute?.('aria-label'));}
+ if(e.type==='radio'||controlRole(e)==='radio'){add(group?.querySelector?.(':scope > legend')?.textContent);add(group&&referencedText(group,'aria-labelledby'));add(group?.getAttribute?.('aria-label'));add(containerLabel);}
  add(labelText(e.labels?.[0]||e.closest?.('label')));add(referencedText(e,'aria-labelledby'));add(e.getAttribute?.('aria-label'));
- const container=questionContainer(e);add(container?.querySelector?.('.application-label,[data-automation-id*="label"],[class*="question-label"],[class*="field-label"]')?.textContent);
+ add(containerLabel);
  if(!values.length)add(labelText(container));if(!values.length)add(referencedText(e,'aria-describedby'));if(metadata){add(e.placeholder);add(e.name);add(e.id);}
  return values.length?values:['Required field'];
 }
@@ -167,7 +168,7 @@ async function fillPass(){
 }
 // AI results are application-only and are never allowed to overwrite a user's edit.
 async function prepareMissingAnswers(){
- if(!packet?.aiAssistance||attempted||siteIssue())return 0;
+ if((!packet?.aiAssistance&&!packet?.savedFactsAvailable)||attempted||siteIssue())return 0;
  let prepared=0;
  for(const e of controls()){
   const fields=controls(),q=label(e),key=norm(q);
@@ -176,7 +177,7 @@ async function prepareMissingAnswers(){
   if(attempted||!visible(e)||controlComplete(e,fields)||descriptors(e).some(protectedQuestion)||!dropdown&&answer(e)!==null||e.multiple||e.getAttribute('aria-multiselectable')==='true'||q==='Required field'||q.length<3||q.length>4000||['file','password','checkbox','hidden','submit'].includes(e.type)||e.type==='button'&&!dropdown||controlRole(e)==='checkbox')continue;
   if(!e.matches('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="radio"]'))continue;
   if(aiTried.has(key)&&Date.now()-aiTried.get(key)<60000)continue;
-  aiTried.set(key,Date.now());const url=location.href,question=q;note.textContent='Gemini is preparing: '+q;
+  aiTried.set(key,Date.now());const url=location.href,question=q;note.textContent='Preparing: '+q;
   try{
    const choices=dropdown?await dropdownChoices(e):e.type==='radio'?fields.filter(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form).map(optionText):controlRole(e)==='radio'?roleRadioGroup(e).map(optionText):[];
    if(dropdown&&(!choices.length||choices.length>80||new Set(choices.map(norm)).size!==choices.length||choices.some(c=>c.length>200))){if(isRequired(e))aiIssues.set(question,'The dropdown options could not be read unambiguously. Please choose this one yourself.');continue;}
@@ -360,4 +361,3 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{
 });
 begin();
 })();
-

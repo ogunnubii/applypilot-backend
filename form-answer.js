@@ -1,6 +1,10 @@
 import {canResearchQuestion,researchForJob,markResearchDraftUsed} from './google-research.js';
 import {canDraftProfessional,draftForJob} from './answer-drafts.js';
 import {researchConsentWithdrawn} from './research-consent.js';
+import {reusableAnswers} from './answer-library.js';
+import {hostedFieldAnswer} from './hosted-form.js';
+import {employmentContext} from './employment-answers.js';
+import {currentSearchScope} from './search-scope.js';
 const parse=s=>{try{return JSON.parse(s||'{}')}catch{return {}}};
 export async function prepareFormAnswer(db,uid,id,question,{research=researchForJob,draft=draftForJob,check=()=>'',expectedOwner=null,choices=[],answerFormat='text',maxLength=4000,fieldHelp=''}={}){
  if(typeof question!=='string'||question.length<3||question.length>4000)throw Error('A complete employer question is required.');
@@ -13,6 +17,17 @@ export async function prepareFormAnswer(db,uid,id,question,{research=researchFor
  if(!eligible(job,p))throw Error('This form cannot be prepared now. Check its current application status.');
  const problem=check(job);if(problem)throw Error(problem);
  if(researchConsentWithdrawn(db,id,p.id))throw Error('AI answer consent changed. Review this application.');
+ // Chrome uses the same approved facts as the hosted worker before asking AI.
+ // Eligibility remains scoped to this posting and explicit applicant answers.
+ const approved=hostedFieldAnswer({label:question,description:fieldHelp},{...p,employment_context:employmentContext(p,job,currentSearchScope(db,job))},{...reusableAnswers(db,p),...parse(job.answers_json)});
+ if(approved){
+  const answer=choiceAnswer(approved.answer);
+  if(!answer)return {answer:'',reason:'Your saved answer does not match one of the current choices.'};
+  if(answer.length>maxLength||answerFormat==='number'&&!/^-?\d+(?:\.\d+)?$/.test(answer.trim()))return {answer:'',reason:'Your saved answer needs the format required by this employer.'};
+  const answers=parse(job.answers_json);Object.defineProperty(answers,question,{value:answer,enumerable:true,configurable:true,writable:true});
+  db.prepare('UPDATE jobs SET answers_json=?,updated_at=? WHERE id=?').run(JSON.stringify(answers),new Date().toISOString(),id);
+  return {answer,source:'saved_profile',requiresReview:false};
+ }
  const publicQuestion=canResearchQuestion(question),personal=!publicQuestion&&canDraftProfessional(question);
  if(choices.length&&(publicQuestion||!canDraftProfessional(question+' '+fieldHelp)))return {answer:'',reason:'This dropdown needs your saved answer or review.'};
  if(publicQuestion?!p.google_research_consent:!personal||!p.gemini_facts_consent&&!p.ai_consent)return {answer:'',reason:'This question needs your saved answer or review.'};

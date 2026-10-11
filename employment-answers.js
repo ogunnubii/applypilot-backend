@@ -1,7 +1,7 @@
 import {scopedWorkEligibility} from './search-scope.js';
 // Employer eligibility questions use explicit applicant answers, never model
 // inference, search preferences, nationality or an inferred immigration status.
-const clean=value=>String(value??'').normalize('NFKC').replace(/[\u2013\u2014]/g,'-').replace(/[?*]+$/g,'').replace(/\s+/g,' ').trim().toLowerCase();
+const clean=value=>String(value??'').normalize('NFKC').replace(/[\u2013\u2014]/g,'-').replace(/[?*✱\s]+$/g,'').replace(/\s+/g,' ').trim().toLowerCase();
 export const EMPLOYMENT_KEYS={availability:'Available to start',canadaAuthorization:'Work authorization - Canada',canadaSponsorship:'Visa sponsorship now or in future - Canada',over18:'Over 18 - applicant confirmed',currentEmployer:'Current employer',currentTitle:'Current job title'};
 const yesNo=value=>/^(yes|no)$/i.test(String(value||'').trim())?String(value).trim().toLowerCase()==='yes'?'Yes':'No':null;
 function questionKind(value){
@@ -10,7 +10,7 @@ function questionKind(value){
  if(/^(?:your )?current(?:\s*\/\s*most recent| or most recent)? (?:job )?title$/.test(q))return 'currentTitle';
  if(/^are you (?:over (?:the age of )?(?:18|eighteen)(?: years old| years of age)?|at least (?:18|eighteen)(?: years old| years of age)?)$/.test(q))return 'adult';
  if(/^(?:when (?:can|could) you start(?: a new role| work| employment)?|(?:what is your )?(?:earliest start date|availability to start|available to start|notice period))$/.test(q))return 'availability';
- const where='(?:canada|the (?:country|location) (?:where|in which) (?:the|this) (?:job|role|position) is (?:located|based)|this country)';
+ const where='(?:canada|the country you are applying for|the (?:country|location) (?:where|in which) (?:the|this) (?:job|role|position) is (?:located|based)|this country)';
  if(new RegExp('^are you (?:legally )?(?:authori[sz]ed|eligible|permitted) to work in '+where+'$').test(q))return 'authorization';
  if(new RegExp('^(?:will you now or in the future|do you(?: now or in the future)?) require (?:visa )?sponsorship(?: for (?:an? )?(?:employment )?visa(?: status)?)?(?: in '+where+')?$').test(q))return 'sponsorship';
  return null;

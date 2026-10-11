@@ -5,6 +5,8 @@ import {requestContinuation} from './continuation-queue.js';
 import {employerHold} from './employer-limits.js';
 import {companyApplicationPolicy} from './company-application-policy.js';
 import {researchConsentWithdrawn} from './research-consent.js';
+import {employmentContext} from './employment-answers.js';
+import {currentSearchScope} from './search-scope.js';
 const parse=(s,f)=>{try{return JSON.parse(s||'')??f;}catch{return f;}};
 export function installSavedRecovery(db){
  db.exec("CREATE TABLE IF NOT EXISTS saved_answer_recovery(job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,user_id TEXT NOT NULL,filled INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL,message TEXT NOT NULL)");
@@ -19,7 +21,7 @@ export function recoverSavedAnswers(db,{userId=null,check=policyProblem,continue
  JOIN pipeline_preferences pp ON pp.user_id=j.user_id AND pp.auto_queue_found=1
  WHERE (? IS NULL OR j.user_id=?) AND j.status='local_browser' AND j.local_phase='blocked'
  AND j.local_attempt_at IS NULL AND j.handoff_available=0 AND p.consent=1 AND p.email!='' AND p.resume_path IS NOT NULL
- AND COALESCE(j.challenge,'') IN ('','Missing answers','Required custom form control requires review','Unfamiliar form')
+ AND COALESCE(j.challenge,'') IN ('','Local browser','Missing answers','Required custom form control requires review','Unfamiliar form')
  AND NOT EXISTS(SELECT 1 FROM events e WHERE e.job_id=j.id AND e.type IN ('submission_started','manual_submission','automatic_submission','submitted','manual_confirmation'))
  AND NOT EXISTS(SELECT 1 FROM continuation_requests r WHERE r.job_id=j.id AND r.state IN ('queued','dispatching'))
  ORDER BY j.updated_at,j.id LIMIT 100`).all(userId,userId);
@@ -28,11 +30,12 @@ export function recoverSavedAnswers(db,{userId=null,check=policyProblem,continue
   const questions=parse(j.required_fields_json,[]);if(!Array.isArray(questions)||!questions.length)continue;
   const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,j.user_id);
   const facts=reusableAnswers(db,p),answers=parse(j.answers_json,{});if(!answers||typeof answers!=='object'||Array.isArray(answers))continue;
+  const context={...p,employment_context:employmentContext(p,j,currentSearchScope(db,j))};
   let filled=0;
   for(const q of [...new Set(questions)]){
-   if(typeof q!=='string'||q.length>4000||protectedHostedQuestion(q)||String(answers[q]??'').trim())continue;
-   const fact=hostedFieldAnswer({label:q},p,facts);
-   const answer=fact?.answer??(canReuse(q)?savedAnswer(q,facts):null);
+   if(typeof q!=='string'||q.length>4000||String(answers[q]??'').trim())continue;
+   const fact=hostedFieldAnswer({label:q},context,facts);
+   const answer=fact?.answer??(!protectedHostedQuestion(q)&&canReuse(q)?savedAnswer(q,facts):null);
    if(typeof answer!=='string'||!answer.trim()||answer.length>4000)continue;
    Object.defineProperty(answers,q,{value:answer,enumerable:true,writable:true,configurable:true});filled++;
   }

@@ -21,7 +21,10 @@ export function installSingleApplication(db){
 }
 // Explicit queue transition; historical attempts are never cleared or retried.
 export function inFlightApplication(db,userId,exceptId=''){
- return db.prepare("SELECT id FROM jobs WHERE user_id=? AND id!=? AND (status='running' OR local_phase='verifying' OR challenge='Submission in progress') LIMIT 1").get(userId,exceptId);
+ // Receipt routes may retain a historical verifying phase. Exempt only a
+ // completed employer-confirmed record; never infer receipt from status alone.
+ const candidates=db.prepare("SELECT * FROM jobs WHERE user_id=? AND id!=? AND (status='running' OR local_phase='verifying' OR challenge='Submission in progress')").all(userId,exceptId);
+ return candidates.find(job=>job.status==='running'||job.challenge==='Submission in progress'||!['submitted','interview','rejected','offer'].includes(job.status)||!receiptConfirmed(db,job));
 }
 export function useSavedSearchQueue(db,userId,{applicant_id}={}){
  const profile=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(applicant_id,userId);

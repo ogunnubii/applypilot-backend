@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {installBatches} from '../application-batches.js';
-import {installSingleApplication,useSavedSearchQueue,setWorkFocus,focusSnapshot,savedSearchClaimProblem,reserveAutonomousAttempt} from '../single-application.js';
+import {installSingleApplication,inFlightApplication,receiptConfirmed,useSavedSearchQueue,setWorkFocus,focusSnapshot,savedSearchClaimProblem,reserveAutonomousAttempt} from '../single-application.js';
 import {normalizeSearchScope,scopeIntent} from '../search-scope.js';
 import {jobIntelligence} from '../job-intelligence.js';
 const scope=normalizeSearchScope({roles:['Platform Engineer'],localPlaces:['ontario'],remotePlaces:['canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true});
@@ -40,4 +40,23 @@ test('both dashboards expose the explicit transition and retain receipt-pending 
   w.eval(source.slice(source.indexOf('function renderBatchControl('),source.indexOf('function automaticSubmissionEnabled')));w.renderBatchControl({enabled:true,selected:20,completed:11});await new Promise(r=>setTimeout(r,0));
   const button=[...w.document.querySelectorAll('button')].find(x=>x.textContent==='Use saved search queue');assert(button);await button.onclick();assert.deepEqual(JSON.parse(JSON.stringify(calls.find(x=>x.path==='/application-batch').data)),{action:'saved-search',applicant_id:'p'});assert.match(w.document.querySelector('#notice').textContent,/paused/);assert(source.includes("activeFocus.search_queue_only&&(state==='awaiting'||card.dataset.confirmed==='true')"));dom.window.close();
  }
+});
+
+test('historical verified receipts with residual verifying phase do not block or alter queue transition',()=>{
+ const {db}=fixture();db.exec("UPDATE jobs SET local_phase='verifying',confirmation='Thank you for applying' WHERE status='submitted'");
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE status='submitted' AND local_phase='verifying'").get().n,11);
+ assert(receiptConfirmed(db,db.prepare("SELECT * FROM jobs WHERE id='old9'").get()));
+ const before=JSON.stringify(db.prepare('SELECT * FROM jobs ORDER BY id').all());assert.equal(inFlightApplication(db,'u'),undefined);
+ const result=useSavedSearchQueue(db,'u',{applicant_id:'p'});assert.equal(result.focus.enabled,false);assert.equal(JSON.stringify(db.prepare('SELECT * FROM jobs ORDER BY id').all()),before);db.close();
+});
+test('residual phase exemptions require genuine receipt evidence and never mask running or uncertain work',()=>{
+ const {db,add}=fixture();db.exec("UPDATE jobs SET local_phase='verifying',confirmation='Thank you for applying' WHERE status='submitted'");
+ add('reported',{status:'submitted'});db.exec("UPDATE jobs SET local_phase='verifying',challenge='Applicant reported submission',confirmation='Thank you for applying',local_attempt_at='2026' WHERE id='reported';INSERT INTO events VALUES('reported','2026','applicant_reported_submission','Reported only')");
+ assert.equal(inFlightApplication(db,'u').id,'reported','receipt-looking text plus reported event is not a receipt');assert.throws(()=>useSavedSearchQueue(db,'u',{applicant_id:'p'}),/running or verifying/);
+ db.exec("INSERT INTO events VALUES('reported','2026','manual_confirmation','Employer receipt');UPDATE jobs SET confirmation='Unconfirmed submission' WHERE id='reported'");assert.equal(inFlightApplication(db,'u').id,'reported','receipt event without recognized non-placeholder text is insufficient');
+ db.exec("UPDATE jobs SET confirmation='Thank you for applying',challenge=NULL WHERE id='reported'");assert.equal(inFlightApplication(db,'u'),undefined);
+ add('live',{status:'running'});db.exec("UPDATE jobs SET confirmation='Thank you for applying' WHERE id='live';INSERT INTO events VALUES('live','2026','submitted','Old receipt')");assert.equal(inFlightApplication(db,'u').id,'live','running remains protected even with anomalous historical receipt evidence');
+ db.exec("UPDATE jobs SET status='submitted',challenge='Submission in progress' WHERE id='live'");assert.equal(inFlightApplication(db,'u').id,'live');
+ db.exec("UPDATE jobs SET status='needs_review',challenge='Unconfirmed submission',local_phase='verifying' WHERE id='live'");assert.equal(inFlightApplication(db,'u').id,'live','nonterminal uncertain verifying remains protected');
+ db.close();
 });

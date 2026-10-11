@@ -25,7 +25,7 @@ test('public signup, existing owner preservation, tenant boundaries and durable 
  const start=async()=>{child=spawn(process.execPath,['server.js'],{cwd:resolve('.'),env:{...process.env,PORT:String(port),BIND_HOST:'127.0.0.1',PUBLIC_ORIGIN:base,PUBLIC_SIGNUP:'true'},stdio:['ignore','pipe','pipe']});child.stdout.on('data',x=>log+=x);child.stderr.on('data',x=>log+=x);for(let i=0;i<80;i++){try{if((await api('/api/health')).status===200)return;}catch{}await new Promise(r=>setTimeout(r,50));}throw Error(log);};
  try{
   await start();
-  assert.equal((await api('/api/health')).data.release,'2026-10-11-saved-search-queue');
+  assert.equal((await api('/api/health')).data.release,'2026-10-11-receipt-phase-guard');
   const homepage=await api('/');assert.equal(homepage.status,200);assert.equal(homepage.headers.get('x-robots-tag'),'index, follow');assert.match(homepage.data,/<h1[ >]/);
   const sitemap=await api('/sitemap.xml');assert.equal(sitemap.status,200);assert(!/\/(?:assistant|signup|login|setup|api)\b/.test(sitemap.data));
   db.prepare("INSERT INTO answer_history(id,user_id,applicant_id,job_id,question,answer,updated_at) VALUES(?,?,?,?,'Phone','PRIVATE OWNER PHONE','2026')").run(answer,owner,profile,job);

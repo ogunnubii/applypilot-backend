@@ -83,3 +83,55 @@ test('a delayed employer receipt remains observed beyond the old thirty-second w
  f.input.wait=async ms=>{await wait(ms);if(f.clicks&&++seconds>=45)f.input.page.locator=()=>({innerText:async()=> 'Your application has been received'});};
  assert.equal((await submitHostedApplication(f.input)).status,'submitted');assert.equal(seconds,45);assert.equal(f.clicks,1);
 });
+
+test('readiness interval includes asynchronous validation triggered by scrolling Submit into view',async()=>{
+ const f=fixture({after:'Still reviewing the application'});
+ let time=0,trialAt=null,clickedAt=null,accepted=false;
+ const actualClick=f.input.submit.click;
+ f.input.submit.click=async options=>{
+  if(options?.trial){trialAt=time;return actualClick(options);}
+  clickedAt=time;
+  // The scroll starts lazy validation. The busy indicator renders one task
+  // later, and the employer's model becomes ready 800 ms after scrolling.
+  accepted=trialAt!==null&&time>=trialAt+800;
+  return actualClick(options);
+ };
+ f.input.review=async()=>({missing:[],pending:trialAt!==null&&time>=trialAt+50&&time<trialAt+800});
+ f.input.wait=async ms=>{
+  time+=ms;
+  if(f.clicks&&accepted)f.input.page.locator=()=>({innerText:async()=> 'Your application has been received'});
+ };
+ assert.equal((await submitHostedApplication(f.input)).status,'submitted');
+ assert(clickedAt>=trialAt+2800,'require a settled interval after the scroll-triggered validation finishes');
+ assert.equal(f.attempts,1);assert.equal(f.clicks,1);
+});
+
+test('scroll-triggered pending uploads and late invalid fields stop before reservation',async()=>{
+ for(const cause of ['upload','invalid','captcha','sign-in','disabled','redirect']){
+  const f=fixture();let time=0,trialAt=null;
+  const click=f.input.submit.click;
+  f.input.submit.click=async options=>{if(options?.trial)trialAt=time;return click(options);};
+  f.input.wait=async ms=>{time+=ms;};
+  const changed=()=>trialAt!==null&&time>=trialAt+50;
+  f.input.review=async()=>{
+   if(changed()&&cause==='redirect')f.input.page.url=()=> 'https://jobs.lever.co/other/role-456';
+   return {missing:changed()&&cause==='invalid'?['Employer validation']:[],pending:changed()&&cause==='upload',captcha:changed()&&cause==='captcha',signIn:changed()&&cause==='sign-in'};
+  };
+  f.input.submit.isEnabled=async()=>!(changed()&&cause==='disabled');
+  const result=await submitHostedApplication(f.input);
+  assert.equal(result.status,'needs_review',cause);assert.equal(f.attempts,0,cause);assert.equal(f.clicks,0,cause);
+  assert.equal(f.events.filter(event=>event==='trial').length,1,cause);
+ }
+});
+
+test('settling after the trial does not repeat the actionability action or weaken the one-click guard',async()=>{
+ const f=fixture();let time=0,trialAt=null,clickedAt=-1;
+ const click=f.input.submit.click,wait=f.input.wait;
+ f.input.submit.click=async options=>{if(options?.trial)trialAt=time;else clickedAt=time;return click(options);};
+ f.input.wait=async ms=>{time+=ms;await wait(ms);};
+ // A second asynchronous validation wave interrupts an apparently ready form.
+ f.input.review=async()=>({missing:[],pending:trialAt!==null&&time>=trialAt+1000&&time<trialAt+2000});
+ assert.equal((await submitHostedApplication(f.input)).status,'submitted');
+ assert.equal(clickedAt,4000);assert.deepEqual(f.events,['trial','reserve','click']);
+ await submitHostedApplication(f.input);assert.equal(f.clicks,1);
+});

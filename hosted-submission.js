@@ -13,19 +13,25 @@ export async function submitHostedApplication({page,job,submit,review,reserve,wa
  // A rendered value/file is not proof that the employer's asynchronous upload
  // and validation have settled. Require two seconds of consecutive readiness
  // before reserving the one permitted click; never repair or retry a submission.
- let stable=0;
+ let stable=0,actionable=false;
  for(let i=0;i<=16;i++){
   if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');
-  const check=await review(page);
+  let check=await review(page);
   if(check.captcha||check.signIn||check.missing.length)return blocked('The final form needs review before submission.','Final form review');
-  stable=!check.pending&&await submit.isEnabled()?stable+1:0;
+  if(!actionable&&!check.pending&&await submit.isEnabled()){
+   // Trial can scroll into view and trigger asynchronous lazy validation.
+   // Start the settled interval after that action, never before it.
+   try{await submit.click({trial:true,timeout:5000});}catch{return blocked('The employer Submit button is not currently actionable. No submission was attempted.','Final form review');}
+   actionable=true;
+   if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');
+   check=await review(page);
+   if(check.captcha||check.signIn||check.missing.length)return blocked('The final form needs review before submission.','Final form review');
+  }
+  stable=actionable&&!check.pending&&await submit.isEnabled()?stable+1:0;
   if(stable>=5)break;
   if(i<16)await wait(500);
  }
  if(stable<5)return blocked('The employer form did not finish validating or enable Submit. No submission was attempted.','Final form review');
- // Trial checks visibility, overlays and a stable click target without sending
- // a click. Scrolling the button into view can itself trigger lazy validation.
- try{await submit.click({trial:true,timeout:5000});}catch{return blocked('The employer Submit button is not currently actionable. No submission was attempted.','Final form review');}
  const final=await review(page),finalText=await page.locator('body').innerText();
  if(final.captcha||final.signIn||final.pending||final.missing.length||!await submit.isEnabled())return blocked('The final form changed during readiness checks. No submission was attempted.','Final form review');
  if(submissionDeclaration(finalText))return blocked('The final Submit action includes an employer declaration. Review and submit this form yourself.','Employer declaration');

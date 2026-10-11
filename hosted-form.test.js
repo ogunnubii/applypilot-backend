@@ -72,3 +72,12 @@ test('hosted worker preserves manual default and gates automatic submission behi
  assert.match(source,/if\(requiredMissing\.length\)/);
  assert.match(source,/function claim\(\)\{if\(handoffs\?\.full\(\)\)return null/);
 });
+
+test('equivalent LinkedIn profile URLs agree without accepting different accounts',()=>{
+ const field={label:'LinkedIn'};
+ const profile={linkedin:'https://www.linkedin.com/in/fixture'};
+ assert.equal(hostedFieldAnswer(field,profile,{'LinkedIn URL':'https://linkedin.com/in/fixture/'})?.answer,profile.linkedin);
+ assert.equal(hostedFieldAnswer(field,profile,{'LinkedIn URL':'https://linkedin.com/in/different'}),null);
+ assert.equal(hostedFieldAnswer(field,profile,{'LinkedIn URL':'https://www.linkedin.com.evil.test/in/fixture'}),null);
+ assert(protectedHostedQuestion('Do you require sponorship to work in the country you currently reside in?'));
+});

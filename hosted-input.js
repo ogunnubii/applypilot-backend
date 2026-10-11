@@ -5,6 +5,20 @@
 // populated field: it may contain an applicant edit or employer autofill.
 const TEXT_TYPES=new Set(['text','email','tel','url','search','number','textarea']);
 
+// A searchable combobox must keep focus while its remote suggestions load.
+// The query is preparation, not a selected answer, until the exact option is
+// clicked. Final review treats this marker as incomplete if selection fails.
+export async function typeHostedSearch(locator,answer){
+ const value=String(answer??'');
+ if(!value||!await locator.evaluate(e=>e.matches('input[role="combobox"]')&&['text','search'].includes(e.type)))return false;
+ if(!await locator.isEditable()||await locator.inputValue()!=='')return false;
+ await locator.click();
+ if(!await locator.isEditable()||await locator.inputValue()!=='')return false;
+ await locator.evaluate(e=>e.dataset.applypilotUncommittedSearch='true');
+ await locator.pressSequentially(value,{delay:8,timeout:Math.min(60000,Math.max(5000,value.length*30+2000))});
+ return await locator.inputValue()===value;
+}
+
 export function sameHostedInputValue(actual,expected,{type,kind}={}){
  const normalize=value=>String(value).replace(/\r\n/g,'\n');
  if(normalize(actual)===normalize(expected))return true;

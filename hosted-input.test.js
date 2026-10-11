@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {JSDOM} from 'jsdom';
-import {fillHostedText,sameHostedInputValue} from './hosted-input.js';
+import {hostedFormState} from './hosted-form-state.js';
+import {fillHostedText,typeHostedSearch,sameHostedInputValue} from './hosted-input.js';
 
 const worker=readFileSync(new URL('./worker.js',import.meta.url),'utf8');
 
@@ -33,6 +34,7 @@ function fixture(html){
   };
  }
  const code=worker.slice(worker.indexOf('async function review(page)'),worker.indexOf('\nasync function custom(page'));
+ w.hostedFormState=w.eval('('+hostedFormState.toString()+')');
  const review=()=>w.eval(`(${code})`)({evaluate:fn=>fn()});
  return {dom,w,calls,locator,review};
 }
@@ -117,4 +119,9 @@ test('combobox roles cannot hide native type and pattern validation errors',asyn
  const f=fixture('<label>Email choice<input role="combobox" type="email" value="invalid"></label><label>Postal choice<input role="combobox" pattern="[0-9]{5}" value="ABC"></label><label>Valid choice<input role="combobox" required value="Toronto"></label>');
  try{assert.deepEqual([...(await f.review()).missing],['Email choice','Postal choice']);}
  finally{f.dom.window.close();}
+});
+
+test('searchable location types a query without blur or pretending an option is selected',async()=>{
+ const f=fixture('<input role="combobox"><input role="combobox" value="User selection"><button role="combobox">Choose</button>');
+ try{const e=f.w.document.querySelector('input');await typeHostedSearch(f.locator(e),'Toronto, Ontario, Canada');assert.equal(e.value,'Toronto, Ontario, Canada');assert.equal(e.dataset.applypilotUncommittedSearch,'true');assert.equal(f.w.document.activeElement,e);assert(!f.calls.includes('blur'));assert.equal(await typeHostedSearch(f.locator(f.w.document.querySelectorAll('input')[1]),'Replacement'),false);assert.equal(await typeHostedSearch(f.locator(f.w.document.querySelector('button')),'Replacement'),false);}finally{f.dom.window.close();}
 });

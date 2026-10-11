@@ -1,5 +1,6 @@
+import {hostedFormState} from './hosted-form-state.js';
 import {readToken} from './auth.js';
-import {fillHostedText} from './hosted-input.js';
+import {fillHostedText,typeHostedSearch} from './hosted-input.js';
 import {submitHostedApplication,retainBlockedSession,releaseSkippedHandoffs} from './hosted-submission.js';
 import {inActiveBatch} from './application-batches.js';
 import {ensureFocusedJob,savedSearchClaimProblem,focusAllowsSubmit,reserveAutonomousAttempt,saveFormProgress} from './single-application.js';
@@ -41,18 +42,7 @@ async function pageIssue(page,status=0){
  const hasForm=await page.locator('form,input:visible,textarea:visible,select:visible').count()>0;
  return employerPageIssue({status,text,hasForm});
 }
-async function fieldDescriptor(locator){
- return locator.evaluate(e=>{
-  const clean=value=>String(value||'').replace(/\s+/g,' ').trim();
-  const ids=value=>clean(value).split(/\s+/).map(id=>document.getElementById(id)?.innerText||document.getElementById(id)?.textContent||'').filter(Boolean).join(' ');
-  const labelled=ids(e.getAttribute('aria-labelledby')),described=ids(e.getAttribute('aria-describedby'));
-  const explicit=[...e.labels||[]].map(label=>label.innerText||label.textContent||'').join(' ');
-  const legend=e.closest('fieldset')?.querySelector(':scope > legend')?.innerText||'';
-  const wrapper=e.closest('[data-automation-id*="formField" i],.application-question,[class*="field" i],[role="group"]');
-  let context='';if(wrapper){const clone=wrapper.cloneNode(true);clone.querySelectorAll('input,textarea,select,button,[role="option"],script,style').forEach(node=>node.remove());context=clone.innerText||clone.textContent||'';}
-  return {label:clean(explicit||labelled||legend||context).slice(0,4000),ariaLabel:clean(e.getAttribute('aria-label')),description:clean(described).slice(0,4000),name:e.name||'',id:e.id||'',placeholder:e.placeholder||'',autocomplete:e.autocomplete||'',type:e.type||e.getAttribute('role')||'',required:!!e.required||e.getAttribute('aria-required')==='true'||e.closest('[aria-required="true"]')!==null};
- });
-}
+async function fieldDescriptor(locator){return locator.evaluate(hostedFormState);}
 async function fill(page,p){
  const answers=JSON.parse(p.answers_json||'{}'),controls=page.locator('input:not([role="combobox"]):visible');let n=0;
  for(let i=0;i<await controls.count();i++){
@@ -63,30 +53,7 @@ async function fill(page,p){
  return n;
 }
 function authorizeResearchFill(job,profile,question){if(researchConsentWithdrawn(db,job.id,profile.id))return false;if(!hasResearchDraftForQuestion(db,job.id,question))return true;markResearchDraftUsed(db,job.id,question);return !researchConsentWithdrawn(db,job.id,profile.id);}
-async function review(page){return page.evaluate(()=>{
- const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>1&&r.height>1&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0'};
- const clean=value=>String(value||'').replace(/\s+/g,' ').trim();
- const label=e=>{const ids=value=>clean(value).split(/\s+/).map(id=>document.getElementById(id)?.innerText||document.getElementById(id)?.textContent||'').filter(Boolean).join(' ');return clean((e.type==='radio'?e.closest('fieldset')?.querySelector('legend')?.innerText:'')||[...e.labels||[]].map(x=>x.innerText).join(' ')||ids(e.getAttribute('aria-labelledby'))||e.getAttribute('aria-label')||e.closest('[role="group"],[data-automation-id*="formField" i],.application-question,[class*="field" i]')?.innerText||e.name||'Required field').slice(0,4000)};
- let captcha=[...document.querySelectorAll('iframe[src*="captcha"],iframe[title*="challenge" i],.g-recaptcha,.h-captcha')].some(visible);
- if([...document.querySelectorAll('[name="g-recaptcha-response"],[name="h-captcha-response"]')].some(e=>e.value?.trim()))captcha=false;
- const signIn=[...document.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"]')].some(visible);
- // Employer/framework errors can disagree with a nonempty DOM value. Honor
- // native validity and explicit ARIA errors, including optional invalid fields.
- const missing=[...document.querySelectorAll('input:required,textarea:required,select:required,[aria-required="true"],input:invalid,textarea:invalid,select:invalid,[aria-invalid="true"]')].filter(e=>{
-  if(!visible(e)||e.disabled||e.matches(':disabled'))return false;
-  if(e.getAttribute('aria-invalid')==='true'||(typeof e.checkValidity==='function'&&!e.checkValidity()))return true;
-  const role=e.getAttribute('role');
-  if(e.type==='file')return !e.files?.length;
-  if(e.type==='radio')return ![...document.querySelectorAll('input[type="radio"]')].some(other=>other.name===e.name&&other.form===e.form&&other.checked);
-  if(e.type==='checkbox')return !e.checked;
-  if(role==='checkbox')return e.getAttribute('aria-checked')!=='true';
-  if(role==='radio')return !e.closest('[role="radiogroup"]')?.querySelector('[role="radio"][aria-checked="true"]');
-  if(role==='combobox')return !(e.value||e.getAttribute('aria-valuetext')||e.getAttribute('data-value')||e.textContent?.trim());
-  return !e.value||(typeof e.checkValidity==='function'&&!e.checkValidity());
- }).map(label);
- const pending=[...document.querySelectorAll('form[aria-busy="true"],input[aria-busy="true"],textarea[aria-busy="true"],select[aria-busy="true"],[role="form"][aria-busy="true"]')].some(visible);
- return {captcha,signIn,missing:[...new Set(missing)],pending};
-})}
+async function review(page){return page.evaluate(hostedFormState);}
 async function custom(page,p,j){
  const answers=JSON.parse(p.answers_json||'{}'),applicationAnswers=JSON.parse(j.answers_json||'{}'),inputs=page.locator('textarea:visible,input[type="text"]:not([role="combobox"]):visible,input:not([type]):not([role="combobox"]):visible'),unresolved=[];
  for(let i=0;i<Math.min(await inputs.count(),50);i++){
@@ -144,17 +111,21 @@ async function customControls(page,p,j){
   const marker=`combo-${i}-${Date.now()}`,optionLocator=page.locator('[role="option"]:visible');
   await optionLocator.evaluateAll((xs,value)=>xs.forEach(x=>x.setAttribute('data-applypilot-visible-before-combobox',value)),marker);
   const clicked=await control.click().then(()=>true,()=>false);
+  const trusted=hostedFieldAnswer(descriptor,p,answers);
+  const query=clicked&&trusted&&['location','city','region','country'].includes(trusted.kind)&&await typeHostedSearch(control,trusted.answer)?trusted.answer:null;
   scopeIds=await control.evaluate(e=>[...new Set(`${e.getAttribute('aria-controls')||''} ${e.getAttribute('aria-owns')||''}`.trim().split(/\s+/).filter(Boolean))]);
-  if(clicked)await page.waitForFunction(({ids,marker})=>{const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>1&&r.height>1&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0'};return [...document.querySelectorAll('[role="option"]')].some(option=>visible(option)&&(ids.some(id=>document.getElementById(id)?.contains(option))||(!ids.length&&option.getAttribute('data-applypilot-visible-before-combobox')!==marker)));},{ids:scopeIds,marker},{timeout:1200}).catch(()=>{});
+  if(clicked)await page.waitForFunction(({ids,marker})=>{const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>1&&r.height>1&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0'};return [...document.querySelectorAll('[role="option"]')].some(option=>visible(option)&&(ids.some(id=>document.getElementById(id)?.contains(option))||(!ids.length&&option.getAttribute('data-applypilot-visible-before-combobox')!==marker)));},{ids:scopeIds,marker},{timeout:3000}).catch(()=>{});
   const rawOptions=await optionLocator.evaluateAll((xs,{ids,marker})=>{const groups=[];return xs.map((x,index)=>{const group=x.closest('[role="listbox"],[role="menu"],[role="tree"],[role="grid"]')||x.parentElement;let groupIndex=groups.indexOf(group);if(groupIndex<0){groups.push(group);groupIndex=groups.length-1;}return {index,label:(x.innerText||x.textContent||'').trim(),value:x.getAttribute('data-value')||x.getAttribute('value')||'',disabled:x.getAttribute('aria-disabled')==='true',scopeIds:ids.filter(id=>document.getElementById(id)?.contains(x)),newlyVisible:x.getAttribute('data-applypilot-visible-before-combobox')!==marker,group:String(groupIndex)};});},{ids:scopeIds,marker});
   const expanded=await control.getAttribute('aria-expanded')==='true',opened=clicked&&(expanded||rawOptions.some(option=>option.scopeIds.length||option.newlyVisible));
   const options=scopedHostedComboboxOptions(rawOptions,{scopeIds,opened});
   const choice=await prepareHostedDropdown(db,j,p,descriptor,options.map(o=>({...o,value:o.value||undefined})),answers);
   const currentOptions=await optionLocator.evaluateAll(xs=>xs.map((x,index)=>({index,label:(x.innerText||x.textContent||'').trim(),disabled:x.getAttribute('aria-disabled')==='true'})));
   const optionsChanged=options.some(o=>!currentOptions.some(c=>c.index===o.index&&c.label===o.label&&c.disabled===o.disabled));
-  const nowPopulated=await control.evaluate(e=>!!(e.getAttribute('aria-valuetext')||e.getAttribute('data-value')||e.matches('input')&&e.value||!e.matches('input')&&e.textContent?.trim()&&!/^(?:select|choose)\b/i.test(e.textContent.trim())));
+  const nowPopulated=await control.evaluate((e,query)=>!!(e.getAttribute('aria-valuetext')||e.getAttribute('data-value')||e.matches('input')&&e.value&&e.value!==query||!e.matches('input')&&e.textContent?.trim()&&!/^(?:select|choose)\b/i.test(e.textContent.trim())),query);
   await page.locator('[data-applypilot-visible-before-combobox]').evaluateAll(xs=>xs.forEach(x=>x.removeAttribute('data-applypilot-visible-before-combobox'))).catch(()=>{});
-  if(choice&&!optionsChanged&&!nowPopulated){if(!authorizeResearchFill(j,p,question))return {unresolved,withdrawn:true};await optionLocator.nth(choice.index).click();if(choice.aiPrepared)await control.evaluate(e=>e.dataset.applypilotApplicationOnly='true');}
+  if(choice&&!optionsChanged&&!nowPopulated){if(!authorizeResearchFill(j,p,question))return {unresolved,withdrawn:true};await optionLocator.nth(choice.index).click();
+   if(query)await control.evaluate((e,label)=>{if(e.value?.trim()===label.trim()&&e.getAttribute('aria-expanded')!=='true')delete e.dataset.applypilotUncommittedSearch;},choice.label);
+   if(choice.aiPrepared)await control.evaluate(e=>e.dataset.applypilotApplicationOnly='true');}
   else {await control.press('Escape').catch(()=>{});if(descriptor.required)unresolved.push(question);}
  }
  const groups=page.locator('[role="radiogroup"]:visible');
@@ -172,9 +143,7 @@ async function customControls(page,p,j){
  }
  return {unresolved,withdrawn:false};
 }
-async function recordFormProgress(page,job){
- const progress=await page.evaluate(()=>{const fields=[...document.querySelectorAll('input:required,textarea:required,select:required,input[aria-required="true"],textarea[aria-required="true"],select[aria-required="true"]')].filter(e=>e.getClientRects().length&&!e.disabled),groups=new Map();for(const e of fields){const key=e.type==='radio'?'radio:'+e.name+':'+[...document.forms].indexOf(e.form):e.id||e.name||String(fields.indexOf(e));const filled=e.type==='file'?!!e.files?.length:['radio','checkbox'].includes(e.type)?e.checked:!!e.value&&e.checkValidity();groups.set(key,(groups.get(key)||false)||filled);}return {required:groups.size,filled:[...groups.values()].filter(Boolean).length};});saveFormProgress(db,job.id,progress);
-}
+async function recordFormProgress(page,job){const {required,filled}=await page.evaluate(hostedFormState);saveFormProgress(db,job.id,{required,filled});}
 async function rememberForm(page,job){
  const fields=await page.locator('input:visible,textarea:visible,select:visible').evaluateAll(xs=>xs.filter(e=>e.dataset.applypilotApplicationOnly!=='true'&&!['password','hidden','file','checkbox','submit','button'].includes(e.type)&&(e.type!=='radio'||e.checked)).map(e=>({question:(e.type==='radio'?e.closest('fieldset')?.querySelector('legend')?.innerText:null)||e.labels?.[0]?.innerText||e.getAttribute('aria-label')||'',answer:e.tagName==='SELECT'?e.selectedOptions?.[0]?.textContent:e.type==='radio'?(e.labels?.[0]?.innerText||''):e.value})).filter(f=>f.question&&f.answer).slice(0,120));
  captureAnswers(db,job,fields.filter(field=>!hasResearchDraftForQuestion(db,job.id,field.question)));

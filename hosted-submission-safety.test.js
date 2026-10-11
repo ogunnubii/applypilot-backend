@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {sameApplication,receipt} from './local-policy.js';
+import {hostedFormState} from './hosted-form-state.js';
 const worker=readFileSync(new URL('./worker.js',import.meta.url),'utf8');
 test('hosted claims never silently take ownership of local-browser applications',()=>{
  assert.equal((worker.match(/applicant_id IN \(SELECT id FROM applicants WHERE execution_mode='cloud'\) AND local_owner IS NULL/g)||[]).length,1);
@@ -18,8 +19,8 @@ test('hosted flow checks exact job identity before filling, final click and rece
  assert(receipt('Your application has been received'));
 });
 test('hosted validation ignores disabled controls but rejects invalid nonempty values',()=>{
- assert(worker.includes("!visible(e)||e.disabled||e.matches(':disabled')"));
- assert(worker.includes("typeof e.checkValidity==='function'&&!e.checkValidity()"));
+ assert(hostedFormState.toString().includes("e.disabled||e.matches(':disabled')"));
+ assert(hostedFormState.toString().includes("typeof e.checkValidity==='function'&&!e.checkValidity()"));
 });
 test('actual hosted review detects invalid saved values and ignores disabled required inputs',async()=>{
  const {JSDOM}=await import('jsdom');
@@ -27,6 +28,7 @@ test('actual hosted review detects invalid saved values and ignores disabled req
  Object.defineProperty(dom.window.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});
  dom.window.HTMLElement.prototype.getBoundingClientRect=()=>({width:100,height:20});
  const code=worker.slice(worker.indexOf('async function review(page)'),worker.indexOf('\nasync function custom(page'));
+ dom.window.hostedFormState=dom.window.eval('('+hostedFormState.toString()+')');
  const review=dom.window.eval('('+code+')');
  const state=await review({evaluate:fn=>fn()});
  assert.deepEqual([...state.missing],['Contact']);

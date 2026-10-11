@@ -13,7 +13,7 @@ const GENERIC_QUESTION=/^(?:(?:please )?(?:select|choose)(?: one| an? option| on
 
 export function protectedHostedQuestion(value){
  const q=policyText(value);
- return sensitive(q)||/\b(?:captcha|security question|assessment|test question|quiz|date of birth|birth date|age|race|racial|ethnic(?:ity)?|ancestry|national origin|country of origin|nationality|hispanic|latin(?:o|a|x)|indigenous|aboriginal|native american|gender|male|female|non binary|transgender|sex(?:ual orientation)?|pronouns?|lgbtq?|disabilit(?:y|ies)|veteran|military status|religion|marital status|voluntary self identification|equal employment|eeo|salary|compensation|desired pay|expected pay|pay expectation|pay rate|hourly rate|wages?|remuneration|bonus|equity|work authori[sz](?:ation|ed)|authori[sz]ed to work|eligible to work|work eligibility|employment eligibility|right to work|permission to work|legally (?:permitted|allowed|eligible) to work|work permit|sponsor(?:ship)?|visa|citizen(?:ship)?|immigration|criminal|convict(?:ed|ion)|felony|background check|security clearance|consent|agree|agreement|accept(?:ance)?|acknowledg(?:e|ement)|certif(?:y|ication)|attest(?:ation)?|declar(?:e|ation)|signature|arbitration|non compete|conflict of interest)\b/i.test(q)||/\b(?:over|at least)\s+(?:18|eighteen)\b/i.test(q);
+ return sensitive(q)||/\b(?:captcha|security question|assessment|test question|quiz|date of birth|birth date|age|race|racial|ethnic(?:ity)?|ancestry|national origin|country of origin|nationality|hispanic|latin(?:o|a|x)|indigenous|aboriginal|native american|gender|male|female|non binary|transgender|sex(?:ual orientation)?|pronouns?|lgbtq?|disabilit(?:y|ies)|veteran|military status|religion|marital status|voluntary self identification|equal employment|eeo|salary|compensation|desired pay|expected pay|pay expectation|pay rate|hourly rate|wages?|remuneration|bonus|equity|work authori[sz](?:ation|ed)|authori[sz]ed to work|eligible to work|work eligibility|employment eligibility|right to work|permission to work|legally (?:permitted|allowed|eligible) to work|work permit|sponsor(?:ship)?|sponorship|visa|citizen(?:ship)?|immigration|criminal|convict(?:ed|ion)|felony|background check|security clearance|consent|agree|agreement|accept(?:ance)?|acknowledg(?:e|ement)|certif(?:y|ication)|attest(?:ation)?|declar(?:e|ation)|signature|arbitration|non compete|conflict of interest)\b/i.test(q)||/\b(?:over|at least)\s+(?:18|eighteen)\b/i.test(q);
 }
 
 const textParts=field=>[field?.label,field?.ariaLabel,field?.name,field?.id,field?.placeholder].map(x=>String(x||'').trim()).filter(Boolean);
@@ -30,8 +30,16 @@ export function hostedFieldKind(field){
 function trustedAnswer(kind,profile,answers){
  const direct=knownAnswer(CANONICAL[kind],profile,{});
  const saved=[...new Set(Object.entries(answers||{}).filter(([question,value])=>fieldKind(question)===kind&&!protectedHostedQuestion(question)&&['string','number','boolean'].includes(typeof value)&&String(value).trim()).map(([,value])=>String(value).trim()))];
- const normalized=new Set(saved.map(normalize));if(normalized.size>1)return null;
- if(direct&&saved.length&&normalize(direct)!==normalize(saved[0]))return null;
+ const comparable=value=>{
+  if(kind==='linkedin')try{
+   const url=new URL(String(value));
+   if(['http:','https:'].includes(url.protocol)&&['linkedin.com','www.linkedin.com'].includes(url.hostname)&&!url.username&&!url.password&&!url.port&&/^\/in\/[^/]+\/?$/.test(url.pathname)&&[...url.searchParams.keys()].every(key=>key.startsWith('utm_')))
+    return 'linkedin.com'+url.pathname.replace(/\/$/,'').toLowerCase();
+  }catch{}
+  return normalize(value);
+ };
+ const normalized=new Set(saved.map(comparable));if(normalized.size>1)return null;
+ if(direct&&saved.length&&comparable(direct)!==comparable(saved[0]))return null;
  return direct||saved[0]||null;
 }
 

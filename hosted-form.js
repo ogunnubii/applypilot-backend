@@ -19,9 +19,22 @@ export function protectedHostedQuestion(value){
 const textParts=field=>[field?.label,field?.ariaLabel,field?.name,field?.id,field?.placeholder].map(x=>String(x||'').trim()).filter(Boolean);
 const autocompleteKind=field=>AUTOCOMPLETE[String(field?.autocomplete||'').toLowerCase().trim().split(/\s+/).pop()];
 
+// Exact personal-profile wording observed on hosted employer forms. Keep this
+// anchored: a legal declaration, another person's name or relocation preference
+// is not the applicant's saved name/current location.
+function profileKind(value){
+ const spaced=policyText(value),q=spaced.toLowerCase().replace(/^(?:applicant|candidate|user|profile)\s+/,'').replace(/\s+required$/,'');
+ const direct=fieldKind(value)||fieldKind(spaced)||fieldKind(q);if(direct)return direct;
+ if(/^(?:(?:please )?(?:enter|provide) )?(?:your )?(?:(?:full )?legal name|legal full name)$/.test(q))return 'name';
+ if(/^(?:your )?legal (?:first|given) name$/.test(q))return 'first';
+ if(/^(?:your )?legal (?:last|family) name$/.test(q))return 'last';
+ if(/^(?:where are you (?:currently )?(?:located|based)|what is your current location|(?:please )?(?:enter|provide) your current location|your current location)$/.test(q))return 'location';
+ return null;
+}
+
 export function hostedFieldKind(field){
- const parts=textParts(field),context=policyText(parts.join(' '));if(protectedHostedQuestion(context)||THIRD_PARTY_CONTACT.test(context))return null;
- const kinds=parts.map(value=>{const spaced=value.replace(/([a-z\d])([A-Z])/g,'$1 $2'),direct=fieldKind(value)||fieldKind(spaced);if(direct)return direct;return fieldKind(spaced.replace(/^(?:applicant|candidate|user|profile)\s+/i,''));}).filter(Boolean);
+ const parts=textParts(field),context=policyText([...parts,field?.description||''].join(' '));if(protectedHostedQuestion(context)||THIRD_PARTY_CONTACT.test(context))return null;
+ const kinds=parts.map(profileKind).filter(Boolean);
  const token=autocompleteKind(field);if(token)kinds.push(token);
  const type=String(field?.type||'').toLowerCase();if(type==='email')kinds.push('email');if(type==='tel')kinds.push('phone');
  const unique=[...new Set(kinds)];return unique.length===1&&PROFILE_KINDS.has(unique[0])?unique[0]:null;
@@ -29,7 +42,7 @@ export function hostedFieldKind(field){
 
 function trustedAnswer(kind,profile,answers){
  const direct=knownAnswer(CANONICAL[kind],profile,{});
- const saved=[...new Set(Object.entries(answers||{}).filter(([question,value])=>fieldKind(question)===kind&&!protectedHostedQuestion(question)&&['string','number','boolean'].includes(typeof value)&&String(value).trim()).map(([,value])=>String(value).trim()))];
+ const saved=[...new Set(Object.entries(answers||{}).filter(([question,value])=>profileKind(question)===kind&&!protectedHostedQuestion(question)&&!THIRD_PARTY_CONTACT.test(policyText(question))&&['string','number','boolean'].includes(typeof value)&&String(value).trim()).map(([,value])=>String(value).trim()))];
  const comparable=value=>{
   if(kind==='linkedin')try{
    const url=new URL(String(value));

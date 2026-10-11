@@ -3,6 +3,28 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {approvedHostedCheckbox,approvedHostedRadioIndex,hostedFieldAnswer,hostedOptionChoice,protectedHostedQuestion,scopedHostedComboboxOptions} from './hosted-form.js';
 
+test('hosted personal name and current-location wording resolve saved profile facts',()=>{
+ const profile={name:'Fixture Applicant',location:'Toronto, Ontario, Canada'};
+ for(const label of ['Legal Name','Full Legal Name','Your legal full name','Please enter your legal name','candidateLegalName'])assert.equal(hostedFieldAnswer({label},profile)?.answer,profile.name,label);
+ assert.equal(hostedFieldAnswer({label:'Legal first name'},profile)?.answer,'Fixture');
+ assert.equal(hostedFieldAnswer({label:'Legal last name'},profile)?.answer,'Applicant');
+ for(const label of ['Where are you currently located?','Where are you based?','What is your current location?','Please provide your current location'])assert.equal(hostedFieldAnswer({label},profile)?.answer,profile.location,label);
+ const descriptor={label:'Where are you currently located?',type:'combobox'};
+ assert.equal(hostedOptionChoice(descriptor,[{label:profile.location,value:'toronto'},{label:'Toronto, Ohio, United States',value:'ohio'}],profile)?.value,'toronto');
+ assert.equal(hostedOptionChoice(descriptor,[{label:'Toronto',value:'ambiguous'}],profile),null);
+});
+
+test('personal-profile aliases reject different subjects, declarations and conflicting saved facts',()=>{
+ const profile={name:'Fixture Applicant',location:'Toronto, Ontario, Canada'};
+ for(const label of ['Legal name of your employer','Emergency contact legal name','I certify my legal name','Where would you like to be located?','Where are you authorized to work?','Country of origin'])assert.equal(hostedFieldAnswer({label},profile),null,label);
+ assert.equal(hostedFieldAnswer({label:'Name',description:'Enter the name of your supervisor'},profile),null);
+ assert.equal(hostedFieldAnswer({label:'Legal Name'},profile,{'Full name':'Different Applicant'}),null);
+ assert.equal(hostedFieldAnswer({label:'Full name'},profile,{'Legal Name':'Different Applicant'}),null);
+ assert.equal(hostedFieldAnswer({label:'Where are you currently located?'},profile,{'Current location':'Vancouver, British Columbia, Canada'}),null);
+ assert.equal(hostedFieldAnswer({label:'Current location'},profile,{'Where are you currently located?':'Vancouver, British Columbia, Canada'}),null);
+ assert.equal(hostedFieldAnswer({label:'Legal Name'},{},{}),null);
+});
+
 test('hosted routine controls require one exact saved answer',()=>{
  const answers={'Preferred office':'Toronto','Email me job updates':'Yes','Work schedule':'Hybrid'};
  const choice=hostedOptionChoice({label:'Preferred office'},[

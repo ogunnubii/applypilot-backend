@@ -15,7 +15,7 @@ import {supported as hostAllowed,sameApplication,employerPageIssue} from './loca
 import {recoverWorkerJobs} from './local-state.js';
 import {Handoffs,serveHandoffs} from './handoff.js';
 import {pickResumeField} from './form-policy.js';
-import {approvedHostedCheckbox,approvedHostedRadioIndex,hostedFieldAnswer,hostedOptionChoice,protectedHostedQuestion,requiredUnansweredRadioGroups,scopedHostedComboboxOptions} from './hosted-form.js';
+import {approvedHostedCheckbox,approvedHostedRadioIndex,hostedFieldAnswer,hostedFieldKind,hostedOptionChoice,protectedHostedQuestion,requiredUnansweredRadioGroups,scopedHostedComboboxOptions} from './hosted-form.js';
 import {chromium} from 'playwright';import {db,event,now} from './db.js';
 import {runDueSearches} from './discovery.js';
 import {prioritizeApplications} from './application-diversity.js';
@@ -60,6 +60,14 @@ async function custom(page,p,j){
   const l=inputs.nth(i);if(await l.inputValue().catch(()=>'')!=='')continue;
   const descriptor=await fieldDescriptor(l),q=descriptor.label||descriptor.ariaLabel||descriptor.description||descriptor.placeholder||descriptor.name||descriptor.id;if(!q)continue;
   if(protectedHostedQuestion(q)){if(descriptor.required)unresolved.push(q);continue;}
+  // Profile conflicts/missing facts must not fall through to model drafting.
+  // This also fills contact facts when an employer renders them as textareas.
+  if(hostedFieldKind(descriptor)){
+   const trusted=hostedFieldAnswer(descriptor,p,answers);
+   if(trusted){if(await fillHostedText(l,trusted.answer,{kind:trusted.kind}))event(j.id,'answer',`Filled saved profile field: ${q}`);}
+   else if(descriptor.required)unresolved.push(q);
+   continue;
+  }
   const selected=await automaticTextAnswer({db,profile:p,job:j,question:q,answers,applicationAnswers}),applicationOnly=['public_page','application_only','approved_facts'].includes(selected.source);
   if(applicationOnly)await l.evaluate(e=>e.dataset.applypilotApplicationOnly='true');if(selected.source==='public_page')event(j.id,'public_page_draft',`Google filled a cited public-page draft for: ${q}`);if(selected.source==='application_only')event(j.id,'application_only_answer',`Filled an edited application-only answer for: ${q}`);if(selected.source==='approved_facts')event(j.id,'ai_draft',`AI filled a fact-grounded draft for: ${q}`);
   if(selected.answer!==null){if(applicationOnly&&!authorizeResearchFill(j,p,q))return {unresolved,withdrawn:true};if(await fillHostedText(l,selected.answer))event(j.id,'answer',`Answered: ${q}`)}else if(descriptor.required)unresolved.push(q);

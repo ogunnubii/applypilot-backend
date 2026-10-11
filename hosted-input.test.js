@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {JSDOM} from 'jsdom';
 import {hostedFormState} from './hosted-form-state.js';
 import {fillHostedText,typeHostedSearch,sameHostedInputValue} from './hosted-input.js';
+import {hostedFieldKind,hostedFieldAnswer,protectedHostedQuestion} from './hosted-form.js';
 
 const worker=readFileSync(new URL('./worker.js',import.meta.url),'utf8');
 
@@ -38,6 +39,25 @@ function fixture(html){
  const review=()=>w.eval(`(${code})`)({evaluate:fn=>fn()});
  return {dom,w,calls,locator,review};
 }
+
+test('hosted custom fields fill saved name facts but never ask AI to resolve missing or conflicting identity',async()=>{
+ const code=worker.slice(worker.indexOf('async function custom(page,p,j)'),worker.indexOf('\nasync function selections('));
+ for(const [profile,expected] of [
+  [{name:'Fixture Applicant',answers_json:'{}'},'Fixture Applicant'],
+  [{name:'Fixture Applicant',answers_json:JSON.stringify({'Legal Name':'Different Applicant'})},''],
+  [{answers_json:'{}'},'']
+ ]){
+  const f=fixture('<label>Legal Name<textarea required></textarea></label>');
+  try{
+   const input=f.w.document.querySelector('textarea'),locator=f.locator(input);
+   const custom=Function('hostedFieldKind','hostedFieldAnswer','protectedHostedQuestion','fillHostedText','automaticTextAnswer','fieldDescriptor','event','authorizeResearchFill','return ('+code+')')(
+    hostedFieldKind,hostedFieldAnswer,protectedHostedQuestion,fillHostedText,
+    ()=>{throw Error('A model must not invent/resolve profile identity');},async()=>({label:'Legal Name',required:true}),()=>{},()=>true);
+   const result=await custom({locator:()=>({count:async()=>1,nth:()=>locator})},profile,{answers_json:'{}'});
+   assert.equal(input.value,expected);assert.deepEqual(result.unresolved,expected?[]:['Legal Name']);
+  }finally{f.dom.window.close();}
+ }
+});
 
 test('keyboard and blur commit all contact fields and the final field to employer state',async()=>{
  const f=fixture('<form><label>Name<input id="name" required></label><label>Email<input id="email" type="email" required></label><label>Phone<input id="phone" type="tel" required></label><label>Address<input id="address" required></label><label>Answer<textarea id="answer" required></textarea></label></form>');

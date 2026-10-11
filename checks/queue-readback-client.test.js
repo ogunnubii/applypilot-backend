@@ -2,6 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {JSDOM} from 'jsdom';
+for(const client of ['assistant-client.js','web/progress.js'])test(client+' distinguishes preparation from submission authorization',async()=>{
+ const source=readFileSync(new URL('../'+client,import.meta.url),'utf8');
+ for(const [flags,expected] of [
+  [{paused:true,focus_enabled:false,auto_submit:false},'Automation is paused.'],
+  [{paused:false,focus_enabled:true,auto_submit:false},'Preparation is enabled. Automatic submission is off; you review and submit.'],
+  [{paused:false,focus_enabled:true,auto_submit:true},'Preparation and automatic submission are enabled.'],
+  [{paused:false},'Automatic submission status is unavailable; check the Application automation control.']
+ ]){
+  const dom=new JSDOM('<div id="home-summary"></div><p id="notice"></p>',{url:'https://example.test/?view=settings',runScripts:'outside-only'}),w=dom.window;
+  w.$=s=>w.document.querySelector(s);w.el=(tag,text)=>{const e=w.document.createElement(tag);if(text)e.textContent=text;return e;};w.field=form=>{const e=w.document.createElement('input');form.append(e);return e;};
+  w.api=async(path,method)=>{assert.equal(method,undefined,'readback must not change authorization');return path==='/applicants'?{applicants:[{id:'p',name:'Fixture'}]}:{mode:'saved-search',batch_enabled:false,applicant_id:'p',active_structured_search:true,...flags};};
+  w.eval(source.slice(source.indexOf('function renderBatchControl('),source.indexOf('function automaticSubmissionEnabled')));w.renderBatchControl({enabled:false});await new Promise(r=>setTimeout(r,0));
+  assert.equal(w.document.querySelector('#application-batch [role=status]').textContent,'Saved search queue is active. '+expected);dom.window.close();
+ }
+});
 for(const client of ['assistant-client.js','web/progress.js']){
  const source=readFileSync(new URL('../'+client,import.meta.url),'utf8');
  test(client+' distinguishes applied transitions, refresh failures, explicit guards and unavailable verification without retrying POST',async()=>{

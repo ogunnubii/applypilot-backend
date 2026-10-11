@@ -18,7 +18,7 @@ export function installSingleApplication(db){
  db.exec(`CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT);
  CREATE TABLE IF NOT EXISTS application_progress(job_id TEXT PRIMARY KEY,required_total INTEGER NOT NULL,required_filled INTEGER NOT NULL,updated_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS autonomous_attempts(job_id TEXT PRIMARY KEY,owner TEXT NOT NULL,created_at TEXT NOT NULL);`);
- for(const column of ['auto_submit','skip_blocked','search_queue_only'])if(!db.prepare('PRAGMA table_info(work_focus)').all().some(c=>c.name===column))db.exec('ALTER TABLE work_focus ADD COLUMN '+column+' INTEGER NOT NULL DEFAULT 0');
+ for(const column of ['auto_submit','skip_blocked','search_queue_only','stop_after_receipt'])if(!db.prepare('PRAGMA table_info(work_focus)').all().some(c=>c.name===column))db.exec('ALTER TABLE work_focus ADD COLUMN '+column+' INTEGER NOT NULL DEFAULT 0');
  if(!db.prepare('PRAGMA table_info(work_focus)').all().some(c=>c.name==='queue_applicant_id'))db.exec("ALTER TABLE work_focus ADD COLUMN queue_applicant_id TEXT");
 }
 // Explicit queue transition; historical attempts are never cleared or retried.
@@ -142,10 +142,30 @@ function preparationProblem(db,job){
  return '';
 }
 const isBlocked=job=>['paused','needs_review'].includes(job.status)||job.status==='local_browser'&&job.local_phase==='blocked';
+export function startOneApplication(db,userId,jobId){
+ db.exec('BEGIN IMMEDIATE');try{
+  const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(userId),job=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,userId);
+  if(!job||!focus?.search_queue_only)throw Error('Choose a fresh application from your saved search queue.');
+  if(inFlightApplication(db,userId))throw Error('Another application is running or awaiting submission verification.');
+  const current=focus.job_id?db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(focus.job_id,userId):null;
+  if(current&&db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='continuation_requests'").get()&&db.prepare("SELECT 1 FROM continuation_requests WHERE job_id=? AND user_id=? AND state='dispatching'").get(current.id,userId))throw Error('A continuation is still dispatching for the selected application.');
+  if(current&&current.id!==job.id&&!receiptConfirmed(db,current)&&!(isBlocked(current)&&!hasSubmissionEvidence(db,current))&&!['archived','duplicate'].includes(current.status))throw Error('Resolve the selected application before starting another.');
+  const problem=preparationProblem(db,job)||savedSearchProblem(db,job,focus,true);if(problem)throw Error(problem);
+  if(metadataFor(job).manualReview||globalThis.ApplyPilotPolicy.customApplication(job.url))throw Error('This employer requires your final review and Submit click.');
+  if(db.prepare('SELECT execution_mode FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,userId)?.execution_mode!=='cloud')throw Error('Choose hosted worker mode before starting a hosted application.');
+  db.prepare('UPDATE work_focus SET enabled=1,auto_submit=1,skip_blocked=0,stop_after_receipt=1,job_id=? WHERE user_id=?').run(job.id,userId);
+  if(job.status==='saved')db.prepare("UPDATE jobs SET status='queued',updated_at=? WHERE id=?").run(now(),job.id);
+  db.exec('COMMIT');return focusSnapshot(db,userId);
+ }catch(error){db.exec('ROLLBACK');throw error;}
+}
 function selectFocusedJob(db,userId){
  const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=? AND enabled=1').get(userId);
  if(!focus)return;
  const current=focus.job_id?db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(focus.job_id,userId):null;
+ if(focus.stop_after_receipt){
+  if(!current||receiptConfirmed(db,current)||['archived','duplicate'].includes(current.status))db.prepare('UPDATE work_focus SET enabled=0,auto_submit=0,skip_blocked=0 WHERE user_id=?').run(userId);
+  return; // Authorization covers this named job only, including after removal.
+ }
  const pendingContinuation=current&&db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='continuation_requests'").get()&&db.prepare("SELECT 1 FROM continuation_requests WHERE job_id=? AND user_id=? AND state='dispatching' AND claimed_at>=?").get(current.id,userId,new Date(Date.now()-60000).toISOString());
  // Opt-in best effort parks only pre-submit blockers. Uncertain attempts never
  // release the selection, and are never candidates for an automatic restart.
@@ -172,7 +192,7 @@ export function focusSnapshot(db,userId){
  const f=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(userId);
  const job=f?.job_id?db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(f.job_id,userId):null;
  const p=job?db.prepare('SELECT * FROM application_progress WHERE job_id=?').get(job.id):null;
- return {enabled:!!f?.enabled,search_queue_only:!!f?.search_queue_only,queue_applicant_id:f?.queue_applicant_id||null,auto_submit:!!f?.auto_submit,skip_blocked:!!f?.skip_blocked,job_id:f?.job_id||null,
+ return {enabled:!!f?.enabled,search_queue_only:!!f?.search_queue_only,queue_applicant_id:f?.queue_applicant_id||null,auto_submit:!!f?.auto_submit,skip_blocked:!!f?.skip_blocked,stop_after_receipt:!!f?.stop_after_receipt,job_id:f?.job_id||null,
   selected_job:job?{id:job.id,title:job.title,company:job.company,status:job.status,challenge:job.challenge,execution_mode:db.prepare('SELECT execution_mode FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,userId)?.execution_mode||'cloud'}:null,
   parked:db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived','submitted','interview','rejected','offer') AND id!=COALESCE(?,'')").get(userId,f?.job_id||null).n,
   progress:p?{required:p.required_total,filled:p.required_filled,percent:p.required_total?Math.floor(p.required_filled*100/p.required_total):null,updated_at:p.updated_at}:null,
@@ -189,6 +209,7 @@ export function setWorkFocus(db,userId,{enabled,auto_submit,skip_blocked,next}={
   if(old.search_queue_only&&inFlightApplication(db,userId,old.job_id||''))throw Error('Another application is still running or verifying a submission.');
   if(next&&old.job_id&&!old.confirmed)throw Error('The selected application needs an employer confirmation before moving on.');
   db.prepare('INSERT INTO work_focus(user_id,enabled,job_id,auto_submit,skip_blocked) VALUES(?,1,NULL,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=1,auto_submit=excluded.auto_submit,skip_blocked=excluded.skip_blocked').run(userId,auto_submit===true?1:0,skip_blocked===true?1:0);
+  db.prepare('UPDATE work_focus SET stop_after_receipt=0 WHERE user_id=?').run(userId);
   selectFocusedJob(db,userId);db.exec('COMMIT');
  }catch(e){db.exec('ROLLBACK');throw e;}
  return focusSnapshot(db,userId);

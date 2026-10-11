@@ -31,3 +31,10 @@ test('answered, disabled, changed, unknown and declaration controls remain untou
   const f=fixture(q);try{assert.equal(await fillHostedButtonGroups(f.page,{}, {[q]:'Yes'}),0);assert.equal(f.clicks(),0);}finally{f.dom.window.close()}
  }
 });
+
+test('confirmed adult answer fills the employer Yes button without treating a declaration as an age question',async()=>{
+ const p={answers_json:JSON.stringify({[K.over18]:'Yes'})};p.employment_context=employmentContext(p,{job_metadata_json:'{"location":"Global"}'});
+ for(const [question,expected]of [['Are you over the age of 18?',1],['Are you over the age of 18 and do you accept our agreement?',0]]){
+  const f=fixture(question);try{assert.equal(await fillHostedButtonGroups(f.page,p),expected);assert.equal(f.clicks(),expected);assert.equal(f.state().filled,expected);}finally{f.dom.window.close();}
+ }
+});

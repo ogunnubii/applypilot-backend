@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {installBatches} from '../application-batches.js';
-import {installSingleApplication,inFlightApplication,receiptConfirmed,useSavedSearchQueue,savedSearchQueueState,setWorkFocus,focusSnapshot,savedSearchClaimProblem,reserveAutonomousAttempt} from '../single-application.js';
+import {installSingleApplication,inFlightApplication,receiptConfirmed,startOneApplication,ensureFocusedJob,useSavedSearchQueue,savedSearchQueueState,setWorkFocus,focusSnapshot,savedSearchClaimProblem,reserveAutonomousAttempt} from '../single-application.js';
 import {normalizeSearchScope,scopeIntent} from '../search-scope.js';
 import {jobIntelligence} from '../job-intelligence.js';
 const scope=normalizeSearchScope({roles:['Platform Engineer'],localPlaces:['ontario'],remotePlaces:['canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true,preferRemote:true});
@@ -33,6 +33,22 @@ test('queue preflight preserves uncertain and completed protections and distingu
  db.exec("INSERT INTO autonomous_attempts VALUES('reserved','hosted-worker','2026'); UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.manualReview',json('true')) WHERE id='manual'");
  const r=savedSearchQueueState(db,'u',{applicant_id:'p'}).readiness;
  assert.equal(r.checked,2);assert.equal(r.eligible,1);assert.equal(r.candidates[0].id,'manual');assert.equal(r.candidates[0].automatic_submission_supported,false);assert.match(r.held_jobs[0].reason,/previous submission/);assert.equal(db.prepare('SELECT COUNT(*) n FROM autonomous_attempts').get().n,1);db.close();
+});
+
+test('one-job run parks a pre-submit blocker, targets only the named fresh job and stops after a genuine receipt',()=>{
+ const {db,add}=fixture();useSavedSearchQueue(db,'u',{applicant_id:'p'});add('blocked',{status:'needs_review'});add('selected');add('next');
+ db.exec("UPDATE jobs SET attempts=1,challenge='Missing personal fact' WHERE id='blocked';UPDATE work_focus SET enabled=1,job_id='blocked' WHERE user_id='u'");
+ const blocked=db.prepare("SELECT * FROM jobs WHERE id='blocked'").get();let f=startOneApplication(db,'u','selected');assert.equal(f.job_id,'selected');assert(f.auto_submit&&f.stop_after_receipt);assert.equal(f.skip_blocked,false);assert.deepEqual(db.prepare("SELECT * FROM jobs WHERE id='blocked'").get(),blocked);
+ db.exec("UPDATE jobs SET status='needs_review',local_attempt_at='2026',local_phase='verifying',challenge='Unconfirmed submission' WHERE id='selected'");
+ f=ensureFocusedJob(db,'u');assert.equal(f.job_id,'selected');assert.equal(f.auto_submit,true);assert.equal(f.confirmed,false);assert.throws(()=>startOneApplication(db,'u','next'),/awaiting submission verification/);
+ db.exec("UPDATE jobs SET status='submitted',challenge=NULL,confirmation='Thank you for applying' WHERE id='selected';INSERT INTO events VALUES('selected','2026','submitted','Employer receipt')");
+ f=ensureFocusedJob(db,'u');assert(f.confirmed);assert.equal(f.enabled,false);assert.equal(f.auto_submit,false);assert.equal(f.job_id,'selected');assert.equal(db.prepare("SELECT status FROM jobs WHERE id='next'").get().status,'saved');assert.equal(db.prepare('SELECT COUNT(*) n FROM autonomous_attempts').get().n,0);db.close();
+});
+
+test('one-job run rejects foreign, attempted, unsupported, stale, unconsented and manual-review candidates atomically',()=>{
+ for(const mutation of ["UPDATE jobs SET user_id='u2',applicant_id='p2' WHERE id='fresh'","UPDATE jobs SET attempts=1 WHERE id='fresh'","UPDATE jobs SET local_attempt_at='2026' WHERE id='fresh'","UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.checkedAt','2020-01-01') WHERE id='fresh'","UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.manualReview',json('true')) WHERE id='fresh'","UPDATE applicants SET consent=0 WHERE id='p'","UPDATE applicants SET execution_mode='local' WHERE id='p'","UPDATE jobs SET url='https://example.test/unknown' WHERE id='fresh'"]){
+  const {db,add}=fixture();useSavedSearchQueue(db,'u',{applicant_id:'p'});add('fresh');db.exec(mutation);const before=db.prepare('SELECT total_changes() n').get().n;assert.throws(()=>startOneApplication(db,'u','fresh'));assert.equal(db.prepare('SELECT total_changes() n').get().n,before);assert.equal(focusSnapshot(db,'u').auto_submit,false);db.close();
+ }
 });
 
 test('both dashboards show the preflight without sending a mutation and render employer names as text',async()=>{

@@ -28,7 +28,7 @@ test('Gemini receives separate job context, exact evidence and field limits; ove
  const options={question,profile:{gemini_facts_consent:1},job:{title:'SRE',company:'Example'},jobContext:{description:'Build reliable Kubernetes platforms.',sourceUrl:'https://jobs.lever.co/example/id',status:'public_posting'},answers:{},experience:[approved('Ingress incident',fact)],maxLength:200,env:{GEMINI_API_KEY:'test'},fetchImpl:async(_url,request)=>{sent=JSON.parse(request.body);return output({answer:fact,reason:'',evidence:[{id:'1',quote:fact}]});}};
  assert.equal((await geminiFactAnswer(options)).answer,fact);const input=JSON.parse(sent.input);assert.equal(input.job.description,options.jobContext.description);assert.equal(input.limits.characters,200);assert.equal(input.limits.words,80);assert(!input.facts.some(f=>f.answer.includes('Build reliable')));
  assert.equal((await geminiFactAnswer({...options,maxLength:30})).answer,'');
- await assert.rejects(geminiFactAnswer({...options,fetchImpl:async()=>output({answer:'I led 50 engineers.',reason:'',evidence:[{id:'1',quote:'I led 50 engineers.'}]})}),/support/);
+ await assert.rejects(geminiFactAnswer({...options,fetchImpl:async()=>output({answer:'I led 50 engineers.',reason:'',evidence:[{id:'1',quote:'I led 50 engineers.'}]})}),/citation|support/);
  assert.deepEqual(answerLimit('Explain in a maximum of 200 characters',100),{characters:100,words:650});
 });
 test('public posting context validates job identity and never follows arbitrary or redirected URLs',async()=>{
@@ -42,6 +42,13 @@ function fixture(){const db=new DatabaseSync(':memory:');db.exec(`PRAGMA foreign
  CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,title TEXT,company TEXT,url TEXT);
  INSERT INTO applicants VALUES('p','u','{"Professional background":"I build Kubernetes platforms and maintain CI pipelines."}',1,0,NULL),('other','v','{}',1,0,NULL);
  INSERT INTO jobs VALUES('j','u','p','Platform Engineer','Example','https://example.test/job');`);installLibrary(db);installDrafts(db);return db;}
+
+test('unsupported personal fields do not use drafting quota or make provider and context requests',async()=>{
+ const db=fixture();try{
+  const options={env:{GEMINI_API_KEY:'test'},context:async()=>{throw Error('Must not retrieve a job page');},fetchImpl:async()=>{throw Error('Must not call provider');}};
+  const result=await draftForJob(db,'u','j','Twitter / X profile',options);assert.equal(result.answer,'');assert.match(result.reason,/saved personal answer/);assert.equal(db.prepare('SELECT COUNT(*) n FROM draft_usage').get().n,0);
+ }finally{db.close();}
+});
 test('experience requires approval, enforces ownership and only uses the selected applicant',()=>{
  const db=fixture();try{const input={title:'Incident response',details:'I correlated ingress logs and restored the service.',approved:true};assert.throws(()=>saveExperience(db,'v','p',input),/Profile/);assert.throws(()=>saveExperience(db,'u','p',{...input,approved:false}),/Confirm/);const {id}=saveExperience(db,'u','p',input);assert.equal(experienceFor(db,'v','p').length,0);assert.equal(experienceFor(db,'u','p').length,1);assert.throws(()=>deleteExperience(db,'v','p',id));deleteExperience(db,'u','p',id);assert.equal(experienceFor(db,'u','p').length,0);}finally{db.close();}
 });
@@ -58,4 +65,20 @@ test('browser captures a full question and field constraints, fills it, and neve
  w.chrome={runtime:{onMessage:{addListener(){}},sendMessage:async m=>{messages.push(m);if(m.action==='packet')return{ok:true,data:{job:{title:'SRE'},profile:{},answers:{},aiAssistance:true}};if(m.action==='state')return{ok:true,data:{attempted:false,automatic:true}};if(m.action==='answer')return{ok:true,data:{answer:'I correlated logs and rolled back the configuration; service recovered.'}};return{ok:true,data:{}};}}};
  w.eval(readFileSync('extension/policy.js','utf8'));w.eval(readFileSync('extension/content.js','utf8'));for(let n=0;n<100&&!messages.some(m=>m.action==='progress'&&m.blocked);n++)await new Promise(r=>setTimeout(r,25));
  const request=messages.find(m=>m.action==='answer');assert.equal(request.question,question.trim());assert.equal(request.maxLength,350);assert.match(request.fieldHelp,/60 words/);assert.match(w.document.querySelector('textarea').value,/correlated logs/);assert.equal(clicks,0);assert(!messages.some(m=>m.action==='attempt'));w.close();
+});
+
+test('ordinary work-style drafts distinguish prospective guidance from supported history and exclude age facts',async()=>{
+ const fact='I maintain CI pipelines and collaborate with development and security teams.',answer=fact+' In an asynchronous team, I would document decisions and handoffs to keep context clear.';let sent;
+ const result=await geminiFactAnswer({question:'Tell us about working in a remote environment and how you would communicate.',profile:{gemini_facts_consent:1},job:{title:'Cloud Engineer'},answers:{'Professional background':fact,'Over 18 - applicant confirmed':'Yes'},env:{GEMINI_API_KEY:'test'},fetchImpl:async(_url,request)=>{sent=JSON.parse(request.body);return output({answer,reason:'Transferable experience and a prospective approach.',evidence:[{id:'1',quote:fact}]});}});
+ assert.equal(result.answer,answer);assert.match(sent.system_instruction,/clearly prospective approach/);assert.match(sent.system_instruction,/Do not claim a remote-work history/);assert.match(sent.system_instruction,/do not substitute a hypothetical incident/);assert(!JSON.parse(sent.input).facts.some(f=>/18/.test(f.question)));
+});
+
+test('Gemini citations tolerate resume line wraps but never changed facts or different source IDs',async()=>{
+ const fact='I collaborate with development, security and\n infrastructure teams. Deployment time fell by 60%.',question='Describe your collaboration experience.';
+ const options={question,profile:{gemini_facts_consent:1},job:{title:'Engineer'},answers:{'Professional background':fact},env:{GEMINI_API_KEY:'test'}};
+ const draft=(quote,id='1')=>geminiFactAnswer({...options,fetchImpl:async()=>output({answer:'I collaborate with development, security and infrastructure teams.',reason:'',evidence:[{id,quote}]})});
+ assert((await draft('I collaborate with development, security and infrastructure teams.')).answer);
+ await assert.rejects(draft('Deployment time fell by 90%.'),/citation/);
+ await assert.rejects(draft('Deployment time fell by 60%.','99'),/citation/);
+ await assert.rejects(draft('I led a fully remote global team.'),/citation/);
 });

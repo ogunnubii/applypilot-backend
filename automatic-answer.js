@@ -4,6 +4,7 @@ import {canResearchQuestion,hasResearchDraftForQuestion,researchDraftProvenance,
 import {normalize,savedAnswer} from './local-policy.js';
 
 export async function automaticTextAnswer({db,profile,job,question,answers,applicationAnswers={},research=researchForJob,draft=draftForJob}){
+ let reason='';
  const applicationAnswer=savedAnswer(question,applicationAnswers);
  if(applicationAnswer!==null&&applicationAnswer!==undefined&&applicationAnswer!==''){
   const keys=Object.keys(applicationAnswers).filter(key=>normalize(key)===normalize(question)),storedQuestion=keys.length===1?keys[0]:question,value=String(applicationAnswer);
@@ -23,7 +24,7 @@ export async function automaticTextAnswer({db,profile,job,question,answers,appli
  }
  if(publicQuestion)return {answer:null,source:'unresolved'};
  if(profile.ai_consent||profile.gemini_facts_consent){
-  try{const result=await draft(db,job.user_id,job.id,question);if(result.answer?.trim())return {answer:result.answer.trim(),source:'approved_facts',sources:result.sources||[]};}catch{}
+  try{const result=await draft(db,job.user_id,job.id,question);if(result.answer?.trim())return {answer:result.answer.trim(),source:'approved_facts',sources:result.sources||[]};reason=String(result.reason||'Your saved professional facts do not support a complete answer.').slice(0,500);}catch(error){reason=String(error.message||'Professional answer drafting is unavailable.').slice(0,500);}
  }
- return {answer:null,source:'unresolved'};
+ return {answer:null,source:'unresolved',...(reason?{reason}:{})};
 }

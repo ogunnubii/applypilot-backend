@@ -73,6 +73,7 @@ async function custom(page,p,j){
    continue;
   }
   const selected=await automaticTextAnswer({db,profile:p,job:j,question:q,answers,applicationAnswers}),applicationOnly=['public_page','application_only','approved_facts'].includes(selected.source);
+  if(selected.answer===null&&selected.reason)event(j.id,'answer_blocked',q+': '+selected.reason);
   if(applicationOnly)await l.evaluate(e=>e.dataset.applypilotApplicationOnly='true');if(selected.source==='public_page')event(j.id,'public_page_draft',`Google filled a cited public-page draft for: ${q}`);if(selected.source==='application_only')event(j.id,'application_only_answer',`Filled an edited application-only answer for: ${q}`);if(selected.source==='approved_facts')event(j.id,'ai_draft',`AI filled a fact-grounded draft for: ${q}`);
   if(selected.answer!==null){if(applicationOnly&&!authorizeResearchFill(j,p,q))return {unresolved,withdrawn:true};if(await fillHostedText(l,selected.answer))event(j.id,'answer',`Answered: ${q}`)}else if(descriptor.required)unresolved.push(q);
  }

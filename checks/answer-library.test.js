@@ -3,7 +3,27 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse,reusableAnswers} from '../answer-library.js';
 import {installResearch} from '../google-research.js';
+import {canonicalLinkedIn} from '../profile-links.js';
+import {automaticTextAnswer} from '../automatic-answer.js';
 function fixture(){const db=new DatabaseSync(':memory:');db.exec("CREATE TABLE applicants(id TEXT PRIMARY KEY,answers_json TEXT);CREATE TABLE jobs(id TEXT PRIMARY KEY,answers_json TEXT NOT NULL DEFAULT '{}');INSERT INTO applicants VALUES('p','{}');INSERT INTO jobs(id) VALUES('j');");installLibrary(db);installResearch(db);return {db,j:{id:'j',applicant_id:'p',user_id:'u'}};}
+
+test('LinkedIn formatting differences and malformed captures do not suppress a valid profile; different identities still conflict',()=>{
+ const {db}=fixture(),url='https://www.linkedin.com/in/fixture';
+ try{
+  const p={id:'p',user_id:'u',answers_json:JSON.stringify({'LinkedIn':url,'Linkedin profile':'linkedin.com/in/fixture','LinkedIn URL':url+'/?utm_source=example','Linkedin':'LinkedIn','Linkedin Profile URL':'on'})};
+  const answers=reusableAnswers(db,p);assert.equal(answers.LinkedIn,url);assert.equal(answers['Linkedin profile'],url);assert.equal(answers.Linkedin,undefined);
+  p.answers_json=JSON.stringify({'LinkedIn':url,'LinkedIn URL':'https://linkedin.com/in/somebodyelse'});assert.equal(Object.keys(reusableAnswers(db,p)).length,0);
+  for(const invalid of ['LinkedIn.com/fixture','on','https://linkedin.com.evil.test/in/fixture','https://user:pass@linkedin.com/in/fixture','javascript:alert(1)','https://linkedin.com/in/fixture?redirect=other'])assert.equal(canonicalLinkedIn(invalid),null,invalid);
+  assert.equal(canonicalLinkedIn('HTTP://LinkedIn.com/in/Fixture/'),url);
+ }finally{db.close();}
+});
+
+test('automatic professional answering reports missing facts and provider limits without inventing an answer',async()=>{
+ const options={db:{},profile:{gemini_facts_consent:1},job:{id:'j',user_id:'u'},question:'Tell us about your experience working remotely.',answers:{},applicationAnswers:{}};
+ let result=await automaticTextAnswer({...options,draft:async()=>({answer:'',reason:'Describe a real remote collaboration challenge.',sources:[]})});assert.equal(result.answer,null);assert.match(result.reason,/real remote/);
+ result=await automaticTextAnswer({...options,draft:async()=>{throw Error('Daily draft limit reached. Saved-answer reuse remains available.');}});assert.equal(result.answer,null);assert.match(result.reason,/Daily draft limit/);
+ result=await automaticTextAnswer({...options,answers:{[options.question]:'My saved approved example.'},draft:async()=>{throw Error('Must not call provider');}});assert.equal(result.answer,'My saved approved example.');assert.equal(result.source,'saved');
+});
 test('Captured answers are durable drafts; sensitive values excluded and account boundaries enforced',()=>{const {db,j}=fixture();try{assert.equal(captureAnswers(db,j,[{question:'Phone',answer:'123'},{question:'Password',answer:'secret'},{question:'Passport number',answer:'secret'}]),1);const row=db.prepare('SELECT * FROM answer_history').get();assert.equal(row.confirmed,0);assert.equal(row.reusable,0);assert.throws(()=>updateLibrary(db,'other',row.id,'456',true));assert.throws(()=>deleteLibrary(db,'other',row.id));confirmLibrary(db,j);assert.equal(JSON.parse(db.prepare('SELECT answers_json FROM applicants').get().answers_json).Phone,'123');assert.equal(db.prepare('SELECT confirmed FROM answer_history').get().confirmed,1);}finally{db.close();}});
 test('Reuse is explicit, scoped answers stay private to job, corrections revoke prior memory and delete removes it',()=>{const {db,j}=fixture();try{assert(!canReuse('Are you eligible to work in Canada?'));assert(!canReuse('How did you hear about this role?'));captureAnswers(db,j,[{question:'Do you have two years of Go experience?',answer:'Yes'}]);const row=db.prepare('SELECT * FROM answer_history').get();updateLibrary(db,'u',row.id,'Yes',true);assert.equal(Object.keys(JSON.parse(db.prepare('SELECT answers_json FROM applicants').get().answers_json)).length,1);captureAnswers(db,j,[{question:row.question,answer:'No'}]);assert.deepEqual(JSON.parse(db.prepare('SELECT answers_json FROM applicants').get().answers_json),{});assert.equal(db.prepare('SELECT reusable FROM answer_history').get().reusable,0);updateLibrary(db,'u',row.id,'No',true);deleteLibrary(db,'u',row.id);assert.deepEqual(JSON.parse(db.prepare('SELECT answers_json FROM applicants').get().answers_json),{});}finally{db.close();}});
 

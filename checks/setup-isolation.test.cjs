@@ -56,3 +56,7 @@ test('an old account resume response cannot reopen its preview after switching a
   assert.equal(f.w.document.querySelector('#resume-preview').open,false);assert.equal(f.w.document.querySelector('#resume-preview-text').textContent,'');assert.equal(f.w.document.querySelector('#resume-original').hasAttribute('href'),false);
  }finally{f.close();}
 });
+
+test('confirmed adult fact saves with the profile, preserves other answers and clears on account change',async()=>{
+ const f=fixture();try{await tick();const form=f.w.document.querySelector('#profile');assert.equal(form.elements.over18.value,'');form.elements.over18.value='Yes';await form.onsubmit({preventDefault(){},target:form,submitter:form.querySelector('button')});const save=f.calls.find(c=>c.route==='/applicants/profile-a'&&c.input);assert.equal(save.input.answers['Over 18 - applicant confirmed'],'Yes');assert.equal(save.input.answers.Website,alice.answers.Website);await f.switchAccount();assert.equal(form.elements.over18.value,'');}finally{f.close();}
+});

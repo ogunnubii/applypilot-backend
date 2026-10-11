@@ -47,3 +47,19 @@ test('exact application answers override scoped defaults but ambiguity and compo
  assert.equal(hostedOptionChoice({label:auth},[...options,{label:'Yes'}],profile()),null);
  assert.equal(approvedHostedRadioIndex(options.map(o=>({...o,question:auth,disabled:true})),{},profile()),-1);
 });
+
+test('confirmed over-18 fact fills exact age thresholds and never expands into declarations or other ages',()=>{
+ const yes=profile('Remote, Global',{[K.over18]:'Yes'}),no=profile('Remote, Global',{[K.over18]:'No'});
+ for(const label of ['Are you over the age of 18?','Are you over 18 years old?','Are you at least eighteen years of age?']){
+  assert.equal(hostedOptionChoice({label},options,yes)?.value,'yes');
+  assert.equal(approvedHostedRadioIndex(options.map(o=>({...o,question:label})),{},yes),0);
+  assert.equal(hostedOptionChoice({label},options,profile('Remote, Global',{})),null);
+ }
+ assert.equal(hostedOptionChoice({label:'Are you over 18?'},options,no)?.value,'no');
+ assert.equal(hostedOptionChoice({label:'Are you at least 18?'},options,no),null);
+ for(const label of ['Are you over 21?','What is your date of birth?','I certify I am over 18','Are you over 18 and authorized to work here?','Are you at least 18 at the start date?'])assert.equal(hostedOptionChoice({label},options,yes),null,label);
+ assert.equal(hostedOptionChoice({label:'Are you over 18?',description:'By choosing Yes, I accept the terms'},options,yes),null);
+ const conflicting=profile('Global',{[K.over18]:'Yes'},{'Are you over 18?':'No','are you over 18':'Yes'});
+ assert.equal(hostedOptionChoice({label:'Are you over 18?'},options,conflicting),null);
+ assert.equal(hostedOptionChoice({label:'Are you over 18?'},options,profile('Global',{'Professional background':'I have 20 years of work experience.','Are you over 18?':'Yes'})),null);
+});

@@ -41,7 +41,27 @@
   function sameApplication(a,b) { try { return supported(a) && supported(b) && identity(a) === identity(b); } catch { return false; } }
   const submissionDeclaration = value => /\bby\s+(?:clicking|selecting|pressing|submitting|sending|completing)[\s\S]{0,240}?\b(?:agree|accept|certify|attest|consent|acknowledge|declare|authorize|waive)\b/i.test(String(value));
   const sensitive = value => /\b(certify|certification of accuracy|attest|perjury|legally binding|AI policy|arbitrat(?:ion|e)|waive|waiver|agree that|electronic signature|e-signature|signature|agree to|accept the terms|terms and conditions|acknowledge|declare that|accurate and complete|consent|criminal|convictions|authorize.*(?:background|credit)|payment|application fee|pay now|purchase|checkout|credit card|card number|cardholder|bank account|social security|national insurance|passport number|ssn)\b/i.test(String(value));
-  const receipt = value => (String(value).match(/(?:your )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b[^\n]{0,100}|thank(?:s| you) for (?:applying|your application)\b[^\n]{0,100}/i)||[])[0] || '';
+  const receipt = value => {
+    const text=String(value);
+    // Match affirmative receipt sentences, not a substring inside a failure,
+    // hypothetical instruction or quoted example. Keep the original text so
+    // contradictory qualifiers cannot be discarded before evidence is saved.
+    const sentences=text.split(/[\r\n]+|(?<=[.!?])\s+/);
+    const failed=/\bno (?:job )?application (?:was )?(?:received|submitted)\b|\b(?:not|never) (?:been )?(?:submitted|received|processed|sent|delivered|accepted)\b|\b(?:could(?:n['’]t| not)|can(?:not|['’]t)|unable to|failed to) (?:be )?(?:submit(?:ted)?|receiv(?:e|ed)|process(?:ed)?|sen[dt]|deliver(?:ed)?|accept(?:ed)?)\b|\b(?:submission|delivery)(?: (?:has |had )?failed| was unsuccessful)\b|\bunsuccessful\b|\ban? error occurred\b|\bwith errors?\b|\b(?:pending|awaiting|queued)\b/i;
+    // A polite thank-you must not mask an application failure on the next
+    // sentence. Ignore unrelated footer instructions such as Do not reply.
+    if(sentences.some((sentence,index)=>failed.test(sentence)&&(/\b(?:application|submission|delivery)\b/i.test(sentence)||/^\s*it\b/i.test(sentence)&&/\bapplication\b/i.test(sentences[index-1]||''))))return '';
+    for(const sentence of sentences){
+      const line=sentence.trim().replace(/^(?:Applicant verified|Browser extension observed):\s*/i,'');
+      const existing=line.match(/^(?:(?:your )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b|thank(?:s| you) for (?:applying|your application)\b)[^\r\n]*/i);
+      if(existing&&!failed.test(line)&&! /\breceived an? error\b/i.test(line))return existing[0].slice(0,400);
+    }
+    // Randstad's actual receipt uses "sent to". Require the affirmative sentence
+    // on its own line, not a future instruction, quotation or pending message.
+    // Callers still require a matching application and a recorded receipt event.
+    const sent=(text.match(/(?:^|[\r\n])\s*(?:(?:Applicant verified|Browser extension observed): )?(Your job application has been sent to [^\r\n.!?]{2,100}[.!])(?=\s|$)/i)||[])[1]||'';
+    return /\b(?:pending|not|awaiting|queued|failed)\b/i.test(sent)?'':sent;
+  };
   function savedAnswer(question, answers) {
     if (sensitive(question)||normalize(question)==='required field') return null;
     const keys = Object.keys(answers || {}).filter(k => normalize(k) === normalize(question));

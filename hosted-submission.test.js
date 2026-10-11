@@ -51,3 +51,10 @@ test('enabling best effort releases old blocked sessions even when all browser s
  await releaseSkippedHandoffs(handoffs,job=>job.id!=='manual');
  assert.deepEqual(closed,['blocked']);assert.deepEqual(notices,['blocked']);assert.deepEqual([...handoffs.sessions.keys()],['busy','uncertain','manual']);
 });
+
+test('negative employer response never upgrades the single reserved attempt to submitted',async()=>{
+ for(const after of ['No application received. Please try again.','Your application was received with errors and could not be processed.']){
+  const f=fixture({after});const result=await submitHostedApplication(f.input);assert.equal(result.challenge,'Unconfirmed submission');assert.equal(f.clicks,1);assert.equal(f.attempts,1);
+  await submitHostedApplication(f.input).catch(()=>{});assert.equal(f.clicks,1);
+ }
+});

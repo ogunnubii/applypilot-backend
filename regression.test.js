@@ -248,12 +248,12 @@ test('Live handoff isolates owners, preserves context on resume and expires idle
  const page={isClosed:()=>false,locator:()=>({innerText:async()=>body}),frames:()=>[page],screenshot:async()=>Buffer.from('mock-image'),url:()=> 'https://jobs.lever.co/example/abc',keyboard:{insertText:async()=>{},press:async()=>{}},mouse:{click:async()=>{},wheel:async()=>{}},evaluate:async()=>({activeControl:{text:'Submit application',type:'submit'}})};
  const context={pages:()=>[page],close:async()=>{closed++}};
  const h=new Handoffs({clock:()=>time,onResume:async(j,s)=>{assert.equal(s.context,context);resumed++},onClose:()=>{},onSubmitted:()=>{submitted++},onPossibleSubmit:()=>{}});
- await h.hold({id:'job',user_id:'owner'},context,page);
+ await h.hold({id:'job',user_id:'owner',url:'https://jobs.lever.co/example/abc'},context,page);
  await assert.rejects(h.command('other','job','view'),/No live browser/);
  assert((await h.command('owner','job','view')).image);
  await h.command('owner','job','resume');assert.equal(resumed,1);assert.equal(closed,0);assert.equal(h.sessions.size,0);
- await h.hold({id:'job',user_id:'owner'},context,page);body='Thank you for applying';assert.equal((await h.command('owner','job','view')).submitted,undefined);assert.equal((await h.command('owner','job','key',{key:'Enter'})).submitted,true);assert.equal(submitted,1);assert.equal(closed,1);
- body='Application form';await h.hold({id:'job',user_id:'owner'},context,page);time=16*60*1000;await h.expire();assert.equal(h.sessions.size,0);assert.equal(closed,2);
+ await h.hold({id:'job',user_id:'owner',url:'https://jobs.lever.co/example/abc'},context,page);body='Thank you for applying';assert.equal((await h.command('owner','job','view')).submitted,undefined);assert.equal((await h.command('owner','job','key',{key:'Enter'})).submitted,true);assert.equal(submitted,1);assert.equal(closed,1);
+ body='Application form';await h.hold({id:'job',user_id:'owner',url:'https://jobs.lever.co/example/abc'},context,page);time=16*60*1000;await h.expire();assert.equal(h.sessions.size,0);assert.equal(closed,2);
 });
 
 test('Full handoff slots preserve the existing browser and reject the newcomer',async()=>{
@@ -269,7 +269,7 @@ test('Full handoff slots preserve the existing browser and reject the newcomer',
 test('Fast handoff acknowledges input without screenshots and still verifies receipts on view',async()=>{
  const {Handoffs}=await import('./handoff.js');let screenshots=0,submitted=0,intents=0,body='Application form';const keys=[],scroll=[];
  const page={isClosed:()=>false,frames:()=>[page],url:()=> 'https://jobs.lever.co/example/one',locator:()=>({innerText:async()=>body}),screenshot:async()=>{screenshots++;return Buffer.from('same-frame')},keyboard:{insertText:async x=>keys.push(x),press:async x=>keys.push(x)},mouse:{move:async(...p)=>scroll.push(p),wheel:async(...p)=>scroll.push(p)},evaluate:async()=>({activeControl:{text:'Submit application',type:'submit'}})};
- const context={pages:()=>[page],close:async()=>{}};const h=new Handoffs({onClose:()=>{},onResume:()=>{},onSubmitted:()=>submitted++,onPossibleSubmit:()=>intents++});await h.hold({id:'j',user_id:'u'},context,page);
+ const context={pages:()=>[page],close:async()=>{}};const h=new Handoffs({onClose:()=>{},onResume:()=>{},onSubmitted:()=>submitted++,onPossibleSubmit:()=>intents++});await h.hold({id:'j',user_id:'u',url:'https://jobs.lever.co/example/one'},context,page);
  assert.deepEqual(await h.command('u','j','text',{text:'Hello',render:false}),{accepted:true});assert.equal(screenshots,0);
  await h.command('u','j','key',{key:'ArrowLeft',render:false});await h.command('u','j','scroll',{y:30,x:2,pointerX:100,pointerY:200,render:false});assert.deepEqual(keys,['Hello','ArrowLeft']);assert.deepEqual(scroll,[[100,200],[2,30]]);
  const first=await h.command('u','j','view');const second=await h.command('u','j','view',{frameId:first.frameId});assert(first.image);assert.equal(second.image,undefined);

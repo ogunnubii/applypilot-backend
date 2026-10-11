@@ -111,3 +111,23 @@ test('ready sessions remain live for 12 hours while ordinary sessions keep short
  now++;await handoffs.expire();assert.equal(handoffs.sessions.has('ready'),false);
  assert.deepEqual(closed,['ordinary','ready']);
 });
+
+test('handoff receipt uses affirmative evidence from the same application only',async()=>{
+ const jobUrl='https://jobs.lever.co/example/role';
+ for(const scenario of [
+  {body:'No application received. Please try again.',expected:false},
+  {body:'Thank you for applying. Your application could not be submitted.',expected:false},
+  {body:'Your application has been received',url:'https://jobs.lever.co/example/other',expected:false},
+  {body:'Your application has been received',childUrl:'https://jobs.lever.co/example/other',expected:false},
+  {body:'Your application has been received',expected:true},
+  {body:'Your job application has been sent to Randstad Canada.',expected:true}
+ ]){
+  let after=false,confirmed=0,closed=0;
+  const child={url:()=>scenario.childUrl||jobUrl,locator:()=>({innerText:async()=>after?scenario.body:'Application form'})};
+  const page={url:()=>after?(scenario.url||jobUrl):jobUrl,isClosed:()=>false,frames:()=>[child],locator:()=>({innerText:async()=> 'Application form'}),screenshot:async()=>Buffer.from('fixture')};
+  const context={pages:()=>[page],close:async()=>closed++};
+  const h=new Handoffs({onResume:()=>{},onClose:()=>{},onPossibleSubmit:()=>{},onSubmitted:()=>confirmed++});
+  await h.hold({id:'j',user_id:'u',url:jobUrl,challenge:'Submission in progress'},context,page);after=true;
+  const result=await h.command('u','j','view');assert.equal(!!result.submitted,scenario.expected,JSON.stringify(scenario));assert.equal(confirmed,scenario.expected?1:0);assert.equal(closed,scenario.expected?1:0);
+ }
+});

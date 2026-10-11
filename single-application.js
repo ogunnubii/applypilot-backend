@@ -20,11 +20,20 @@ export function installSingleApplication(db){
  if(!db.prepare('PRAGMA table_info(work_focus)').all().some(c=>c.name==='queue_applicant_id'))db.exec("ALTER TABLE work_focus ADD COLUMN queue_applicant_id TEXT");
 }
 // Explicit queue transition; historical attempts are never cleared or retried.
+function archivedApplicationQuarantined(db,job){
+ if(job.status!=='archived'||job.handoff_available!==0)return false;
+ if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='application_archive'").get()||!db.prepare('SELECT 1 FROM application_archive WHERE job_id=?').get(job.id))return false;
+ if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='archived' LIMIT 1").get(job.id))return false;
+ if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='continuation_requests'").get()&&db.prepare("SELECT 1 FROM continuation_requests WHERE user_id=? AND job_id=? AND state='dispatching' LIMIT 1").get(job.user_id,job.id))return false;
+ // This is a future-execution fence, not proof that an old employer click
+ // stopped or succeeded. The archived job and every attempt remain protected.
+ return true;
+}
 export function inFlightApplication(db,userId,exceptId=''){
  // Receipt routes may retain a historical verifying phase. Exempt only a
  // completed employer-confirmed record; never infer receipt from status alone.
  const candidates=db.prepare("SELECT * FROM jobs WHERE user_id=? AND id!=? AND (status='running' OR local_phase='verifying' OR challenge='Submission in progress')").all(userId,exceptId);
- return candidates.find(job=>job.status==='running'||job.challenge==='Submission in progress'||!['submitted','interview','rejected','offer'].includes(job.status)||!receiptConfirmed(db,job));
+ return candidates.find(job=>!archivedApplicationQuarantined(db,job)&&(job.status==='running'||job.challenge==='Submission in progress'||!['submitted','interview','rejected','offer'].includes(job.status)||!receiptConfirmed(db,job)));
 }
 const diagnosticEventTypes=['submission_started','manual_submission','manual_submission_retry','automatic_submission','applicant_reported_submission','submitted','manual_confirmation','running','local_browser','paused','needs_review','queued','filled','resumed','archived'];
 function diagnosticTimestamp(value){

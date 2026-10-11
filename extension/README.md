@@ -1,4 +1,6 @@
-Version 0.6.29 recognizes Randstad sent-to employer receipts, while keeping attempted applications protected from automatic retries.
+Version 0.6.30 adds title-rotating preparation campaigns. It prepares up to 20 unfinished forms at a time toward a 200-application target, advances supported non-submit steps, and leaves every final Submit to the applicant. Keep Chrome and a signed-in dashboard open. Unknown facts and employer verification still need the applicant. Prepared and ready counts are separate from employer receipts.
+
+Version 0.6.30 recognizes Randstad sent-to employer receipts, while keeping attempted applications protected from automatic retries.
 
 Version 0.6.28 added Open & autofill for supported manual-review jobs. It opens iitjobs Quick Apply and fills the Randstad application rather than job-alert signup forms. Supported job pages also include JFrog, Kinaxis iCIMS and Deloitte Canada. Saved answers and supported Gemini answers prepare the form; final Submit stays manual. Email-only postings remain manual. Update the existing extension folder, reload the same installation and refresh the dashboard; new site access may require Chrome/Edge approval.
 
@@ -65,3 +67,4 @@ Saved Website / portfolio facts now fill supported website prompts. LinkedIn and
 
 ## 0.6.27
 Reads offered options from native and custom dropdowns, maps supported professional facts to exact choices, and preserves manual edits. Ambiguous options, missing facts and protected declarations stay for review. Canada-only remote incorporated-contract searches remain scoped after refresh.
+

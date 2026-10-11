@@ -43,7 +43,7 @@ function saveSession(value,remember){sessionStorage.setItem('applypilot-token',v
 function clearSession(){sessionStorage.removeItem('applypilot-token');localStorage.removeItem('applypilot-remembered-token');localStorage.setItem('applypilot-signout',String(Date.now()));}
 window.addEventListener('storage',e=>{if(e.key==='applypilot-signout'){sessionStorage.removeItem('applypilot-token');location.reload();}});
 function rememberOption(form){const label=document.createElement('label'),box=document.createElement('input');box.type='checkbox';box.name='remember';box.style.cssText='width:auto;display:inline;margin-right:8px';label.style.cssText='display:block;margin:12px 0';label.append(box,document.createTextNode('Keep me signed in on this computer for up to 30 days'));form.insertBefore(label,form.querySelector('button'));return box;}
-const $=s=>document.querySelector(s);let activeBatch={},activeFocus={},token=restoreSession(),busy=false,lastSignature='',pendingHandoff=null,externalRecords=[],overviewSignature='',readyAutoOpened=new Set();
+const $=s=>document.querySelector(s);let activePreparation={},activeBatch={},activeFocus={},token=restoreSession(),busy=false,lastSignature='',pendingHandoff=null,externalRecords=[],overviewSignature='',readyAutoOpened=new Set();
 const el=(tag,text)=>{const e=document.createElement(tag);if(text)e.textContent=text;return e};
 async function api(path,method='GET',data){
  const r=await fetch(((location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pages.dev'))?'https://marvelous-vitality-production-c2d8.up.railway.app':'')+'/api'+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});
@@ -93,7 +93,7 @@ let refreshRevision=0,lastRevealedJobHash='';
 async function refresh(force=false){
  if(busy||activeHandoff)return;
  const revision=++refreshRevision;
- const [{jobs,deferred=[],focus={},batch={}},health,history,operations,activity,continuations,pipeline,employerLimits]=await Promise.all([api('/jobs'),api('/status'),api('/application-history'),api('/operations').catch(()=>null),api('/activity').catch(()=>null),api('/continuations').catch(()=>null),api('/pipeline').catch(()=>null),api('/employer-limits').catch(()=>null)]);
+ const [{jobs,deferred=[],focus={},batch={},preparation={}},health,history,operations,activity,continuations,pipeline,employerLimits]=await Promise.all([api('/jobs'),api('/status'),api('/application-history'),api('/operations').catch(()=>null),api('/activity').catch(()=>null),api('/continuations').catch(()=>null),api('/pipeline').catch(()=>null),api('/employer-limits').catch(()=>null)]);
  if(revision!==refreshRevision)return;
  const waiting=new Map((continuations?.requests||[]).map(r=>[r.job_id,r]));
  for(const job of jobs)job.continuation=waiting.get(job.id);
@@ -103,10 +103,10 @@ async function refresh(force=false){
  $('#login').hidden=true;$('#workspace').hidden=false;$('#logout').hidden=false;
  notificationSettings();
  refreshFunnel();updateDiscovery();updateAIStatus();
- activeBatch=batch||{};activeFocus=focus;document.body.dataset.singleApplication=String(!!focus.enabled);
+ activePreparation=preparation;activeBatch=batch||{};activeFocus=focus;document.body.dataset.singleApplication=String(!!focus.enabled);
  // Keep every returned record available to history filters; execution focus only scopes the working controls.
  const current=jobs.filter(j=>j.status!=='duplicate');
- const working=current.filter(j=>!focus.enabled||j.id===focus.job_id||focus.skip_blocked&&needsMyAttention(j));
+ const working=current.filter(j=>preparation.enabled?!!j.preparation&&!['submitted','interview','rejected','offer'].includes(j.status):!focus.enabled||j.id===focus.job_id||focus.skip_blocked&&needsMyAttention(j));
  const interviews=interviewRecords(externalRecords,current);
  renderHistoryOverview(externalRecords,current);
  const externalInterviews=interviews.filter(r=>!current.some(j=>j.status==='interview'&&interviewIdentity(j)===interviewIdentity(r)));
@@ -118,7 +118,7 @@ async function refresh(force=false){
    pendingHandoff=null;document.querySelector('#preparing-browser')?.remove();$('#notice').textContent=message;force=true;
   }else if(Date.now()-pendingHandoff.started>180000){pendingHandoff=null;const banner=$('#preparing-browser');if(banner)banner.textContent='The live browser is taking longer than expected. Check the application below or try again when the worker is available.';force=true;}
  }
- renderBrowserReadiness(working);renderMissingAnswers(working);renderContinuationQueue(continuations);drainContinuations(continuations);renderLibraryLauncher();renderBatchControl(activeBatch);renderFocusControl(focus,jobs,health);renderArchiveControl(working);if($('#career-overview'))placeWorkspacePanel($('#career-overview'));renderOperations(operations,activity,current);renderNextMatch(working);renderPipeline(pipeline);renderEmployerLimits(employerLimits,working);renderCooldownHistory(deferred);renderHomeSummary(operations,current,interviews);
+ renderBrowserReadiness(working);renderMissingAnswers(working);renderContinuationQueue(continuations);drainContinuations(continuations);renderLibraryLauncher();renderBatchControl(activeBatch);renderFocusControl(focus,jobs,health);renderPreparationCampaign(preparation);renderArchiveControl(working);if($('#career-overview'))placeWorkspacePanel($('#career-overview'));renderOperations(operations,activity,current);renderNextMatch(working);renderPipeline(pipeline);renderEmployerLimits(employerLimits,working);renderCooldownHistory(deferred);renderHomeSummary(operations,current,interviews);
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
  $('#needs-count').textContent=current.filter(j=>j.evidence?j.evidence.blocked||j.evidence.stalled:['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
  $('#applying-count').textContent=current.filter(j=>j.evidence?j.evidence.active:!j.local_attempt_at&&(['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='ready')).length;
@@ -129,7 +129,7 @@ async function refresh(force=false){
  const decided=outcomes.size,positive=[...outcomes.values()].filter(s=>s==='interview'||s==='offer').length;
  const success=$('#success-rate');if(success)success.textContent=decided?Math.round(positive*100/decided)+'%':'—';
  $('#worker-state').textContent=health.workerOnline?'● Worker connected · Progress updates automatically':'○ Worker offline · Saved information is retained';
- const signature=JSON.stringify([current,externalRecords,focus.enabled,focus.auto_submit,focus.skip_blocked,focus.job_id,focus.search_queue_only,activeBatch.enabled,activeBatch.job_ids]);
+ const signature=JSON.stringify([current,externalRecords,focus.enabled,focus.auto_submit,focus.skip_blocked,focus.job_id,focus.search_queue_only,activeBatch.enabled,activeBatch.job_ids,preparation]);
  if(!force&&(signature===lastSignature||$('#jobs').contains(document.activeElement)||$('#jobs').querySelector('[data-dirty="true"],details[open]')))return;
  lastSignature=signature;$('#jobs').replaceChildren();
  const attention=globalThis.ApplyPilotPolicy.attentionOrder(current.filter(needsMyAttention)),attentionPositions=new Map(attention.map((j,i)=>[j.id,i+1]));
@@ -373,12 +373,12 @@ function applyFilters(){
   const state=card.dataset.state;
   const focusAllowed=!defaultView||card.dataset.pending==='true'&&['ready','answers','employer','review'].includes(card.dataset.preparation);
   const match=currentFilter==='pending'&&card.dataset.pending==='true'||currentFilter==='active'&&!['submitted','interview','rejected','offer'].includes(state)||currentFilter==='all'||currentFilter===state||currentFilter==='needs'&&(card.dataset.blocked==='true'||card.dataset.stalled==='true'||['paused','needs_review'].includes(state))||currentFilter==='applying'&&card.dataset.active==='true'||currentFilter==='blocked'&&card.dataset.blocked==='true'||currentFilter==='stalled'&&card.dataset.stalled==='true'||currentFilter==='receipt'&&card.dataset.confirmed==='true'||currentFilter==='worked'&&card.dataset.worked==='true'||currentFilter==='local'&&card.dataset.local==='true'||currentFilter.startsWith('completion-')&&card.dataset.completion===currentFilter.slice(11)||currentFilter.startsWith('prep-')&&card.dataset.preparation===currentFilter.slice(5);
-  card.hidden=defaultView&&activeFocus.enabled?!(card.id==='job-'+activeFocus.job_id||activeFocus.search_queue_only&&(state==='awaiting'||card.dataset.confirmed==='true')||activeFocus.skip_blocked&&card.dataset.actionable==='true'):defaultView&&activeBatch.enabled?!(activeBatch.job_ids||[]).includes(card.id.replace('job-',''))||['submitted','interview','rejected','offer','archived','duplicate'].includes(state):!(focusAllowed&&match&&card.dataset.search.includes(q));
+  card.hidden=defaultView&&activePreparation.enabled?!(activePreparation.members||[]).some(m=>card.id==='job-'+m.job_id)||['submitted','interview','rejected','offer','archived','duplicate'].includes(state):defaultView&&activeFocus.enabled?!(card.id==='job-'+activeFocus.job_id||activeFocus.search_queue_only&&(state==='awaiting'||card.dataset.confirmed==='true')||activeFocus.skip_blocked&&card.dataset.actionable==='true'):defaultView&&activeBatch.enabled?!(activeBatch.job_ids||[]).includes(card.id.replace('job-',''))||['submitted','interview','rejected','offer','archived','duplicate'].includes(state):!(focusAllowed&&match&&card.dataset.search.includes(q));
   if(!card.hidden)shown++;
  }
  $('#empty-state').hidden=shown>0;
  const count=$('#visible-job-count');if(count)count.textContent=shown+' shown';
- const title=$('#application-list-title');if(title)title.textContent=defaultView&&activeFocus.enabled?(activeFocus.skip_blocked?'Current application & forms needing you':'Current application'):defaultView&&activeBatch.enabled?'Current batch - up to 20 jobs':({pending:settings?'Jobs yet to be submitted':'Jobs needing your attention','prep-ready':'Ready for your Submit click',awaiting:'Attempted — check employer receipt',receipt:'Employer-confirmed submissions',interview:'Interviews',worked:'Forms filled or attempted',all:'All application records'})[currentFilter]||'Applications';
+ const title=$('#application-list-title');if(title)title.textContent=defaultView&&activePreparation.enabled?'Your current preparation batch':defaultView&&activeFocus.enabled?(activeFocus.skip_blocked?'Current application & forms needing you':'Current application'):defaultView&&activeBatch.enabled?'Current batch - up to 20 jobs':({pending:settings?'Jobs yet to be submitted':'Jobs needing your attention','prep-ready':'Ready for your Submit click',awaiting:'Attempted — check employer receipt',receipt:'Employer-confirmed submissions',interview:'Interviews',worked:'Forms filled or attempted',all:'All application records'})[currentFilter]||'Applications';
  for(const button of document.querySelectorAll('[data-home-filter]'))button.setAttribute('aria-pressed',String(button.dataset.homeFilter===currentFilter));
 }
 $('#job-search').oninput=applyFilters;
@@ -471,7 +471,7 @@ function openLocalApplication(jobId){
   const requestId=crypto.randomUUID();
   const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);error?reject(Error(error)):resolve(data);};
   const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-open-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
-  const timer=setTimeout(()=>finish('Open this dashboard in Chrome or Edge with ApplyPilot Local 0.6.29 enabled, then refresh this page.'),25000);
+  const timer=setTimeout(()=>finish('Open this dashboard in Chrome or Edge with ApplyPilot Local 0.6.30 enabled, then refresh this page.'),25000);
   window.addEventListener('message',receive);window.postMessage({type:'applypilot-open-application',requestId,jobId},location.origin);
  });
 }
@@ -488,7 +488,7 @@ function focusLocalApplication(jobId){
 function renderLibraryLauncher(){
  if(document.querySelector('#answer-library'))return;
  const box=el('section');box.id='answer-library';box.style.cssText='padding:20px;margin:16px 0;border:1px solid #74ad91;border-radius:12px';
- box.append(el('h2','Answer library'),el('p','Answers you enter save automatically as you finish each question. Reusable facts fill matching future forms; company-specific answers stay with their application. Review or correct stored answers here. Extension 0.6.29 prepares supported forms and waits for your final Submit click.'));
+ box.append(el('h2','Answer library'),el('p','Answers you enter save automatically as you finish each question. Reusable facts fill matching future forms; company-specific answers stay with their application. Review or correct stored answers here. Extension 0.6.30 prepares supported forms and waits for your final Submit click.'));
  const load=el('button','Open / refresh answer library'),list=el('div');box.append(load,list);placeWorkspacePanel(box);
  load.onclick=async()=>{load.disabled=true;try{const {answers}=await api('/answer-library');list.replaceChildren();if(!answers.length)list.append(el('p','No captured answers yet. Save a filled form from its employer tab.'));
  for(const entry of answers){const form=el('form');form.style.cssText='padding:12px 0;border-top:1px solid #ddd';const input=field(form,entry.question);input.value=entry.answer;form.append(el('small',entry.company+' · '+(entry.confirmed?'Employer receipt recorded':'Captured draft — not proof of submission')));
@@ -499,6 +499,29 @@ function renderLibraryLauncher(){
  }}catch(e){list.textContent=e.message;}finally{load.disabled=false;}};
 }
 
+function renderPreparationCampaign(c={}){
+ let box=$('#preparation-campaign');if(!box){box=el('section');box.id='preparation-campaign';box.className='autonomy-control';$('#home-summary').after(box);}
+ box.hidden=!c.id&&!location.search.includes('view=settings');if(box.hidden)return;
+ const signature=JSON.stringify(c);if(box.dataset.signature===signature)return;box.dataset.signature=signature;
+ box.replaceChildren(el('h2',c.id?'Your '+c.target+'-application preparation campaign':'Prepare 200 applications in Chrome'));
+ if(c.id){
+  const counts=el('div');counts.className='completion-grid';
+  for(const [label,value]of [['Selected',c.selected],['Forms prepared',c.prepared],['Ready for Submit now',c.ready],['Completed',c.completed]]){const cell=el('div');cell.append(el('strong',String(value)),el('span',label));counts.append(cell);}box.append(counts);
+  box.append(el('p',(c.enabled?'Active':'Paused')+' · '+c.batch_size+' unfinished applications at a time · final Submit stays with you.'));
+  box.append(el('p','Titles rotate before repeating a title. Prepared counts mean the final form was fully filled at least once. Ready now requires a recent browser check. Neither means submitted.'));
+  if(c.selected<c.target)box.append(el('p','The remaining '+(c.target-c.selected)+' places fill as fresh eligible jobs arrive and space opens in the current batch.'));
+  const pause=el('button',c.enabled?'Pause preparation campaign':'Resume preparation campaign');pause.type='button';pause.onclick=async()=>{pause.disabled=true;try{await api('/preparation-campaign',c.enabled?'PUT':'POST',c.enabled?{enabled:false}:{applicant_id:c.applicant_id,target:c.target,batch_size:c.batch_size,role_order:c.role_order});await refresh(true);}catch(e){$('#notice').textContent=e.message;pause.disabled=false;}};box.append(pause);
+  const details=el('details');details.append(el('summary','Title rotation'));const list=el('ol');for(const title of c.role_order||[])list.append(el('li',title));details.append(list);box.append(details);
+ }else{
+  box.append(el('p','Uses your active saved search and saved profile. Opens up to 20 fresh applications at a time, fills supported answers and advances normal form steps. Stops for missing facts, verification, declarations or your final Submit click.'));
+  const label=el('label','Preparation applicant profile '),select=el('select');select.setAttribute('aria-label','Preparation applicant profile');label.append(select);
+  const start=el('button','Start 200-application preparation');start.type='button';start.disabled=true;box.append(label,start);
+  api('/applicants').then(data=>{for(const p of data.applicants||[]){const option=el('option',p.name);option.value=p.id;select.append(option);}start.disabled=!select.value;}).catch(e=>$('#notice').textContent=e.message);
+  start.onclick=async()=>{start.disabled=true;try{await api('/preparation-campaign','POST',{applicant_id:select.value,target:200,batch_size:20});await refresh(true);}catch(e){$('#notice').textContent=e.message;start.disabled=false;}};
+ }
+ const link=el('a','Download Chrome helper 0.6.30');link.href='/applypilot-local.zip';box.append(el('p','Keep Chrome and a signed-in ApplyPilot tab open. Resume preparation in the extension after updating it.'),link);
+ if(c.enabled){if($('#work-focus'))$('#work-focus').hidden=true;if($('#application-batch'))$('#application-batch').hidden=true;}
+}
 function renderBatchControl(batch={}){
  let box=$('#application-batch');if(!box){box=el('section');box.id='application-batch';box.style.cssText='padding:20px;background:#edf6ef;border-radius:12px;margin:16px 0';$('#home-summary').after(box);}
  if(box.contains(document.activeElement))return;
@@ -560,7 +583,7 @@ function automaticSubmissionFor(job){return automaticSubmissionEnabled()&&job?.i
 let focusUpdating=false,focusSkipDraft=null;
 function renderFocusControl(f={},jobs=[],health={}){
  let box=$('#work-focus');if(!box){box=el('section');box.id='work-focus';box.className='autonomy-control';$('#home-summary').after(box);}
- box.focusContext={f,jobs,health};
+ box.hidden=false;box.focusContext={f,jobs,health};
  if(focusUpdating)return;
  const automatic=!!(f.enabled&&f.auto_submit),selected=jobs.find(job=>job.id===f.job_id)||f.selected_job,mode=selected?.execution_mode||f.execution_mode;
  const focused=document.activeElement?.id;
@@ -713,14 +736,14 @@ function renderBrowserReadiness(jobs){
  if(box){if(Date.now()-Number(box.dataset.checkedAt||0)>30000)box.querySelector('button').click();return;}
  box=el('section');box.id='browser-readiness';box.style.cssText='padding:16px;border:1px solid #74ad91;border-radius:12px;margin:16px 0';
  box.append(el('h2','Application preparation in your browser'));
- const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.29)');
+ const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.30)');
  setup.href='/local-browser.html';setup.style.marginLeft='12px';status.setAttribute('role','status');
  box.append(status,check,setup);placeWorkspacePanel(box);
  check.onclick=()=>{
   if(check.disabled)return;check.disabled=true;box.dataset.checkedAt=String(Date.now());const requestId=crypto.randomUUID();
   const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);check.disabled=false;
    browserHelperStatus=error?null:{...data,checkedAt:Date.now()};
-   status.textContent=error|| (data?.version!=='0.6.29'?'Browser helper '+data?.version+' is connected. Update to 0.6.29 for supported preparation and explicitly authorized automatic submission.':data?.enabled?'Browser helper 0.6.29 connected. New queued applications are prepared automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine preparation.')+(data?.error?' '+data.error:'');
+   status.textContent=error|| (data?.version!=='0.6.30'?'Browser helper '+data?.version+' is connected. Update to 0.6.30 for supported preparation and explicitly authorized automatic submission.':data?.enabled?'Browser helper 0.6.30 connected. New queued applications are prepared automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine preparation.')+(data?.error?' '+data.error:'');
   };
   const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-browser-status-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
   const timer=setTimeout(()=>finish('Browser helper not detected here. Open this dashboard in the Chrome or Edge profile with ApplyPilot Local enabled.'),3500);
@@ -840,7 +863,7 @@ function renderContinuationQueue(data){
 }
 async function drainContinuations(data){
  if(continuationBusy||busy||activeHandoff||Date.now()<nextContinuationCheck||!data?.requests?.some(r=>r.state==='queued'))return;
- if(!browserHelperStatus?.enabled||browserHelperStatus.version!=='0.6.29'||Date.now()-browserHelperStatus.checkedAt>45000)return;
+ if(!browserHelperStatus?.enabled||browserHelperStatus.version!=='0.6.30'||Date.now()-browserHelperStatus.checkedAt>45000)return;
  continuationBusy=true;nextContinuationCheck=Date.now()+20000;
  try{
   const {request}=await api('/continuations/claim','POST',{});if(!request)return;
@@ -1068,3 +1091,4 @@ if($('#funnel-enable-discovery'))$('#funnel-enable-discovery').onclick=async()=>
  try{await api('/funnel/discovery','POST',{applicant_id:$('#funnel-profile').value});$('#funnel-notice').textContent='Saved job search refreshed. Suitable open roles will enter the preparation queue automatically.';await refreshFunnel();}
  catch(error){$('#funnel-notice').textContent=error.message;}finally{button.hidden=false;}
 };
+

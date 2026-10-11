@@ -91,3 +91,7 @@ import {installBatches} from './application-batches.js';
 installBatches(db);
 
 if(!db.prepare('PRAGMA table_info(searches)').all().some(c=>c.name==='scope_json'))db.exec('ALTER TABLE searches ADD COLUMN scope_json TEXT');
+
+import {installPreparationCampaign} from './preparation-campaign.js';
+installPreparationCampaign(db);
+

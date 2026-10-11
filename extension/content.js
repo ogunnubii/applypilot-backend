@@ -207,13 +207,14 @@ async function fill(){
  }
  return total;
 }
-async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked,progress:formProgress()});if(blocked)await updateAttentionPosition();}
+async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked,progress:formProgress(),readyForSubmit:blocked&&fields.length===0&&readyForMySubmit()});if(blocked)await updateAttentionPosition();}
 function signature(){return location.href+'|'+controls().map(e=>label(e)+':'+e.type+':'+controlRole(e)).join('|')+'|'+buttons().map(e=>buttonName(e)).join('|');}
 function buttons(){const root=P.customApplication?.(location.href)?applicationRoot():document;return [...(root?.querySelectorAll('button,input[type="submit"],[role="button"]')||[])].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');}
 const buttonName=e=>compact(e.innerText||e.value||e.getAttribute('aria-label'));
 const isSubmitAction=e=>/^(?:submit(?: my| your| the)?(?: application)?|send(?: my| the)? application|complete application)$/i.test(buttonName(e))||!!P.customApplication?.(location.href)&&hasApplicationFields()&&/^(?:apply|apply now)$/i.test(buttonName(e));
 const isNextAction=e=>/^(?:next(?: step)?|continue(?: application)?|save\s*(?:&|and)\s*continue|save and next|review(?: application)?|proceed)$/i.test(buttonName(e));
 function hasApplicationFields(){return controls().some(e=>!['hidden','submit','button','reset','image','search'].includes(e.type)&&e.getAttribute('role')!=='searchbox');}
+function readyForMySubmit(){const check=review(),actions=buttons(),p=formProgress();return !attempted&&!initialReceipt&&hasApplicationFields()&&!check.reason&&p.required>0&&p.required===p.filled&&actions.filter(isSubmitAction).length===1&&!actions.some(isNextAction);}
 function preparationMessage(check){
  if(check.reason)return check.reason;
  if(!hasApplicationFields())return 'The application form is not open yet. Open Application or Apply to begin autofill.';
@@ -252,7 +253,7 @@ async function advance(){
   if(Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer application form to load.';return;}
   return report(preparationMessage(check),check.fields);
  }
- if(!state.automatic||state.autofillOnly){await report(preparationMessage(check),check.fields,true);return;}
+ if(!state.automatic||state.autofillOnly&&!state.prepareSteps){await report(preparationMessage(check),check.fields,true);return;}
  if(check.reason)return report(check.reason,check.fields);
  const signatureNow=signature();if(lastStep===signatureNow){if(Date.now()-stepAt>15000)await report('This step did not advance. Check employer validation.');return;}
  const bs=buttons(),submit=bs.filter(isSubmitAction),next=bs.filter(isNextAction);
@@ -280,9 +281,10 @@ async function observeManualSubmission(){
  finally{submissionRecording=false;}
 }
 async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted)await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
-// Refresh paused forms without reopening them or clicking any navigation button.
+// Recheck saved answers in the existing form. Explicit preparation campaigns may
+// advance non-submit steps; the final action still requires its separate grant.
 let savedRefreshBusy=false,lastRefreshSignature='',formChanged=false,formChangeTimer;
-const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions,p?.autonomousSubmit]);
+const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions,p?.autonomousSubmit,p?.prepareSteps]);
 async function refreshPausedAnswers(){
  if(document.activeElement?.matches?.('input,select,textarea,[contenteditable="true"]'))return;
  if(!started||!stopped||busy||savedRefreshBusy||submissionRecording||attempted||siteIssue()||receipt())return;
@@ -291,13 +293,12 @@ async function refreshPausedAnswers(){
   const state=await send('state');if(state.attempted){attempted=true;if(!state.autofillOnly)return;}if(!state.refreshEnabled)return;
   const latest=await send('packet');if(latest.job.attempted){attempted=true;if(!latest.autofillOnly)return;}
   const formSignature=signature();
-  if(answerSnapshot(latest)===answerSnapshot(packet)&&formSignature===lastRefreshSignature&&!formChanged)return;
+  if(answerSnapshot(latest)===answerSnapshot(packet)&&formSignature===lastRefreshSignature&&!formChanged){const check=review();await report(preparationMessage(check),check.fields,true);return;}
   lastRefreshSignature=formSignature;formChanged=false;
   packet=latest;busy=true;attemptedCustom=new WeakMap();
-  // Autofill-only refresh uses saved facts and bounded AI preparation; it never
-  // advances or submits a form, and preserves existing field values.
+  // Reuse saved facts and bounded AI preparation, preserving existing field values.
   await fill();const check=review();
-  if(packet.autonomousSubmit===true&&state.refreshEnabled&&!check.reason){stopped=false;await advance();if(!stopped)startReceiptMonitor();}else await report(preparationMessage(check),check.fields,true);
+  if((packet.autonomousSubmit===true||packet.prepareSteps===true)&&state.refreshEnabled&&!check.reason){stopped=false;await advance();if(!stopped)startReceiptMonitor();}else await report(preparationMessage(check),check.fields,true);
  }catch{/* Keep the existing form and edits intact when the connection is unavailable. */}
  finally{busy=false;savedRefreshBusy=false;}
 }
@@ -347,3 +348,4 @@ document.addEventListener('submit',e=>{
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.action==='fill'){resumeFill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}});
 begin();
 })();
+

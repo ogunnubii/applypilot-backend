@@ -1,4 +1,5 @@
 import {installUnresolvedAttempts,unresolvedAttemptQuarantined,unresolvedAttemptEligibility,unresolvedAttemptMarker} from './unresolved-attempts.js';
+import {preparationCampaign,preparationMember} from './preparation-campaign.js';
 import {matchAssessment} from './matching.js';
 import {currentScopeAssessment,currentSearchScope,scopeIntent,searchScopeSignature} from './search-scope.js';
 import {prioritizeApplications} from './application-diversity.js';
@@ -98,6 +99,7 @@ function savedSearchProblem(db,job,focus,candidate=false){
  return '';
 }
 export function savedSearchClaimProblem(db,job){
+ if(preparationCampaign(db,job.user_id)?.enabled)return 'Chrome preparation campaign is active; hosted execution is parked.';
  const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(job.user_id);
  if(!focus?.search_queue_only)return '';
  if(!focus.enabled||focus.job_id!==job.id)return 'Saved search automation is paused or another application is selected.';
@@ -120,6 +122,7 @@ export function receiptConfirmed(db,job){
  return !!job&&applicationEvidence({...job,receipt_event:db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('submitted','manual_confirmation') LIMIT 1").get(job.id)}).confirmed;
 }
 export function focusAllowsSubmit(db,job){
+ if(job&&(preparationCampaign(db,job.user_id)?.enabled||preparationMember(db,job)))return false;
  return !!job&&inActiveBatch(db,job)&&!!db.prepare('SELECT 1 FROM work_focus WHERE user_id=? AND enabled=1 AND auto_submit=1 AND job_id=?').get(job.user_id,job.id);
 }
 function hasSubmissionEvidence(db,job){
@@ -143,6 +146,7 @@ function preparationProblem(db,job){
 }
 const isBlocked=job=>['paused','needs_review'].includes(job.status)||job.status==='local_browser'&&job.local_phase==='blocked';
 export function startOneApplication(db,userId,jobId,{auto_submit=true}={}){
+ if(preparationCampaign(db,userId)?.enabled)throw Error('Pause the Chrome preparation campaign before selecting a different execution mode.');
  if(typeof auto_submit!=='boolean')throw Error('Choose an explicit submission mode.');
  db.exec('BEGIN IMMEDIATE');try{
   const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(userId),job=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,userId);
@@ -200,6 +204,7 @@ export function focusSnapshot(db,userId){
   confirmed:receiptConfirmed(db,job),awaiting:hasSubmissionEvidence(db,job)&&!receiptConfirmed(db,job)};
 }
 export function setWorkFocus(db,userId,{enabled,auto_submit,skip_blocked,next}={}){
+ if(enabled&&preparationCampaign(db,userId)?.enabled)throw Error('Pause the Chrome preparation campaign before enabling automatic submission.');
  if(typeof enabled!=='boolean'||auto_submit!==undefined&&typeof auto_submit!=='boolean'||skip_blocked!==undefined&&typeof skip_blocked!=='boolean'||next!==undefined&&typeof next!=='boolean')throw Error('Choose explicit automatic submission and blocked-form settings.');
  if(enabled===false){db.prepare('UPDATE work_focus SET enabled=0,auto_submit=0,skip_blocked=0 WHERE user_id=?').run(userId);return focusSnapshot(db,userId);}
  populateBatch(db,userId);
@@ -240,3 +245,4 @@ export function reserveAutonomousAttempt(db,jobId,userId,owner){
   db.exec('COMMIT');return {ok:true,permitted:true};
  }catch(e){db.exec('ROLLBACK');throw e;}
 }
+

@@ -103,7 +103,7 @@ async function tick(){
   }
   waiting.auto=false;waiting.phase='blocked';await saveRecord(waiting);
  }
- const fresh=await read();let jobs;try{({jobs}=await api('/jobs'));}catch(e){await chrome.storage.local.set({error:e.message});return;}const candidates=jobs.filter(j=>eligible(j,fresh));const queue=[...new Set([...fresh.queue,...candidates.map(j=>j.id)])].filter(id=>candidates.some(j=>j.id===id)).sort((a,b)=>(Number(candidates.find(j=>j.id===a)?.queue_position)||Infinity)-(Number(candidates.find(j=>j.id===b)?.queue_position)||Infinity)||Number(candidates.find(j=>j.id===b)?.match_score||0)-Number(candidates.find(j=>j.id===a)?.match_score||0));await chrome.storage.local.set({queue,error:''});const id=queue[0];if(!id)return;
+ const fresh=await read();let jobs,preparation;try{({jobs,preparation}=await api('/jobs'));}catch(e){await chrome.storage.local.set({error:e.message});return;}const candidates=jobs.filter(j=>(!preparation?.enabled||j.preparation)&&eligible(j,fresh));const queue=[...new Set([...fresh.queue,...candidates.map(j=>j.id)])].filter(id=>candidates.some(j=>j.id===id)).sort((a,b)=>(Number(candidates.find(j=>j.id===a)?.queue_position)||Infinity)-(Number(candidates.find(j=>j.id===b)?.queue_position)||Infinity)||Number(candidates.find(j=>j.id===b)?.match_score||0)-Number(candidates.find(j=>j.id===a)?.match_score||0));await chrome.storage.local.set({queue,error:''});const id=queue[0];if(!id)return;
  try{await openJob(id,true);await chrome.storage.local.set({queue:queue.slice(1),error:''});}
  catch(e){if([400,409].includes(e.status)){await saveRecord({id,url:candidates.find(j=>j.id===id).url,auto:false,phase:'blocked',touched:Date.now()});await chrome.storage.local.set({queue:queue.slice(1),error:'Skipped blocked application: '+e.message});}else await chrome.storage.local.set({error:e.message});}
 }
@@ -167,9 +167,9 @@ async function handle(m,sender){
   if(matches.length===1){const tabs=await chrome.tabs.query({});if(tabs.filter(t=>P.sameApplication(t.url,matches[0].url)).length===1){b=matches[0];b.tabId=sender.tab.id;b.auto=false;await saveRecord(b);}}
  }
  if(!b||!(sender.frameId===0||P.trustedFrame?.(sender,b.url)===true))throw Error('This tab is not linked to an active ApplyPilot application.');
- if(m.action==='packet'){b.frameId=sender.frameId;const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);b.autonomousSubmit=packet.autonomousSubmit===true;await saveRecord(b);return {...packet,automatic:!b.attempted&&s.enabled&&!s.userPaused&&(b.auto||b.autonomousSubmit),autofillOnly:!b.autonomousSubmit};}
- if(m.action==='attention-position'){const {jobs}=await listedJobs(),waiting=P.attentionOrder(jobs),index=waiting.findIndex(j=>j.id===b.id);return {position:index<0?0:index+1,total:waiting.length};}
- if(m.action==='state')return {attempted:b.attempted,automatic:!b.attempted&&s.enabled&&!s.userPaused&&(b.auto||b.autonomousSubmit),autofillOnly:!b.autonomousSubmit,autonomousSubmit:!!b.autonomousSubmit,refreshEnabled:!!s.enabled&&!s.userPaused,phase:b.phase};
+ if(m.action==='packet'){b.frameId=sender.frameId;const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);b.autonomousSubmit=packet.autonomousSubmit===true;b.prepareSteps=packet.prepareSteps===true;await saveRecord(b);return {...packet,automatic:!b.attempted&&s.enabled&&!s.userPaused&&(b.auto||b.autonomousSubmit||b.prepareSteps),autofillOnly:!b.autonomousSubmit};}
+ if(m.action==='attention-position'){const {jobs,preparation}=await listedJobs(),member=jobs.find(j=>j.id===b.id)?.preparation;if(preparation?.enabled&&member)return {position:member.position,total:preparation.target};const waiting=P.attentionOrder(jobs),index=waiting.findIndex(j=>j.id===b.id);return {position:index<0?0:index+1,total:waiting.length};}
+ if(m.action==='state')return {attempted:b.attempted,automatic:!b.attempted&&s.enabled&&!s.userPaused&&(b.auto||b.autonomousSubmit||b.prepareSteps),autofillOnly:!b.autonomousSubmit,prepareSteps:!!b.prepareSteps,autonomousSubmit:!!b.autonomousSubmit,refreshEnabled:!!s.enabled&&!s.userPaused,phase:b.phase};
  if(m.action==='assistance'){b.assisted=true;await saveRecord(b);return api('/jobs/'+b.id+'/local/assistance','POST',{kind:'human'});}
  if(m.action==='answer'){if(b.attempted)throw Error('Submission already started.');return api('/jobs/'+b.id+'/local/answer','POST',{question:m.question,choices:m.choices,answerFormat:m.answerFormat,maxLength:m.maxLength,fieldHelp:m.fieldHelp});}
  if(m.action==='research-answer')return api('/jobs/'+b.id+'/local/research-answer','POST',{question:m.question});
@@ -181,7 +181,7 @@ async function handle(m,sender){
   const clickId=m.clickId||'legacy',payload={url:sender.url,before:String(m.before||'').slice(0,20000),human:m.human===true,clickId,humanAssisted:!!b.assisted,automatic};b.pendingClicks=b.pendingClicks||{};if(!automatic)b.pendingClicks[clickId]=payload;await saveRecord(b);
   try{const result=await api('/jobs/'+b.id+'/local/attempt','POST',payload);delete b.pendingClicks[clickId];await saveRecord(b);return result;}catch(e){b.auto=false;b.phase='blocked';if(e.status&&e.status<500&&e.status!==429)delete b.pendingClicks[clickId];await saveRecord(b);throw e;}
  }
- if(m.action==='step'){const manualEntry=m.entry===true&&b.manualOpen&&!b.entryOpened&&!b.attempted;if(!manualEntry&&(!s.enabled||s.userPaused||!(b.auto||b.autonomousSubmit)))throw Error('Automation was stopped');if((b.steps||0)>=15)throw Error('Step limit reached. Continue manually.');await api('/jobs/'+b.id+'/local/step','POST',{});if(m.entry===true)b.entryOpened=true;b.steps=(b.steps||0)+1;await saveRecord(b);return {};}
+ if(m.action==='step'){const manualEntry=m.entry===true&&b.manualOpen&&!b.entryOpened&&!b.attempted;if(!manualEntry&&(!s.enabled||s.userPaused||!(b.auto||b.autonomousSubmit||b.prepareSteps)))throw Error('Automation was stopped');if((b.steps||0)>=15)throw Error('Step limit reached. Continue manually.');await api('/jobs/'+b.id+'/local/step','POST',{});if(m.entry===true)b.entryOpened=true;b.steps=(b.steps||0)+1;await saveRecord(b);return {};}
  if(m.action==='form-opened'){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;await saveRecord(b);return {};}
  if(m.action==='site-error'){
   const issue=P.employerPageIssue({status:m.code});if(!issue)throw Error('Unrecognized employer page error.');
@@ -198,8 +198,8 @@ async function handle(m,sender){
  }
  if(m.action==='progress'){
   if(Number(m.filled)>0){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;}
-  b.touched=Date.now();if(m.blocked){b.phase='blocked';b.auto=false;}await saveRecord(b);
-  const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,filled:m.filled,progress:m.progress,formLanguage:m.formLanguage});if(m.blocked)await tick();return result;
+  b.touched=Date.now();if(m.blocked){b.phase=m.readyForSubmit===true?'prepared':'blocked';b.auto=false;}await saveRecord(b);
+  const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,filled:m.filled,progress:m.progress,formLanguage:m.formLanguage,readyForSubmit:m.readyForSubmit===true,url:sender.url});if(m.blocked)await tick();return result;
  }
  if(m.action==='capture')return api('/jobs/'+b.id+'/local/capture','POST',{fields:m.fields});
  if(m.action==='autosave'){if(typeof m.question!=='string'||typeof m.answer!=='string'||!m.answer.trim()||m.answer.length>4000||P.sensitive(m.question)||/password|one.?time|verification code|captcha|API key|access token/i.test(m.question))throw Error('This answer cannot be saved automatically.');b.pendingAnswers=b.pendingAnswers||{};Object.defineProperty(b.pendingAnswers,m.question,{value:{answer:m.answer.trim(),resume:m.resume===true},enumerable:true,configurable:true,writable:true});await saveRecord(b);return flushAnswerOutbox(b);}
@@ -219,3 +219,4 @@ chrome.alarms.onAlarm.addListener(a=>{if(a.name==='queue')return serial(tick).ca
 chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:!s.userPaused,error:'Browser restarted. Existing unfinished applications remain paused; new eligible jobs continue automatically.'});}));
 chrome.runtime.onInstalled.addListener(()=>serial(initialize));
 chrome.tabs.onRemoved.addListener(id=>serial(async()=>{const s=await read();for(const r of Object.values(s.records))if(r.tabId===id){r.tabId=null;r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records});await tick();}).catch(()=>{}));
+

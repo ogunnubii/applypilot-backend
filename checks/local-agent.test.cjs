@@ -5,14 +5,14 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const root=path.join(__dirname,'..');
 const settle=()=>new Promise(r=>setTimeout(r,25));
-async function fixture(html,{automatic=true,answers={},initialAttempt=false,before=()=>{}}={}){
+async function fixture(html,{automatic=true,autofillOnly=false,prepareSteps=false,answers={},initialAttempt=false,before=()=>{}}={}){
  const dom=new JSDOM(html,{runScripts:'outside-only',url:'https://jobs.ashbyhq.com/example/job-123'}),w=dom.window;
  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});
  w.HTMLElement.prototype.getClientRects=function(){return this.type==='hidden'||this.closest('[hidden]')||this.style.display==='none'?[]:[{}];};
  let attempted=initialAttempt,auto=automatic;const messages=[],timers=[];
- const packet={job:{title:'Fixture role',attempted:initialAttempt},profile:{name:'Fixture Applicant',email:'fixture@example.test',phone:'123',location:'Fixture city'},answers,resume:{name:'resume.pdf',base64:''},automatic};
+ const packet={job:{title:'Fixture role',attempted:initialAttempt},profile:{name:'Fixture Applicant',email:'fixture@example.test',phone:'123',location:'Fixture city'},answers,resume:{name:'resume.pdf',base64:''},automatic,autofillOnly,prepareSteps,autonomousSubmit:false};
  w.setInterval=fn=>{timers.push(fn);return timers.length;};w.clearInterval=()=>{};
- w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:packet};if(m.action==='state')return {ok:true,data:{attempted,automatic:auto&&!attempted}};if(m.action==='attempt'){assert(!attempted,'attempt must not repeat');attempted=true;}if(m.action==='progress'&&m.blocked)auto=false;return {ok:true,data:{}};}}};
+ w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:packet};if(m.action==='state')return {ok:true,data:{attempted,automatic:auto&&!attempted,autofillOnly,prepareSteps,autonomousSubmit:false}};if(m.action==='attempt'){assert(!attempted,'attempt must not repeat');attempted=true;}if(m.action==='progress'&&m.blocked)auto=false;return {ok:true,data:{}};}}};
  before(w);
  w.eval(fs.readFileSync(path.join(root,'extension/policy.js'),'utf8'));w.eval(fs.readFileSync(path.join(root,'extension/content.js'),'utf8'));
  // Wait for preparation to finish its conditional-control settling pass.
@@ -26,6 +26,18 @@ test('Unknown required facts block, while exact saved facts fill and existing ed
 test('Routine multi-step preparation fills and captures answers but never clicks Submit',async()=>{
  const g=await fixture('<form><label>Full name<input required></label><button type="button">Next</button></form>');
  try{assert(g.messages.some(m=>m.action==='step'));g.w.document.querySelector('form').innerHTML='<label>Email<input required type="email"></label><button type="button" id="submit">Submit application</button>';let clicks=0;g.w.document.querySelector('#submit').onclick=()=>clicks++;await g.tick();assert.equal(clicks,0);assert(!g.messages.some(m=>m.action==='attempt'));assert(g.messages.some(m=>m.action==='capture'));assert(g.messages.some(m=>m.action==='progress'&&m.message.startsWith('Ready to submit')));await g.tick();assert.equal(clicks,0);}finally{g.close();}
+});
+
+test('Chrome campaign autofill-only mode advances Next, fills the final step, and records ready without a Submit',async()=>{
+ const f=await fixture('<form><label>Full name<input required></label><button type="button">Next</button></form>',{autofillOnly:true,prepareSteps:true});
+ try{
+  assert(f.messages.some(m=>m.action==='step'),'preparation permission must advance the normal Next step');
+  f.w.document.querySelector('form').innerHTML='<label>Email<input type="email" required></label><button type="button" id="submit">Submit application</button>';
+  let clicks=0;f.w.document.querySelector('#submit').onclick=()=>clicks++;await f.tick();
+  assert.equal(f.w.document.querySelector('input').value,'fixture@example.test');
+  assert(f.messages.some(m=>m.action==='progress'&&m.readyForSubmit===true&&m.progress.required===m.progress.filled));
+  assert.equal(clicks,0);assert(!f.messages.some(m=>m.action==='attempt'));await f.tick();assert.equal(clicks,0);
+ }finally{f.close();}
 });
 
 test('CAPTCHA, MFA, legal text, payments and custom controls require human interaction',async()=>{
@@ -72,3 +84,4 @@ test('Country dial codes and fully qualified city options match without choosing
 });
 
 test('Ambiguous dropdown matches and existing selections are preserved',async()=>{const f=await fixture('<form><label>Country<select id="duplicate"><option value="">Choose</option><option value="a">Canada</option><option value="b">Canada</option></select></label><label>Country<select id="existing"><option selected>United States</option><option>Canada</option></select></label><label>I agree to the terms<select id="terms"><option value="">Choose</option><option>Yes</option></select></label></form>',{answers:{Country:'Canada','I agree to the terms':'Yes'}});try{assert.equal(f.w.document.getElementById('duplicate').value,'');assert.equal(f.w.document.getElementById('existing').value,'United States');assert.equal(f.w.document.getElementById('terms').value,'');}finally{f.close();}});
+

@@ -8,13 +8,14 @@ const {chromium}=require('playwright');const fs=require('node:fs');const path=re
   const page=await context.newPage();
   await page.addInitScript(()=>{
    window.messages=[];window.attempted=false;
-   window.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){window.messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Synthetic application'},profile:{name:'Fixture Applicant',email:'fixture@example.test'},answers:{},resume:{name:'resume.pdf',base64:btoa('%PDF-1.4 synthetic fixture')},automatic:true}};if(m.action==='state')return {ok:true,data:{attempted:window.attempted,automatic:!window.attempted}};if(m.action==='attempt'){if(window.attempted)throw Error('Duplicate attempt');window.attempted=true;}return {ok:true,data:{}};}}};
+   window.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){window.messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Synthetic application'},profile:{name:'Fixture Applicant',email:'fixture@example.test'},answers:{},resume:{name:'resume.pdf',base64:btoa('%PDF-1.4 synthetic fixture')},automatic:true,autofillOnly:true,prepareSteps:true,autonomousSubmit:false}};if(m.action==='state')return {ok:true,data:{attempted:window.attempted,automatic:!window.attempted,autofillOnly:true,prepareSteps:true,autonomousSubmit:false}};if(m.action==='attempt'){if(window.attempted)throw Error('Duplicate attempt');window.attempted=true;}return {ok:true,data:{}};}}};
   });
   await page.goto('https://jobs.ashbyhq.com/fixture/job-123');
   for(const name of ['policy.js','content.js'])await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../extension',name),'utf8')});
   await page.waitForFunction(()=>window.messages.some(m=>m.action==='progress'&&String(m.message).startsWith('Ready to submit')),{},{timeout:15000}).catch(async e=>{console.error(await page.evaluate(()=>({messages:window.messages,text:document.body.innerText})));throw e;});
   assert.equal(await page.evaluate(()=>window.clicks||0),0);
   assert.equal(await page.evaluate(()=>window.messages.filter(m=>m.action==='attempt').length),0);
+  assert.equal(await page.evaluate(()=>window.messages.some(m=>m.action==='progress'&&m.readyForSubmit===true)),true);
   await page.click('#submit');
   await page.waitForFunction(()=>window.messages.some(m=>m.action==='receipt'),{},{timeout:15000}).catch(async e=>{console.error(await page.evaluate(()=>({messages:window.messages,text:document.body.innerText})));throw e;});
   assert.equal(await page.evaluate(()=>window.clicks),1);
@@ -22,3 +23,4 @@ const {chromium}=require('playwright');const fs=require('node:fs');const path=re
   console.log('PASS: real Chromium multi-page fill stops before Submit, then records one trusted manual click before receipt detection');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
+

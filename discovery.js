@@ -1,4 +1,5 @@
 import {normalizeSearchScope,scopeIntent,searchPriority} from './search-scope.js';
+import {ashbyPosting} from './ashby-posting.js';
 import {supportIntent,remoteCanadaIntent,t4FallbackIntent,refreshSalaryRates} from './support-career.js';
 import {batchPreferences} from './application-batches.js';
 import {worldwideTechIntent} from './tech-search.js';
@@ -170,7 +171,7 @@ export async function listBoard(board,options={}){
   }
   if(u.hostname==='jobs.ashbyhq.com'){
     const data=await cachedJSON(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(token)}?includeCompensation=true`);
-    return (data.jobs||[]).filter(j=>options.includeUnlisted||j.isListed!==false).map(j=>({title:j.title,company:token,location:j.location,publishedAt:j.publishedAt,compensation:j.compensation,description:j.descriptionPlain||j.descriptionHtml,employmentType:j.employmentType,remote:j.isRemote===true||j.workplaceType==='Remote',url:j.applyUrl||j.jobUrl}));
+    return (data.jobs||[]).filter(j=>options.includeUnlisted||j.isListed!==false).map(j=>ashbyPosting(j,token));
   }
   const api=u.hostname==='jobs.eu.lever.co'?'https://api.eu.lever.co':'https://api.lever.co';
   const data=await cachedJSON(`${api}/v0/postings/${encodeURIComponent(token)}?mode=json&limit=500`);

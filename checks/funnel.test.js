@@ -7,6 +7,7 @@ import {EventEmitter} from 'node:events';
 import {safeFunnelURL,parseFunnelLinks,readPublicJob,jobFromHTML} from '../funnel-links.js';
 import {WORLDWIDE_TECH_INSTRUCTION,technologyRole} from '../tech-search.js';
 import {matchAssessment} from '../matching.js';
+import {normalizeSearchScope} from '../search-scope.js';
 const root=process.env.APPLYPILOT_TEST_TMP||'data/test-tmp';mkdirSync(root,{recursive:true});process.env.DATABASE_PATH=join(mkdtempSync(join(root,'funnel-')),'test.sqlite');
 const {db}=await import('../db.js');const {parseIntent}=await import('../discovery.js');
 const {installFunnel,createFunnelBatch,processFunnel,funnelStatus,enableWorldwideDiscovery,retryFunnelItem,resolveFunnelPosting}=await import('../job-funnel.js');
@@ -82,3 +83,15 @@ test('funnel UI submits a durable bulk group and refreshes progress without eras
  w.eval(readFileSync('extension/policy.js','utf8'));w.eval(readFileSync('assistant-client.js','utf8'));await w.refreshFunnel();const textarea=w.document.querySelector('#funnel-links');textarea.value=url(20)+'\n'+url(21);await w.refreshFunnel();assert.equal(textarea.value,url(20)+'\n'+url(21));
  await w.document.querySelector('#funnel-form').onsubmit({preventDefault(){},submitter:w.document.querySelector('#funnel-add')});const request=calls.find(c=>c.options.method==='POST');assert.deepEqual(JSON.parse(request.options.body),{applicant_id:'p',links:url(20)+'\n'+url(21)});assert.equal(textarea.value,'');assert.match(w.document.querySelector('#funnel-notice').textContent,/2 links saved/);assert.equal(w.document.body.dataset.funnel,'true');w.close();
 });
+
+test('funnel honors this applicant saved remote scope and preserves an explicitly disabled employee fallback',async()=>{
+ const scope=normalizeSearchScope({roles:['Platform Engineer'],remotePlaces:['Canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true});
+ db.prepare("INSERT INTO searches(id,user_id,applicant_id,instruction,scope_json,boards_json,created_at) VALUES('scope-fixture','other','q','Remote Canada',?,'[]','2026')").run(JSON.stringify(scope));
+ const resolve=async value=>({...posting(value),location:'Remote: United States; Remote: Canada',remote:true,description:'Full-time cloud infrastructure engineering.'});
+ createFunnelBatch(db,'other',{applicant_id:'q',links:url(401)});await processFunnel(db,{resolve});
+ const accepted=funnelStatus(db,'other').items.find(item=>item.url===url(401));assert(accepted.job_id,'allowed secondary-location job should become an application');
+ db.prepare("UPDATE searches SET scope_json=? WHERE id='scope-fixture'").run(JSON.stringify({...scope,allowEmploymentFallback:false}));
+ createFunnelBatch(db,'other',{applicant_id:'q',links:url(402)});await processFunnel(db,{resolve});
+ const held=funnelStatus(db,'other').items.find(item=>item.url===url(402));assert.equal(held.job_id,null);assert.equal(held.status,'review');assert.match(held.message,/fallback is disabled/);
+});
+

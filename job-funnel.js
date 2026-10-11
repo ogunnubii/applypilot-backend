@@ -1,4 +1,5 @@
 import {batchPreferences} from './application-batches.js';
+import {currentSearchScope,scopeIntent} from './search-scope.js';
 import {supportSearchInstruction,refreshSalaryRates} from './support-career.js';
 import {randomUUID} from 'node:crypto';
 import {parseFunnelLinks,safeFunnelURL,readPublicJob,jobFromHTML,applicationLinks} from './funnel-links.js';
@@ -82,7 +83,10 @@ export async function processFunnel(db,{resolve=resolveFunnelPosting,limit=5,clo
    if(excludesFrench(db,item.user_id)&&frenchApplication(job)){finish('excluded','French-language application excluded.');continue;}
    const prior=priorApplication(db,item.user_id,job)||db.prepare('SELECT id,company,title FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(item.user_id,companyKey(job.company),historyKey(job.title));
    if(prior){const native=db.prepare('SELECT id,title,company FROM jobs WHERE id=? AND user_id=?').get(prior.id,item.user_id);finish('duplicate','Matched previous application history. No repeat application created.',native);continue;}
-   const prefs=batchPreferences(db,item.user_id);if(prefs)await refreshSalaryRates();const metadata=jobIntelligence(job,{...parseIntent(prefs?supportSearchInstruction(db,item.user_id,p.id):WORLDWIDE_TECH_INSTRUCTION),minimumCAD:prefs?.minimum_cad},p.focus);
+   const prefs=batchPreferences(db,item.user_id);if(prefs)await refreshSalaryRates();
+   const scope=currentSearchScope(db,{user_id:item.user_id,applicant_id:p.id});
+   const intent=scope?scopeIntent(scope):parseIntent(prefs?supportSearchInstruction(db,item.user_id,p.id):WORLDWIDE_TECH_INSTRUCTION);
+   const metadata=jobIntelligence(job,{...intent,minimumCAD:prefs?.minimum_cad},p.focus);
    if(prefs&&(!metadata.supportCareer?.strong||!metadata.salaryTarget?.eligible)){finish('excluded',metadata.salaryTarget?.reason||'Outside support-career preferences');continue;}
    if(!metadata.matched){finish('excluded','Role is outside the requested technology and IT categories.');continue;}
    if(!metadata.eligibility.eligible){finish('review',metadata.eligibility.reason);continue;}

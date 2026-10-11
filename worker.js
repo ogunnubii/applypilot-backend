@@ -22,7 +22,19 @@ installDrafts(db);
 installResearch(db);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function set(job,status,message,challenge=null,confirmation=null){if(db.prepare('SELECT status FROM jobs WHERE id=?').get(job.id)?.status==='archived')return;db.prepare('UPDATE jobs SET status=?,challenge=?,confirmation=?,updated_at=? WHERE id=?').run(status,challenge,confirmation,now(),job.id);event(job.id,status,message)}
-function claim(){if(handoffs?.full())return null;for(const f of db.prepare('SELECT user_id FROM work_focus WHERE enabled=1').all())ensureFocusedJob(db,f.user_id);db.exec('BEGIN IMMEDIATE');try{let j=db.prepare("SELECT * FROM jobs WHERE status='queued' AND COALESCE(json_extract(job_metadata_json,'$.available'),1)!=0 AND applicant_id IN (SELECT id FROM applicants WHERE execution_mode='cloud') AND local_owner IS NULL AND (NOT EXISTS(SELECT 1 FROM application_batch_preferences b WHERE b.user_id=jobs.user_id AND b.enabled=1) OR EXISTS(SELECT 1 FROM application_batch_members m JOIN application_batch_preferences b ON b.current_batch=m.batch_id AND b.enabled=1 WHERE m.job_id=jobs.id AND m.user_id=jobs.user_id)) AND (NOT EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1) OR id=(SELECT job_id FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1)) ORDER BY match_score DESC,discovery_priority,created_at LIMIT 1").get();if(j){const candidates=db.prepare("SELECT * FROM jobs WHERE user_id=? AND status='queued' AND COALESCE(json_extract(job_metadata_json,'$.available'),1)!=0 AND applicant_id IN (SELECT id FROM applicants WHERE execution_mode='cloud') AND local_owner IS NULL AND (NOT EXISTS(SELECT 1 FROM application_batch_preferences b WHERE b.user_id=jobs.user_id AND b.enabled=1) OR EXISTS(SELECT 1 FROM application_batch_members m JOIN application_batch_preferences b ON b.current_batch=m.batch_id AND b.enabled=1 WHERE m.job_id=jobs.id AND m.user_id=jobs.user_id)) AND (NOT EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1) OR id=(SELECT job_id FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1))").all(j.user_id);j=prioritizeApplications(db,j.user_id,candidates)[0];}if(j){db.prepare("UPDATE jobs SET status='running',attempts=attempts+1,lease_at=?,updated_at=? WHERE id=?").run(now(),now(),j.id);event(j.id,'running','Opening employer application')}db.exec('COMMIT');return j}catch(e){db.exec('ROLLBACK');throw e}}
+function claim(){if(handoffs?.full())return null;
+ for(const f of db.prepare('SELECT user_id FROM work_focus WHERE enabled=1').all())ensureFocusedJob(db,f.user_id);
+ db.exec('BEGIN IMMEDIATE');
+ try{
+  const candidates=db.prepare("SELECT * FROM jobs WHERE status='queued' AND COALESCE(json_extract(job_metadata_json,'$.available'),1)!=0 AND applicant_id IN (SELECT id FROM applicants WHERE execution_mode='cloud') AND local_owner IS NULL AND (NOT EXISTS(SELECT 1 FROM application_batch_preferences b WHERE b.user_id=jobs.user_id AND b.enabled=1) OR EXISTS(SELECT 1 FROM application_batch_members m JOIN application_batch_preferences b ON b.current_batch=m.batch_id AND b.enabled=1 WHERE m.job_id=jobs.id AND m.user_id=jobs.user_id)) AND (NOT EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1) OR id=(SELECT job_id FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1)) ORDER BY match_score DESC,discovery_priority,created_at").all();let j;
+  for(const userId of new Set(candidates.map(job=>job.user_id))){
+   j=prioritizeApplications(db,userId,candidates.filter(job=>job.user_id===userId)).find(job=>job.metadata?.eligibility?.eligible!==false);
+   if(j)break;
+  }
+  if(j){db.prepare("UPDATE jobs SET status='running',attempts=attempts+1,lease_at=?,updated_at=? WHERE id=?").run(now(),now(),j.id);event(j.id,'running','Opening employer application')}
+  db.exec('COMMIT');return j;
+ }catch(e){db.exec('ROLLBACK');throw e}
+}
 async function pageIssue(page,status=0){
  const text=await page.locator('body').innerText().catch(()=>'');
  const hasForm=await page.locator('form,input:visible,textarea:visible,select:visible').count()>0;

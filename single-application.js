@@ -1,3 +1,4 @@
+import {currentScopeAssessment} from './search-scope.js';
 import {prioritizeApplications} from './application-diversity.js';
 import {applicationEvidence} from './operation-evidence.js';
 import {employerHold} from './employer-limits.js';
@@ -33,6 +34,7 @@ function preparationProblem(db,job){
  if(!inActiveBatch(db,job))return 'This application is outside your active batch.';
  if(!supported(job.url))return 'Use a supported direct employer application link.';
  if(metadata.available===false)return 'The employer posting is no longer available.';
+ if(currentScopeAssessment(db,job)?.eligibility?.eligible===false)return 'This job does not meet the current search scope and work eligibility requirements.';
  if(metadata.eligibility?.eligible===false)return 'This job does not meet the saved work eligibility requirements.';
  if(excludesFrench(db,job.user_id)&&frenchApplication(job))return 'French-language applications are excluded by your preference.';
  if(employerHold(db,job))return employerHold(db,job).message;

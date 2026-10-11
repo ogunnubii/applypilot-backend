@@ -119,3 +119,38 @@ No email-verification or password-recovery mail service is configured by this ch
 New public accounts are recorded separately and cannot opt into blocker emails or have pending blocker emails sent until mailbox ownership is verified. There is currently no email-verification endpoint, so this remains unavailable for new public accounts. Previously existing accounts and invitation-code registrations retain their established notification behavior. Public registration and its security marker are saved in one transaction.
 
 For a reverse proxy, `AUTH_TRUSTED_PROXY_IPS` optionally accepts a comma-separated allowlist of exact proxy IP addresses (no wildcard/CIDR). Only when the direct socket peer is allowlisted does account throttling inspect `X-Forwarded-For`; it walks from the nearest proxy to the first untrusted address, rejects malformed chains, and normalizes IPv4-mapped peers. Leave this unset unless the deployed proxy IPs and its append/overwrite behavior have been verified. Do not copy a browser-supplied forwarding header or trust arbitrary peers. If Railway cannot provide stable, verifiable peer addresses, retain the conservative shared-IP fallback and use platform edge limiting before high-volume public launch. No production proxy configuration is changed by this patch.
+
+## Structured search scopes
+
+In signed-in Setup, expand **Import structured search scope (advanced)** below
+the search instructions. Paste either a scope object or an object containing
+`scope`, then use **Save search and find jobs**. This uses the existing signed-in
+form; no token extraction or developer console is needed. Use the Applications
+search controls to pause superseded searches.
+
+`POST /api/searches` accepts an optional `scope` object alongside `applicant_id`,
+`instruction`, `boards`, and `auto_queue`. The scope stores `roles` (canonical
+query titles), `aliases` (original matching titles), `localPlaces`, `remotePlaces`,
+`remoteWorldwide`, `remoteFromCountry`, `authorizedCountries`, `includeRelatedRoles`,
+`preferBusinessContract`, `allowEmploymentFallback`, `preferRemote`, and
+`preferSponsorship`. Title lists are case-insensitively deduplicated; up to 2,000
+entries per list and 300 characters per title are supported. Instructions up to
+100,000 characters are preserved; oversized input is rejected, never truncated.
+
+This first structured eligibility implementation supports `remoteFromCountry:
+"canada"`. Set `authorizedCountries: ["canada"]` only from verified applicant
+facts. For Ontario on-site/hybrid plus worldwide remote discovery, use
+`localPlaces: ["ontario"]`, `remotePlaces: ["canada"]`, and `remoteWorldwide: true`.
+US-only remote and foreign work-authorization requirements remain ineligible.
+Sponsorship is a preference backed by posting evidence, never a visa promise.
+Business-contract preference precedes employee fallback, then remote and
+sponsorship preferences, then employer diversity and fit. Existing submission
+and employer-policy guards still apply. Title matching does not establish skills
+or supply answers to qualifications questions.
+
+The latest enabled structured search for an applicant also rechecks pending
+selection and final automatic reservation against its location/eligibility scope.
+Historical receipts and uncertain attempts are not rewritten or retried. Disable
+superseded searches when replacing a search so their discovery work does not keep
+refreshing older rankings. Older searches without a structured scope retain their
+legacy interpretation; no existing search is silently converted.

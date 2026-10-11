@@ -1,3 +1,4 @@
+import {searchPriority} from './search-scope.js';
 import {populateBatch,inActiveBatch} from './application-batches.js';
 import {excludesFrench,archiveFrench} from './language-policy.js';
 import {employerHold} from './employer-limits.js';
@@ -30,7 +31,7 @@ export function queueFoundApplications(db,userId,{applicantId=null}={}){
  };
  db.exec('BEGIN IMMEDIATE');
  try{
-  const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND status='saved' AND (? IS NULL OR applicant_id=?) ORDER BY match_score DESC,created_at,id").all(userId,applicantId,applicantId);
+  const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND status='saved' AND (? IS NULL OR applicant_id=?) ORDER BY match_score DESC,created_at,id").all(userId,applicantId,applicantId).sort((a,b)=>searchPriority(a)-searchPriority(b));
   for(const job of rows){
    if(!inActiveBatch(db,job))continue;
    const profile=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,userId);

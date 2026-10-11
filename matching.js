@@ -1,3 +1,4 @@
+import {scopeLocationAllowed} from './search-scope.js';
 import {supportAssessment,supportRole} from './support-career.js';
 import {technologyRole} from './tech-search.js';
 // Deterministic matching: no model calls or Work credits.
@@ -42,6 +43,7 @@ export function matches(job,intent){
   const group=roleGroup(r);return !!group&&group.some(x=>phrase(title,x));
  });
  if(!roleMatch)return false;
+ if(intent.scope)return scopeLocationAllowed(job,intent.scope);
  if(intent.locationOrder==='york-toronto-gta-remote-canada-worldwide')return true;
  const remote=job.remote===true||phrase(location,'remote')||phrase(location,'home based');
  if(intent.remote && !remote)return false;

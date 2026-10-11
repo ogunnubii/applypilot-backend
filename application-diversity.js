@@ -1,3 +1,4 @@
+import {searchPriority,currentScopeAssessment} from './search-scope.js';
 import {companyApplicationKeys} from './company-application-policy.js';
 import {applicationRoleKey} from './application-dedup.js';
 
@@ -25,7 +26,7 @@ export function diversifyApplications(jobs,history=[]){
  }
  const score=job=>Number(job.match_score??job.assessment?.score)||0;
  const counts=job=>{const n=companyCounts.get(company(job))||0;return [Math.floor(n/COMPANY_ROTATION_SIZE),n===0?0:1,platformCounts.get(platform(job))||0,n];};
- const compare=(a,b)=>{const ac=counts(a),bc=counts(b);for(let i=0;i<ac.length;i++)if(ac[i]!==bc[i])return ac[i]-bc[i];return score(b)-score(a)||String(a.created_at||'').localeCompare(String(b.created_at||''))||String(a.id||a.url).localeCompare(String(b.id||b.url));};
+ const compare=(a,b)=>{const priority=searchPriority(a)-searchPriority(b);if(priority)return priority;const ac=counts(a),bc=counts(b);for(let i=0;i<ac.length;i++)if(ac[i]!==bc[i])return ac[i]-bc[i];return score(b)-score(a)||String(a.created_at||'').localeCompare(String(b.created_at||''))||String(a.id||a.url).localeCompare(String(b.id||b.url));};
  const ordered=[];
  while(rows.length){let best=0;for(let i=1;i<rows.length;i++)if(compare(rows[i],rows[best])<0)best=i;const [job]=rows.splice(best,1);ordered.push(job);add(companyCounts,company(job));add(platformCounts,platform(job));}
  return ordered;
@@ -34,6 +35,7 @@ export function applicationDiversityHistory(db,userId){
  return [...db.prepare("SELECT id,company,title,url,normalized_url,status,attempts,local_attempt_at,confirmation FROM jobs WHERE user_id=? AND status!='duplicate'").all(userId),...db.prepare('SELECT id,company,title,status FROM external_application_history WHERE user_id=?').all(userId).map(j=>({...j,external:true}))];
 }
 export function prioritizeApplications(db,userId,jobs){
+ jobs=jobs.map(job=>{if(!['saved','queued'].includes(job.status)||job.local_attempt_at||Number(job.attempts)||job.handoff_available)return job;const current=currentScopeAssessment(db,{...job,user_id:job.user_id||userId});return current?{...job,metadata:{...(job.metadata||{}),...current}}:job;});
  const pending=jobs.filter(j=>['saved','queued','paused','needs_review','local_browser'].includes(j.status)&&!j.local_attempt_at&&!['Unconfirmed submission','Submission in progress'].includes(j.challenge)),ids=new Set(pending.map(j=>j.id));
  return [...diversifyApplications(pending,applicationDiversityHistory(db,userId)).map((job,index)=>({...job,queue_position:index+1})),...jobs.filter(j=>!ids.has(j.id))];
 }

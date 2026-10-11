@@ -208,6 +208,15 @@ test('HTTP: ownership, companion UI, heartbeat and uncertain submission guard',a
   db.prepare("UPDATE jobs SET status='submitted' WHERE id=?").run(id);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(id).status,'submitted');
   assert.equal((await fetch(base+'/api/chat',{method:'POST',headers,body:JSON.stringify({applicant_id:'a',message:'Help'})})).status,400);
+  const titles=Array.from({length:249},(_,i)=>`Infrastructure Reliability Platform Specialist ${i}`),instruction=titles.join(', ');
+  const scope={roles:titles,aliases:['Build and Release Engineer'],localPlaces:['Ontario'],remotePlaces:['Canada'],remoteWorldwide:true,remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true};
+  const created=await fetch(base+'/api/searches',{method:'POST',headers,body:JSON.stringify({applicant_id:'a',instruction,scope})});assert.equal(created.status,201);const searchId=(await created.json()).id;
+  const stored=db.prepare('SELECT * FROM searches WHERE id=?').get(searchId);assert.equal(stored.instruction,instruction);assert.equal(JSON.parse(stored.scope_json).roles.length,249);assert.equal(searchIntentForApplicant(stored,{}).intent.roles.length,250);
+  const beforeCount=db.prepare('SELECT COUNT(*) n FROM searches').get().n;
+  assert.equal((await fetch(base+'/api/searches',{method:'POST',headers,body:JSON.stringify({applicant_id:'a',instruction:'x'.repeat(100001)})})).status,400);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM searches').get().n,beforeCount);
+  assert.equal((await fetch(base+'/api/searches/'+searchId+'/toggle',{method:'POST',headers,body:'{}'})).status,200);
+
  }finally{if(child.exitCode===null){child.kill();await new Promise(r=>child.once('exit',r));}}
 });
 test.after(()=>{db.close();rmSync(dir,{recursive:true,force:true})});

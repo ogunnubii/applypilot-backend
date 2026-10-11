@@ -1,3 +1,4 @@
+import {normalizeSearchScope,scopeIntent,searchPriority} from './search-scope.js';
 import {supportIntent,remoteCanadaIntent,t4FallbackIntent,refreshSalaryRates} from './support-career.js';
 import {batchPreferences} from './application-batches.js';
 import {worldwideTechIntent} from './tech-search.js';
@@ -36,7 +37,8 @@ export function parseBoards(input){
 }
 
 export function parseIntent(input){
-  const rawInstruction=String(input||'').trim().slice(0,5000);
+  const rawInstruction=String(input||'').trim();
+  if(rawInstruction.length>100000)throw Error('Search instructions must be at most 100000 characters; nothing was saved');
   const supportCareer=supportIntent(rawInstruction),broadTech=worldwideTechIntent(rawInstruction),remoteCanadaOnly=remoteCanadaIntent(rawInstruction);
   const worldwideEligibility=supportCareer||broadTech||/\bworldwide\b[^;]*(?:sponsorship|visa)/i.test(rawInstruction)||/;\s*eligibility:\s*worldwide sponsorship, remote from Canada, or B2B/i.test(rawInstruction);
   const instruction=rawInstruction.split(';').filter(clause=>!/^\s*eligibility:|^\s*Canada B2B only\s*$/i.test(clause)).join(';').trim();
@@ -79,8 +81,8 @@ export function parseIntent(input){
   const titleSuffix=/\b(engineer|administrator|manager|operator|specialist|analyst|nurse|accountant)$/;
   roles=roles.map((role,index)=>role.split(/\s+/).length===1&&titleSuffix.test(roles[index+1]||'')?role+' '+roles[index+1].match(titleSuffix)[1]:role);
   if(!roles.length)throw Error('Include a role, for example: DevOps engineer; remote; Canada');
-  if(remoteCanadaOnly)return {supportCareer,broadTech,worldwideEligibility:true,remoteCanadaOnly:true,t4Fallback:t4FallbackIntent(rawInstruction),roles:roles.slice(0,80),remote:true,places:[],localPlaces:[],remotePlaces:['canada'],remoteAny:false,locationOrder:null};
-  return {supportCareer,broadTech,worldwideEligibility,roles:roles.slice(0,80),remote:locationOrder||worldwideEligibility?false:remote,places:locationOrder||worldwideEligibility?[]:places,localPlaces:locationOrder||worldwideEligibility?[]:localPlaces,remotePlaces:locationOrder||worldwideEligibility?[]:remotePlaces,remoteAny:locationOrder||worldwideEligibility?false:remoteAny,locationOrder};
+  if(remoteCanadaOnly)return {supportCareer,broadTech,worldwideEligibility:true,remoteCanadaOnly:true,t4Fallback:t4FallbackIntent(rawInstruction),roles:[...new Set(roles)],remote:true,places:[],localPlaces:[],remotePlaces:['canada'],remoteAny:false,locationOrder:null};
+  return {supportCareer,broadTech,worldwideEligibility,roles:[...new Set(roles)],remote:locationOrder||worldwideEligibility?false:remote,places:locationOrder||worldwideEligibility?[]:places,localPlaces:locationOrder||worldwideEligibility?[]:localPlaces,remotePlaces:locationOrder||worldwideEligibility?[]:remotePlaces,remoteAny:locationOrder||worldwideEligibility?false:remoteAny,locationOrder};
 }
 
 export function profileSearchInstruction(applicant,resumeRoles=[]){
@@ -99,10 +101,11 @@ export function profileSearchInstruction(applicant,resumeRoles=[]){
 export function mergeProfileRoles(intent,focus=''){
  if(intent.supportCareer)return intent;
  let profile=[];try{profile=parseIntent(focus).roles}catch{}
- return {...intent,roles:[...new Set([...intent.roles,...profile])].slice(0,80)};
+ return {...intent,roles:[...new Set([...intent.roles,...profile])]};
 }
 
 export function searchIntentForApplicant(search,applicant){
+ if(search.scope_json){const scope=normalizeSearchScope(JSON.parse(search.scope_json));return {instruction:search.instruction,intent:scope.includeRelatedRoles?mergeProfileRoles(scopeIntent(scope),applicant?.focus):scopeIntent(scope)};}
  const stored=parseIntent(search.instruction);
  const instruction=search.auto_generated?profileSearchInstruction(applicant,stored.roles):search.instruction;
  return {instruction,intent:mergeProfileRoles(parseIntent(instruction),applicant?.focus)};
@@ -278,7 +281,7 @@ async function executeSearch(id,userId){
  // The account-wide pipeline includes every found role, regardless of ranking. Prior attempts remain protected.
  if(pipelineEnabled(db,userId))queued+=queueFoundApplications(db,userId,{applicantId:applicant.id}).queued;
  else if(search.auto_queue&&applicant.consent&&applicant.email&&applicant.resume_path){
- const pending=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status='saved' AND challenge IS NULL AND local_attempt_at IS NULL AND attempts=0 ORDER BY match_score DESC,created_at DESC,id").all(userId,applicant.id);
+ const pending=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status='saved' AND challenge IS NULL AND local_attempt_at IS NULL AND attempts=0 ORDER BY match_score DESC,created_at DESC,id").all(userId,applicant.id).sort((a,b)=>searchPriority(a)-searchPriority(b));
   const ready=pending.filter(row=>nextApplicationEligible(row)&&!employerHold(db,row)&&!priorApplication(db,userId,row)&&!db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,companyKey(row.company),historyKey(row.title)));
   for(const best of ready){
    let policy=typeof companyApplicationPolicy==='function'?companyApplicationPolicy(db,best.applicant_id,best):{allowed:true};

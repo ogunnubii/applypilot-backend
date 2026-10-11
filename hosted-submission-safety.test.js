@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {sameApplication,receipt} from './local-policy.js';
 const worker=readFileSync(new URL('./worker.js',import.meta.url),'utf8');
 test('hosted claims never silently take ownership of local-browser applications',()=>{
- assert.equal((worker.match(/applicant_id IN \(SELECT id FROM applicants WHERE execution_mode='cloud'\) AND local_owner IS NULL/g)||[]).length,2);
+ assert.equal((worker.match(/applicant_id IN \(SELECT id FROM applicants WHERE execution_mode='cloud'\) AND local_owner IS NULL/g)||[]).length,1);
  assert(!worker.includes("OR local_owner IS NULL AND EXISTS"));
 });
 test('hosted flow checks exact job identity before filling, final click and receipt',()=>{

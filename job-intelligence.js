@@ -1,3 +1,4 @@
+import {scopePriority,searchPriority,scopedWorkEligibility} from './search-scope.js';
 import {supportAssessment,salaryTarget} from './support-career.js';
 import {frenchApplication} from './language-policy.js';
 import {matchAssessment} from './matching.js';
@@ -32,10 +33,10 @@ export function compensation(job){
  return rows.filter((row,i)=>rows.findIndex(x=>x.min===row.min&&x.max===row.max&&x.currency===row.currency&&x.period===row.period&&x.label===row.label)===i).slice(0,12);
 }
 export function jobIntelligence(job,intent,focus='',date=Date.now()){
- const match=matchAssessment(job,intent,focus),eligibility=workEligibility(job,{incorporatedFromCanada:!!intent.supportCareer,remoteCanadaOnly:!!intent.remoteCanadaOnly,allowCanadianEmployment:!!intent.t4Fallback}),published=Date.parse(job.publishedAt||''),fresh=Number.isFinite(published)&&published<=date&&date-published<7*86400000;
+ const match=matchAssessment(job,intent,focus),eligibility=intent.scope?scopedWorkEligibility(job,intent.scope):workEligibility(job,{incorporatedFromCanada:!!intent.supportCareer,remoteCanadaOnly:!!intent.remoteCanadaOnly,allowCanadianEmployment:!!intent.t4Fallback}),published=Date.parse(job.publishedAt||''),fresh=Number.isFinite(published)&&published<=date&&date-published<7*86400000;
  const remote=job.remote===true||/\bremote\b/i.test(job.location||''),preference=eligibility.eligible?(eligibility.kind==='worldwide-remote'?10:remote?8:6):0;
  const score=Math.max(0,Math.min(100,Math.round((match.score||0)*.85+preference+(fresh?5:0))));
- return {...(intent.supportCareer?{supportCareer:supportAssessment(job),salaryTarget:salaryTarget(compensation(job),intent.minimumCAD||120000)}:{}),version:2,description:plain(job.description).slice(0,24000),frenchApplication:frenchApplication(job),score,strong:!!match.strong,matched:!!match.matched,location:plain(job.location).slice(0,200),remote,employmentType:plain(job.employmentType).slice(0,80),eligibility,pay:compensation(job),publishedAt:Number.isFinite(published)?new Date(published).toISOString():null,checkedAt:new Date(date).toISOString(),available:true,reasons:[match.strong?'Strong role match':match.matched?'Related role match':'Outside current role preferences',eligibility.reason,...(fresh?['Published in the last 7 days']:[])],sourceUrl:job.url};
+ return {...(intent.scope?{searchPriority:scopePriority(intent.scope,eligibility,job),searchScopeVersion:1}:{}),...(intent.supportCareer?{supportCareer:supportAssessment(job),salaryTarget:salaryTarget(compensation(job),intent.minimumCAD||120000)}:{}),version:2,description:plain(job.description).slice(0,24000),frenchApplication:frenchApplication(job),score,strong:!!match.strong,matched:!!match.matched,location:plain(job.location).slice(0,200),remote,employmentType:plain(job.employmentType).slice(0,80),eligibility,pay:compensation(job),publishedAt:Number.isFinite(published)?new Date(published).toISOString():null,checkedAt:new Date(date).toISOString(),available:true,reasons:[match.strong?'Strong role match':match.matched?'Related role match':'Outside current role preferences',eligibility.reason,...(fresh?['Published in the last 7 days']:[])],sourceUrl:job.url};
 }
 export function metadataFor(job){try{return JSON.parse(job.job_metadata_json||'{}')}catch{return {};}}
 export function nextApplicationEligible(job){
@@ -43,6 +44,6 @@ export function nextApplicationEligible(job){
  return ['saved','queued'].includes(job.status)&&!job.local_attempt_at&&!Number(job.attempts||0)&&!job.challenge&&!job.handoff_available&&m.available===true&&m.strong===true&&m.eligibility?.eligible===true&&Date.now()-Date.parse(m.checkedAt||'')<86400000;
 }
 export function rankedJobs(jobs){
- return [...jobs].sort((a,b)=>(Number(b.match_score)||0)-(Number(a.match_score)||0)||String(b.created_at||'').localeCompare(String(a.created_at||''))||String(a.id).localeCompare(String(b.id)));
+ return [...jobs].sort((a,b)=>searchPriority(a)-searchPriority(b)||(Number(b.match_score)||0)-(Number(a.match_score)||0)||String(b.created_at||'').localeCompare(String(a.created_at||''))||String(a.id).localeCompare(String(b.id)));
 }
 export function nextApplication(jobs){return rankedJobs(jobs).find(nextApplicationEligible)||null;}

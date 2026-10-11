@@ -1,3 +1,4 @@
+import {searchInstruction,normalizeSearchScope} from './search-scope.js';
 import {canEmailAccount} from './account-policy.js';
 import {servePublicSite} from './public-site.js';
 import {populateBatch,batchSnapshot,resetSupportBatch,nextBatch,inActiveBatch,batchPreferences} from './application-batches.js';
@@ -95,7 +96,7 @@ if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
 }
 if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.28.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-autonomy-accounts-seo',extensionVersion:'0.6.28',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-structured-target-scope',extensionVersion:'0.6.28',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -195,10 +196,10 @@ const funnelRetry=path.match(/^\/api\/funnel\/([a-f0-9-]+)\/retry$/);
 if(funnelRetry&&req.method==='POST'){const result=retryFunnelItem(db,uid,funnelRetry[1]);setImmediate(funnelTick);return send(res,200,result);}
 if(path==='/api/searches'&&req.method==='GET')return send(res,200,{intervalSeconds:SEARCH_INTERVAL_SECONDS,searches:db.prepare('SELECT * FROM searches WHERE user_id=? ORDER BY created_at DESC').all(uid).map(s=>({...s,boards:JSON.parse(s.boards_json),boards_json:undefined,last_result:s.last_result_json?JSON.parse(s.last_result_json):null,last_result_json:undefined}))});
 if(path==='/api/searches'&&req.method==='POST'){
-  const x=JSON.parse(await body(req)),p=db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(x.applicant_id,uid);
+  const x=JSON.parse(await body(req,1000000)),p=db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(x.applicant_id,uid);
   if(!p)return send(res,400,{error:'Select your applicant profile'});
-  const instruction=text(x.instruction,5000),boards=parseBoards(x.boards);parseIntent(instruction);
-  const id=randomUUID();db.prepare('INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,created_at) VALUES(?,?,?,?,?,?,?)').run(id,uid,p.id,instruction,JSON.stringify(boards),x.auto_queue===true?1:0,now());
+  const scope=normalizeSearchScope(x.scope),instruction=searchInstruction(x.instruction||(scope?scope.roles.join(', '):'')),boards=parseBoards(x.boards);if(!scope)parseIntent(instruction);
+  const id=randomUUID();db.prepare('INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,created_at,scope_json) VALUES(?,?,?,?,?,?,?,?)').run(id,uid,p.id,instruction,JSON.stringify(boards),x.auto_queue===true?1:0,now(),scope?JSON.stringify(scope):null);
   return send(res,201,{id});
 }
 let searchRoute=path.match(/^\/api\/searches\/([a-f0-9-]+)\/(run|toggle)$/);

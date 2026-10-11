@@ -4,7 +4,7 @@ import {submitHostedApplication} from './hosted-submission.js';
 function fixture(options={}){
  let text=options.before||'Name Email Resume Submit application',url='https://jobs.lever.co/fixture/role-123',attempts=0,clicks=0;
  const events=[];
- const input={job:{id:'fixture',url},page:{url:()=>url,locator:()=>({innerText:async()=>text})},submit:{async click(){events.push('click');clicks++;if(options.clickError)throw Error('connection lost');}},review:async()=>{if(options.reviewRedirect)url=options.reviewRedirect;return options.check||{captcha:false,signIn:false,missing:[]};},reserve:()=>{events.push('reserve');if(attempts)throw Error('Already attempted');attempts++;},wait:async()=>{text=options.after??'Your application has been received';if(options.redirect)url=options.redirect;},recordLimit:()=>events.push('limit')};
+ const input={job:{id:'fixture',url},page:{url:()=>url,locator:()=>({innerText:async()=>text})},submit:{async isEnabled(){return !options.disabled;},async click(){events.push('click');clicks++;if(options.clickError)throw Error('connection lost');}},review:async()=>{if(options.reviewRedirect)url=options.reviewRedirect;return options.check||{captcha:false,signIn:false,missing:[]};},reserve:()=>{events.push('reserve');if(attempts)throw Error('Already attempted');attempts++;},wait:async()=>{text=options.after??'Your application has been received';if(options.redirect)url=options.redirect;},recordLimit:()=>events.push('limit')};
  return {input,events,get clicks(){return clicks;},get attempts(){return attempts;}};
 }
 test('autonomous submission reserves before its only click and confirms only a new same-job receipt',async()=>{
@@ -12,7 +12,7 @@ test('autonomous submission reserves before its only click and confirms only a n
  await submitHostedApplication(f.input);assert.equal(f.clicks,1);
 });
 test('unknown required answer, CAPTCHA, existing receipt and legal declaration stop before reservation',async()=>{
- for(const options of [{check:{missing:['Years of experience']}},{check:{captcha:true,missing:[]}},{check:{signIn:true,missing:[]}},{before:'Your application has been received'},{before:'By submitting you agree to our terms'}]){
+ for(const options of [{check:{missing:['Years of experience']}},{check:{captcha:true,missing:[]}},{check:{signIn:true,missing:[]}},{check:{pending:true,missing:[]}},{disabled:true},{before:'Your application has been received'},{before:'By submitting you agree to our terms'}]){
   const f=fixture(options);assert.equal((await submitHostedApplication(f.input)).status,'needs_review');assert.equal(f.attempts,0);assert.equal(f.clicks,0);
  }
 });

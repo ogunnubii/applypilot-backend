@@ -10,7 +10,8 @@ export async function submitHostedApplication({page,job,submit,review,reserve,wa
  if(submissionDeclaration(before))return blocked('The final Submit action includes an employer declaration. Review and submit this form yourself.','Employer declaration');
  if(receipt(before))return blocked('An existing employer receipt is visible. Verify it before any new attempt.','Existing receipt');
  const check=await review(page);
- if(check.captcha||check.signIn||check.missing.length)return blocked('The final form needs review before submission.','Final form review');
+ if(check.captcha||check.signIn||check.pending||check.missing.length)return blocked('The final form needs review before submission.','Final form review');
+ if(!await submit.isEnabled())return blocked('The employer has not enabled Submit. Review the form validation before continuing.','Final form review');
  // The final review is asynchronous. Recheck the destination immediately before
  // reservation; reserve rechecks current authorization and applicant consent.
  if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');

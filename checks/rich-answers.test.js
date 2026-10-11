@@ -66,3 +66,9 @@ test('browser captures a full question and field constraints, fills it, and neve
  w.eval(readFileSync('extension/policy.js','utf8'));w.eval(readFileSync('extension/content.js','utf8'));for(let n=0;n<100&&!messages.some(m=>m.action==='progress'&&m.blocked);n++)await new Promise(r=>setTimeout(r,25));
  const request=messages.find(m=>m.action==='answer');assert.equal(request.question,question.trim());assert.equal(request.maxLength,350);assert.match(request.fieldHelp,/60 words/);assert.match(w.document.querySelector('textarea').value,/correlated logs/);assert.equal(clicks,0);assert(!messages.some(m=>m.action==='attempt'));w.close();
 });
+
+test('ordinary work-style drafts distinguish prospective guidance from supported history and exclude age facts',async()=>{
+ const fact='I maintain CI pipelines and collaborate with development and security teams.',answer=fact+' In an asynchronous team, I would document decisions and handoffs to keep context clear.';let sent;
+ const result=await geminiFactAnswer({question:'Tell us about working in a remote environment and how you would communicate.',profile:{gemini_facts_consent:1},job:{title:'Cloud Engineer'},answers:{'Professional background':fact,'Over 18 - applicant confirmed':'Yes'},env:{GEMINI_API_KEY:'test'},fetchImpl:async(_url,request)=>{sent=JSON.parse(request.body);return output({answer,reason:'Transferable experience and a prospective approach.',evidence:[{id:'1',quote:fact}]});}});
+ assert.equal(result.answer,answer);assert.match(sent.system_instruction,/clearly prospective approach/);assert.match(sent.system_instruction,/Do not claim a remote-work history/);assert.match(sent.system_instruction,/do not substitute a hypothetical incident/);assert(!JSON.parse(sent.input).facts.some(f=>/18/.test(f.question)));
+});

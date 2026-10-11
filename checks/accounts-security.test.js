@@ -27,7 +27,7 @@ test('public signup, existing owner preservation, tenant boundaries and durable 
  const start=async()=>{child=spawn(process.execPath,['server.js'],{cwd:resolve('.'),env:{...process.env,PORT:String(port),BIND_HOST:'127.0.0.1',PUBLIC_ORIGIN:base,PUBLIC_SIGNUP:'true'},stdio:['ignore','pipe','pipe']});child.stdout.on('data',x=>log+=x);child.stderr.on('data',x=>log+=x);for(let i=0;i<80;i++){try{if((await api('/api/health')).status===200)return;}catch{}await new Promise(r=>setTimeout(r,50));}throw Error(log);};
  try{
   await start();
-  assert.equal((await api('/api/health')).data.release,'2026-10-11-remote-first');
+  assert.equal((await api('/api/health')).data.release,'2026-10-11-queue-preflight');
   const dashboard=await api('/assistant'),csp=dashboard.headers.get('content-security-policy');
   assert.match(csp,/img-src 'self' data:;/);assert.match(csp,/script-src 'self';/);assert.match(csp,/connect-src 'self';/);assert.doesNotMatch(csp,/script-src[^;]*(?:data:|unsafe-inline|unsafe-eval|\*)/);
   const homepage=await api('/');assert.equal(homepage.status,200);assert.equal(homepage.headers.get('x-robots-tag'),'index, follow');assert.match(homepage.data,/<h1[ >]/);
@@ -73,7 +73,7 @@ test('public signup, existing owner preservation, tenant boundaries and durable 
   assert.throws(()=>db.prepare('UPDATE jobs SET user_id=? WHERE id=?').run(uid,job),/does not belong/);
   assert.throws(()=>db.prepare('UPDATE searches SET user_id=? WHERE id=?').run(uid,search),/does not belong/);
   assert.equal((await api('/api/me',{token:issueToken('nonexistent')})).status,401);
-  const payload=Buffer.from(JSON.stringify({id:uid,expires:Date.now()-1})).toString('base64url'),expired=payload+'.'+createHmac('sha256',process.env.SESSION_SECRET).update(payload).digest('base64url');
+  const payload=Buffer.from(JSON.stringify({id:uid,expires:Date.now()-60000})).toString('base64url'),expired=payload+'.'+createHmac('sha256',process.env.SESSION_SECRET).update(payload).digest('base64url');
   assert.equal((await api('/api/me',{token:expired})).status,401);assert.equal(readToken(token+'.extra'),null);assert.equal(verifyPassword('abc','malformed'),false);
   for(const path of ['/assistant','/signup','/login','/setup','/api/me'])assert.match((await api(path,{token})).headers.get('x-robots-tag'),/noindex/);
   assert.equal((await api('/api/logout',{token,method:'POST',data:{}})).status,200);

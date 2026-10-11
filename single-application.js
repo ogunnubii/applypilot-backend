@@ -56,8 +56,21 @@ export function savedSearchQueueState(db,userId,{applicant_id}={}){
  const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(userId),batch=db.prepare('SELECT * FROM application_batch_preferences WHERE user_id=?').get(userId);
  const applicantId=applicant_id||focus?.queue_applicant_id||batch?.applicant_id||null;
  if(applicantId&&!db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(applicantId,userId))throw Error('Choose your saved applicant profile.');
- const blocker=inFlightApplication(db,userId);
- return {mode:focus?.search_queue_only?'saved-search':'legacy',applicant_id:focus?.queue_applicant_id||null,checked_applicant_id:applicantId,batch_enabled:!!batch?.enabled,focus_enabled:!!focus?.enabled,auto_submit:!!focus?.auto_submit,paused:!focus?.enabled&&!focus?.auto_submit,active_structured_search:!!(applicantId&&currentSearchScope(db,{user_id:userId,applicant_id:applicantId})),blocker:blocker?{id:blocker.id,title:blocker.title,company:blocker.company,status:blocker.status,phase:blocker.local_phase||null,unresolved_action:unresolvedAttemptEligibility(db,blocker),...blockerDiagnostics(db,userId,blocker),reason:blocker.status==='running'?'Application preparation is running':blocker.challenge==='Submission in progress'?'Submission is in progress':'A submission is still marked as awaiting verification; no employer receipt is confirmed'}:null};
+ const blocker=inFlightApplication(db,userId),readiness=savedSearchReadiness(db,userId,applicantId,focus);
+ return {mode:focus?.search_queue_only?'saved-search':'legacy',applicant_id:focus?.queue_applicant_id||null,checked_applicant_id:applicantId,batch_enabled:!!batch?.enabled,focus_enabled:!!focus?.enabled,auto_submit:!!focus?.auto_submit,paused:!focus?.enabled&&!focus?.auto_submit,active_structured_search:!!(applicantId&&currentSearchScope(db,{user_id:userId,applicant_id:applicantId})),readiness,blocker:blocker?{id:blocker.id,title:blocker.title,company:blocker.company,status:blocker.status,phase:blocker.local_phase||null,unresolved_action:unresolvedAttemptEligibility(db,blocker),...blockerDiagnostics(db,userId,blocker),reason:blocker.status==='running'?'Application preparation is running':blocker.challenge==='Submission in progress'?'Submission is in progress':'A submission is still marked as awaiting verification; no employer receipt is confirmed'}:null};
+}
+// Preview uses the same preparation and fresh-search guards as selection. It
+// never claims work, refreshes postings, reserves a click or changes consent.
+function savedSearchReadiness(db,userId,applicantId,focus){
+ if(!applicantId||!focus?.search_queue_only||focus.queue_applicant_id!==applicantId)return null;
+ const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status IN ('saved','queued')").all(userId,applicantId),eligible=[],held=[];
+ const publicJob=job=>({id:job.id,title:job.title,company:job.company,url:job.url,location:metadataFor(job).location||'',remote:metadataFor(job).remote===true});
+ for(const job of rows){
+  const reason=hasSubmissionEvidence(db,job)?'A previous submission may exist; protected from retry.':preparationProblem(db,job)||savedSearchProblem(db,job,focus,true);
+  if(reason)held.push({...publicJob(job),reason});else eligible.push(job);
+ }
+ const ranked=prioritizeApplications(db,userId,eligible);
+ return {checked:rows.length,eligible:ranked.length,held:held.length,candidates:ranked.slice(0,20).map(job=>({...publicJob(job),automatic_submission_supported:!metadataFor(job).manualReview&&!globalThis.ApplyPilotPolicy.customApplication(job.url)})),held_jobs:held.slice(0,20)};
 }
 export function useSavedSearchQueue(db,userId,{applicant_id}={}){
  const profile=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(applicant_id,userId);

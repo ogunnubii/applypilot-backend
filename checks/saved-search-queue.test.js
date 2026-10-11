@@ -5,7 +5,7 @@ import {installBatches} from '../application-batches.js';
 import {installSingleApplication,inFlightApplication,receiptConfirmed,useSavedSearchQueue,savedSearchQueueState,setWorkFocus,focusSnapshot,savedSearchClaimProblem,reserveAutonomousAttempt} from '../single-application.js';
 import {normalizeSearchScope,scopeIntent} from '../search-scope.js';
 import {jobIntelligence} from '../job-intelligence.js';
-const scope=normalizeSearchScope({roles:['Platform Engineer'],localPlaces:['ontario'],remotePlaces:['canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true});
+const scope=normalizeSearchScope({roles:['Platform Engineer'],localPlaces:['ontario'],remotePlaces:['canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true,preferRemote:true});
 function fixture(){
  const db=new DatabaseSync(':memory:');db.exec(`CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id,applicant_id,company,title,url,normalized_url,status,local_owner,local_attempt_at,local_phase,challenge,confirmation,attempts DEFAULT 0,handoff_available DEFAULT 0,match_score DEFAULT 90,created_at,updated_at,job_metadata_json DEFAULT '{}');CREATE TABLE applicants(id,user_id,consent,email,resume_path,execution_mode,focus);CREATE TABLE events(job_id,at,type,message);CREATE TABLE external_application_history(id,user_id,company,title,status,company_key,title_key);CREATE TABLE research_draft_usage(job_id,question);CREATE TABLE searches(id,user_id,applicant_id,enabled,instruction,created_at,scope_json);CREATE TABLE employer_limits(user_id,applicant_id,employer_key,hold_until,message);INSERT INTO applicants VALUES('p','u',1,'fixture@example.test','fixture.pdf','cloud','Platform Engineer'),('p2','u2',1,'other@example.test','other.pdf','cloud','Platform Engineer');`);
  installBatches(db);installSingleApplication(db);
@@ -15,6 +15,36 @@ function fixture(){
  for(let n=0;n<20;n++){add('old'+n,{status:n<9?'needs_review':'submitted'});db.prepare('INSERT INTO application_batch_members VALUES(?,?,?,?)').run('old','old'+n,'u',n);if(n<9)db.prepare("UPDATE jobs SET attempts=1,local_attempt_at='2026',local_phase='uncertain',challenge='Unconfirmed submission' WHERE id=?").run('old'+n);else {db.prepare("UPDATE jobs SET confirmation='Employer received application' WHERE id=?").run('old'+n);db.prepare("INSERT INTO events VALUES(?,'2026','submitted','Receipt')").run('old'+n);}}
  add('other',{user_id:'u2',applicant_id:'p2'});return {db,add};
 }
+
+test('queue preflight ranks fresh matches without starting work or exposing foreign records or profile answers',()=>{
+ const {db,add}=fixture();useSavedSearchQueue(db,'u',{applicant_id:'p'});
+ add('onsite');add('remote',{remote:true,location:'Canada',description:'Remote within Canada. Full-time employment.'});add('stale');add('attempted');add('outside',{location:'Vancouver, Canada'});add('foreign',{user_id:'u2',applicant_id:'p2'});
+ db.exec("UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.checkedAt','2020-01-01') WHERE id='stale'; UPDATE jobs SET attempts=1 WHERE id='attempted'");
+ const before=db.prepare('SELECT total_changes() n').get().n,state=savedSearchQueueState(db,'u',{applicant_id:'p'}),r=state.readiness;
+ assert.equal(r.checked,5);assert.equal(r.eligible,2);assert.equal(r.held,3);assert.deepEqual(r.candidates.map(j=>j.id),['remote','onsite']);assert(r.candidates.every(j=>j.automatic_submission_supported));
+ assert.match(r.held_jobs.find(j=>j.id==='stale').reason,/fresh employer posting/);assert.match(r.held_jobs.find(j=>j.id==='attempted').reason,/untouched/);assert.match(r.held_jobs.find(j=>j.id==='outside').reason,/scope/);
+ assert.equal(state.auto_submit,false);assert.equal(db.prepare('SELECT total_changes() n').get().n,before);assert.equal(focusSnapshot(db,'u').job_id,null);
+ for(const secret of ['foreign','fixture@example.test','fixture.pdf'])assert(!JSON.stringify(r).includes(secret));
+ assert.throws(()=>savedSearchQueueState(db,'u',{applicant_id:'p2'}),/saved applicant/);db.close();
+});
+
+test('queue preflight preserves uncertain and completed protections and distinguishes forms requiring manual review',()=>{
+ const {db,add}=fixture();useSavedSearchQueue(db,'u',{applicant_id:'p'});add('reserved');add('manual');
+ db.exec("INSERT INTO autonomous_attempts VALUES('reserved','hosted-worker','2026'); UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.manualReview',json('true')) WHERE id='manual'");
+ const r=savedSearchQueueState(db,'u',{applicant_id:'p'}).readiness;
+ assert.equal(r.checked,2);assert.equal(r.eligible,1);assert.equal(r.candidates[0].id,'manual');assert.equal(r.candidates[0].automatic_submission_supported,false);assert.match(r.held_jobs[0].reason,/previous submission/);assert.equal(db.prepare('SELECT COUNT(*) n FROM autonomous_attempts').get().n,1);db.close();
+});
+
+test('both dashboards show the preflight without sending a mutation and render employer names as text',async()=>{
+ const {readFileSync}=await import('node:fs'),{JSDOM}=await import('jsdom');
+ for(const client of ['assistant-client.js','web/progress.js']){
+  const source=readFileSync(new URL('../'+client,import.meta.url),'utf8'),dom=new JSDOM('<div id="home-summary"></div>',{url:'https://example.test/?view=settings',runScripts:'outside-only'}),w=dom.window,calls=[];
+  w.$=s=>w.document.querySelector(s);w.el=(tag,text)=>{const node=w.document.createElement(tag);if(text)node.textContent=text;return node;};w.field=(form)=>{const node=w.document.createElement('input');form.append(node);return node;};
+  w.api=async(path,method)=>{calls.push({path,method});return path==='/applicants'?{applicants:[{id:'p',name:'Profile'}]}:{mode:'saved-search',applicant_id:'p',batch_enabled:false,paused:true,readiness:{eligible:1,held:1,candidates:[{title:'Platform Engineer',company:'<img src=x onerror=alert(1)>',url:'https://jobs.lever.co/example/role',remote:true,location:'Canada',automatic_submission_supported:true}],held_jobs:[{title:'Older role',company:'Other',reason:'A fresh employer posting check is required.'}]}};};
+  w.eval(source.slice(source.indexOf('function renderBatchControl('),source.indexOf('function automaticSubmissionEnabled')));w.renderBatchControl();await new Promise(r=>setTimeout(r,0));
+  const panel=w.document.querySelector('[aria-label="Fresh application queue"]');assert.match(panel.textContent,/1 eligible for preparation/);assert.match(panel.textContent,/Remote.*Canada/);assert.match(panel.textContent,/fresh employer posting/);assert.equal(panel.querySelectorAll('img').length,0);assert(calls.every(c=>!c.method));assert.equal(panel.querySelector('a').href,'https://jobs.lever.co/example/role');dom.window.close();
+ }
+});
 test('explicit transition preserves nine uncertain and eleven completed jobs, membership, searches and other accounts',()=>{
  const {db,add}=fixture();add('fresh');const snapshot=()=>JSON.stringify({jobs:db.prepare('SELECT * FROM jobs ORDER BY id').all(),members:db.prepare('SELECT * FROM application_batch_members').all(),events:db.prepare('SELECT * FROM events').all(),searches:db.prepare('SELECT * FROM searches').all()});const before=snapshot(),other=JSON.stringify(db.prepare("SELECT * FROM work_focus WHERE user_id='u2'").get());
  const result=useSavedSearchQueue(db,'u',{applicant_id:'p'});assert.equal(result.focus.enabled,false);assert.equal(result.focus.auto_submit,false);assert.equal(result.focus.job_id,null);assert.equal(result.focus.search_queue_only,true);assert.equal(snapshot(),before);assert.equal(JSON.stringify(db.prepare("SELECT * FROM work_focus WHERE user_id='u2'").get()),other);assert.equal(db.prepare("SELECT enabled FROM application_batch_preferences WHERE user_id='u'").get().enabled,0);

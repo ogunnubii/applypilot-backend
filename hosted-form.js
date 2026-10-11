@@ -1,4 +1,5 @@
 import {fieldKind,knownAnswer,normalize,optionMatches,savedAnswer,sensitive} from './local-policy.js';
+import {approvedEmploymentAnswer} from './employment-answers.js';
 
 // Hosted automation is deliberately narrower than the answer library. These
 // are stable contact/profile facts; employment eligibility, compensation and
@@ -57,6 +58,7 @@ function trustedAnswer(kind,profile,answers){
 }
 
 export function hostedFieldAnswer(field,profile,answers={}){
+ const employment=approvedEmploymentAnswer(field,profile);if(employment)return employment;
  const kind=hostedFieldKind(field);if(!kind)return null;
  const answer=trustedAnswer(kind,profile,answers);return answer===null?null:{kind,answer:String(answer)};
 }
@@ -65,6 +67,8 @@ function questionFor(field){return textParts(field)[0]||'';}
 
 export function hostedOptionChoice(field,options,profile,answers={}){
  const question=questionFor(field),optionContext=(options||[]).flatMap(option=>[option?.label,option?.value]).join(' ');
+ const employment=approvedEmploymentAnswer(field,profile);
+ if(employment){const matches=(options||[]).filter(o=>!o.disabled&&normalize(o.label)===normalize(employment.answer));return matches.length===1?matches[0]:null;}
  if(!question||protectedHostedQuestion(textParts(field).join(' ')+' '+optionContext))return null;
  const trusted=hostedFieldAnswer(field,profile,answers);
  if(!trusted&&GENERIC_QUESTION.test(policyText(question)))return null;
@@ -73,12 +77,15 @@ export function hostedOptionChoice(field,options,profile,answers={}){
  return matches.length===1?matches[0]:null;
 }
 
-export function approvedHostedRadioIndex(options,answers={}){
+export function approvedHostedRadioIndex(options,answers={},profile={}){
  const questions=[...new Set((options||[]).map(option=>normalize(option.question)).filter(Boolean))];
  const context=(options||[]).flatMap(option=>[option?.question,option?.label,option?.value]).join(' ');
- if(questions.length!==1||GENERIC_QUESTION.test(policyText(options?.[0]?.question))||protectedHostedQuestion(context))return -1;
+ if(questions.length!==1||GENERIC_QUESTION.test(policyText(options?.[0]?.question)))return -1;
+ const employment=approvedEmploymentAnswer({label:options[0].question,description:options[0].description},profile);
+ if(employment){const matches=options.map((option,index)=>({option,index})).filter(({option})=>!option.disabled&&normalize(option.label)===normalize(employment.answer));return matches.length===1?matches[0].index:-1;}
+ if(protectedHostedQuestion(context))return -1;
  const answer=savedAnswer(options[0].question,answers);if(answer===null)return -1;
- const matches=(options||[]).map((option,index)=>({option,index})).filter(({option})=>normalize(option.label)===normalize(answer));
+ const matches=(options||[]).map((option,index)=>({option,index})).filter(({option})=>!option.disabled&&normalize(option.label)===normalize(answer));
  return matches.length===1?matches[0].index:-1;
 }
 

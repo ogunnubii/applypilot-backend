@@ -63,3 +63,18 @@ test('native radio and ARIA radio group completeness is grouped by question',()=
  const f=fixture('<fieldset><legend>Schedule</legend><input type="radio" name="schedule" required><input type="radio" name="schedule"></fieldset><div role="radiogroup" aria-required="true" aria-label="Office"><div role="radio" aria-checked="false">A</div><div role="radio" aria-checked="false">B</div></div>');
  try{assert.equal(f.read().required,2);f.d.querySelectorAll('input')[1].checked=true;f.d.querySelector('[role=radio]').setAttribute('aria-checked','true');assert.equal(f.read().filled,2);assert.equal(f.read().missing.length,0);}finally{f.dom.window.close();}
 });
+
+test('required native selects reject nonempty and disabled placeholders before final submit',()=>{
+ for(const option of ['<option value="placeholder">Select a country</option>','<option value="choose">Choose...</option>','<option value="ca" disabled selected>Canada</option>']){
+  const f=fixture('<label for="country">Country</label><select id="country" required>'+option+'<option value="real">Canada</option></select>');
+  try{assert.equal(f.read().filled,0);assert.deepEqual([...f.read().missing],['Country']);f.d.querySelector('select').value='real';assert.equal(f.read().filled,1);assert.equal(f.read().missing.length,0);}finally{f.dom.window.close();}
+ }
+});
+
+test('ARIA required combobox placeholders remain incomplete while genuine selections count',()=>{
+ for(const control of ['<div role="combobox" aria-required="true">Select a country</div>','<input role="combobox" aria-required="true" aria-valuetext="Choose...">']){
+  const f=fixture(control);try{assert.equal(f.read().filled,0);assert.equal(f.read().missing.length,1);const e=f.d.querySelector('[role=combobox]');e.setAttribute('aria-valuetext','Canada');assert.equal(f.read().filled,1);}finally{f.dom.window.close();}
+ }
+ const f=fixture('<select required multiple><option value="placeholder" selected>Select a country</option><option value="ca" selected>Canada</option></select><div role="combobox">Select a country</div>');
+ try{assert.equal(f.read().filled,1);assert.equal(f.read().missing.length,0);}finally{f.dom.window.close();}
+});

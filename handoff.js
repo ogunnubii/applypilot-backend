@@ -1,8 +1,7 @@
-import {supported} from './local-policy.js';
+import {supported,sameApplication,receipt} from './local-policy.js';
 import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
 import {readToken} from './auth.js';
-const receipt=/thank you for (applying|your application)|application (has been )?(submitted|received)|successfully applied/i;
 const intermediateAction=/\b(next|continue|review|proceed)\b|sign\s*in|log\s*in/i;
 const explicitFinalAction=/\bsubmit\b|\bsend\s+(?:my\s+)?application\b|\bcomplete\s+(?:my\s+)?application\b/i;
 export function isFinalSubmitControl(control){
@@ -57,8 +56,8 @@ export class Handoffs {
  async hold(job,context,page){
   if(this.sessions.has(job.id))return;
   if(this.full()){await context.close().catch(()=>{});this.onClose(job,'Live browser capacity is full. This application remains saved until a slot is available.');return false;}
-  let initial='';for(const frame of page.frames())if(supported(frame.url()))initial+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
-  const session={job,context,page,created:this.clock(),touched:this.clock(),busy:false,ready:job.challenge==='Ready to submit',attempted:['Submission in progress','Unconfirmed submission'].includes(job.challenge),initialReceipt:receipt.test(initial),chooser:null};
+  let initial='';for(const frame of page.frames())if(sameApplication(frame.url(),job.url))initial+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
+  const session={job,context,page,created:this.clock(),touched:this.clock(),busy:false,ready:job.challenge==='Ready to submit',attempted:['Submission in progress','Unconfirmed submission'].includes(job.challenge),initialReceipt:!!receipt(initial),chooser:null};
   const attach=p=>p.on?.('filechooser',chooser=>{session.chooser=chooser});context.pages().forEach(attach);context.on?.('page',attach);
   this.sessions.set(job.id,session);
  }
@@ -107,8 +106,8 @@ export class Handoffs {
    }else if(action!=='view')throw Error('Unsupported browser action');
    // Input acknowledgements do not wait for image capture. The next view checks receipts.
    if(data.render===false&&['click','drag','text','key','scroll'].includes(action))return {accepted:true};
-   let content='';if(s.attempted&&!s.initialReceipt)for(const frame of p.frames())if(supported(frame.url()))content+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
-   if(s.attempted&&!s.initialReceipt&&receipt.test(content)){const match=content.match(receipt);this.onSubmitted(s.job,content.slice(Math.max(0,match.index-40),match.index+250).trim());this.sessions.delete(id);await s.context.close();return {submitted:true}}
+   let content='';if(s.attempted&&!s.initialReceipt)for(const frame of p.frames())if(sameApplication(p.url(),s.job.url)&&sameApplication(frame.url(),s.job.url))content+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
+   if(s.attempted&&!s.initialReceipt&&receipt(content)){this.onSubmitted(s.job,receipt(content));this.sessions.delete(id);await s.context.close();return {submitted:true}}
    const image=await p.screenshot({type:'jpeg',quality:60,timeout:10000});
    const frameId=createHash('sha256').update(image).digest('hex');
    const url=new URL(p.url());return {image:data.frameId===frameId?undefined:image.toString('base64'),frameId,width:1100,height:800,host:url.hostname,uploadRequested:!!s.chooser,expiresAt:s.ready?s.created+12*60*60*1000:Math.min(s.touched+15*60*1000,s.created+45*60*1000)};

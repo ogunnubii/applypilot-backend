@@ -35,10 +35,11 @@ export function hostedFormState(target) {
   if(yesno)filled=!!e.querySelector('button[aria-pressed="true"]');
   else if(file)filled=!!e.files?.length;
   else if(e.type==='radio')filled=[...document.querySelectorAll('input[type="radio"]')].some(other=>other.form===e.form&&other.name===e.name&&other.checked);
+  else if(e.tagName==='SELECT')filled=[...e.selectedOptions||[]].some(option=>!option.disabled&&clean(option.value)&&! /^(?:select|choose)(?:\b|\.{3})/i.test(text(option)));
   else if(e.type==='checkbox')filled=e.checked;
   else if(role==='checkbox'||role==='radio')filled=e.getAttribute('aria-checked')==='true';
   else if(role==='radiogroup')filled=!!e.querySelector('[role="radio"][aria-checked="true"]');
-  else if(role==='combobox')filled=e.dataset.applypilotUncommittedSearch!=='true'&&!!clean(e.value||e.getAttribute('aria-valuetext')||e.getAttribute('data-value')||(!e.matches('input')?e.textContent:''));
+  else if(role==='combobox'){const value=clean(e.value||e.getAttribute('aria-valuetext')||e.getAttribute('data-value')||(!e.matches('input')?e.textContent:''));filled=e.dataset.applypilotUncommittedSearch!=='true'&&!!value&&!/^(?:select|choose)(?:\b|\.{3})/i.test(value);}
   else filled=!!clean(e.value||((role==='textbox')?e.textContent:''));
   filled=filled&&!invalid;
   const key=e.type==='radio'&&e.name?'radio:'+e.name+':'+[...document.forms].indexOf(e.form):e;

@@ -34,6 +34,17 @@ export function sameHostedInputValue(actual,expected,{type,kind}={}){
 export async function fillHostedText(locator,answer,{kind}={}){
  const value=String(answer??'');
  if(!value||!await locator.isEditable()||await locator.inputValue()!=='')return false;
+ // Ashby renders dates as text inputs backed by a calendar. The word
+ // Immediately is not a date: select its explicit Today option instead.
+ if(kind==='employment'&&await locator.evaluate(e=>e.classList.contains('ashby-application-form-input-date'))){
+  if(!/^immediately$/i.test(value.trim()))return false;
+  await locator.click();
+  if(await locator.inputValue()!=='')return false;
+  const today=locator.page().locator('.react-datepicker:visible [role="option"][aria-current="date"]:not([aria-disabled="true"]):visible');
+  if(await today.count()!==1)return false;
+  await today.click();await locator.blur();await locator.page().waitForTimeout(150);
+  return !!await locator.inputValue();
+ }
  const type=await locator.evaluate(e=>e.tagName==='TEXTAREA'?'textarea':e.type);
  if(!TEXT_TYPES.has(type))return false;
  // click() retains Playwright's visibility/overlay/actionability checks, which

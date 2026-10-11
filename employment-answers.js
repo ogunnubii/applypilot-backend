@@ -15,8 +15,8 @@ function canadaJob(job){
  let m;try{m=JSON.parse(job?.job_metadata_json||'{}');}catch{return false;}
  const location=String(m.location||'');
  // Multi-country/global roles do not establish the country of employment.
- if(/\b(?:united states|us|usa|u\.s\.|uk|united kingdom|france|germany|india|australia|worldwide|global|anywhere|europe)\b/i.test(location))return false;
- return /\bcanada\b/i.test(location)||clean(m.country)==='canada'&&!location.includes('/');
+ if(/\b(?:united states|us|usa|u\.s\.|uk|united kingdom|france|germany|india|australia|worldwide|global|anywhere|europe)\b|\bOntario\s*,\s*(?:CA|OR)\b/i.test(location))return false;
+ return /\b(?:canada|ontario|british columbia|alberta|quebec|nova scotia|new brunswick|manitoba|saskatchewan|newfoundland|prince edward island)\b/i.test(location)||clean(m.country)==='canada'&&!location.includes('/');
 }
 export function employmentContext(profile,job){
  let saved={},application={};try{saved=JSON.parse(profile?.answers_json||'{}');application=JSON.parse(job?.answers_json||'{}');}catch{}

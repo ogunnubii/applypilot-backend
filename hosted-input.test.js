@@ -8,6 +8,24 @@ import {hostedFieldKind,hostedFieldAnswer,protectedHostedQuestion} from './hoste
 
 const worker=readFileSync(new URL('./worker.js',import.meta.url),'utf8');
 
+test('approved immediate availability selects the calendar Today option instead of typing non-date text',async()=>{
+ for(const count of [0,1,2]){
+  const f=fixture('<input class="ashby-application-form-input-date" required>');
+  try{
+   const input=f.w.document.querySelector('input'),l=f.locator(input);let choices=0;
+   l.page=()=>({waitForTimeout:async()=>{},locator:selector=>{
+    assert.match(selector,/aria-current="date"/);assert.match(selector,/aria-disabled/);
+    return {count:async()=>count,click:async()=>{choices++;input.value='10/11/2026';input.dispatchEvent(new f.w.Event('change',{bubbles:true}));}};
+   }});
+   assert.equal(await fillHostedText(l,'Immediately',{kind:'employment'}),count===1);
+   assert.equal(choices,count===1?1:0);assert(!f.calls.some(c=>Array.isArray(c)&&c[0]==='type'));
+   if(count===1)assert.equal(input.value,'10/11/2026');
+  }finally{f.dom.window.close()}
+ }
+ const f=fixture('<input class="ashby-application-form-input-date">');
+ try{assert.equal(await fillHostedText(f.locator(f.w.document.querySelector('input')),'In a few weeks',{kind:'employment'}),false);assert.equal(f.calls.length,0);}finally{f.dom.window.close()}
+});
+
 // This adapter tests the helper's Playwright contract and framework state in a
 // DOM fixture. The separate Chromium smoke test verifies actual trusted events.
 function fixture(html){

@@ -24,6 +24,11 @@ test('foreign, missing and mixed job locations never inherit Canadian eligibilit
  }
  assert.equal(hostedOptionChoice({label:'Are you authorized to work in the United States?'},options,profile()),null);
 });
+test('Canadian province locations are scoped while Ontario California stays blocked',()=>{
+ assert.equal(hostedOptionChoice({label:auth},options,profile('Ontario - Remote'))?.value,'yes');
+ assert.equal(hostedOptionChoice({label:auth},options,profile('Ontario, CA')),null);
+ assert.equal(hostedOptionChoice({label:auth},options,profile('Canada / US')),null);
+});
 test('unapproved history, generic saved answers and resume prose do not become eligibility facts',()=>{
  const p=profile('Toronto, Canada',{'Are you authorized to work in Canada?':'Yes','Professional background':'I can work in Canada','Sponsorship':'No'});
  assert.equal(hostedOptionChoice({label:auth},options,p),null);

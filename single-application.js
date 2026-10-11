@@ -90,6 +90,17 @@ export function savedSearchClaimProblem(db,job){
  if(!focus.enabled||focus.job_id!==job.id)return 'Saved search automation is paused or another application is selected.';
  if(inFlightApplication(db,job.user_id,job.id))return 'Another application is still running or verifying a submission.';
  if(job.status==='local_browser'&&!hasSubmissionEvidence(db,job))return savedSearchProblem(db,job,focus);
+ // A deliberate takeover request may reopen the selected, pre-submit form
+ // after its hosted browser expires. A preparation count is not a submission.
+ // Preserve the count, require a request newer than the last worker claim,
+ // and never let recovery, automatic queuing or an old request grant a retry.
+ if(job.status==='queued'&&Number(job.attempts)>0&&!job.local_owner&&!job.handoff_available&&!job.challenge&&!hasSubmissionEvidence(db,job)){
+  const request=db.prepare("SELECT rowid AS sequence,message FROM events WHERE job_id=? AND type='queued' ORDER BY rowid DESC LIMIT 1").get(job.id);
+  const lastRun=db.prepare("SELECT MAX(rowid) AS sequence FROM events WHERE job_id=? AND type IN ('running','resumed')").get(job.id);
+  if(request?.message==='Preparing a live application browser for applicant takeover'&&request.sequence>(lastRun?.sequence||0)){
+   return preparationProblem(db,job)||savedSearchProblem(db,job,focus);
+  }
+ }
  return savedSearchProblem(db,job,focus,true);
 }
 export function receiptConfirmed(db,job){

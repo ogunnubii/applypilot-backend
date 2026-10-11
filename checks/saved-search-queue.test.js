@@ -105,3 +105,34 @@ test('archive exemption fails closed without provenance, with live handoff, with
  db.exec("UPDATE jobs SET handoff_available=0 WHERE id='archived-attempt';CREATE TABLE continuation_requests(user_id,job_id,state);INSERT INTO continuation_requests VALUES('u','archived-attempt','dispatching')");assert.equal(inFlightApplication(db,'u').id,'archived-attempt');
  db.exec("UPDATE continuation_requests SET state='cancelled'");assert.equal(inFlightApplication(db,'u'),undefined);db.exec("UPDATE jobs SET status='local_browser' WHERE id='archived-attempt'");assert.equal(inFlightApplication(db,'u').id,'archived-attempt');db.exec("UPDATE jobs SET status='running' WHERE id='archived-attempt'");assert.equal(inFlightApplication(db,'u').id,'archived-attempt');db.close();
 });
+
+
+test('explicit pre-submit takeover can reopen the selected form without clearing preparation history',()=>{
+ const {db,add}=fixture();add('fresh');useSavedSearchQueue(db,'u',{applicant_id:'p'});setWorkFocus(db,'u',{enabled:true,auto_submit:false});
+ db.exec("UPDATE jobs SET status='queued',attempts=2 WHERE id='fresh';INSERT INTO events VALUES('fresh','2026','running','Opening employer application')");
+ const job=()=>db.prepare("SELECT * FROM jobs WHERE id='fresh'").get();
+ assert.match(savedSearchClaimProblem(db,job()),/untouched/);
+ db.exec("INSERT INTO events VALUES('fresh','2026','queued','Preparing a live application browser for applicant takeover')");
+ assert.equal(savedSearchClaimProblem(db,job()),'');assert.equal(job().attempts,2);assert.equal(focusSnapshot(db,'u').auto_submit,false);
+ db.exec("INSERT INTO events VALUES('fresh','2026','running','Opening employer application')");
+ assert.match(savedSearchClaimProblem(db,job()),/untouched/,'old takeover request cannot replay after a crash');db.close();
+});
+
+test('takeover permission never admits uncertain submissions, stale matches, changed scope or another selected job',()=>{
+ for(const mutation of [
+  "UPDATE jobs SET local_attempt_at='2026' WHERE id='fresh'",
+  "INSERT INTO events VALUES('fresh','2026','submission_started','Intent')",
+  "INSERT INTO autonomous_attempts VALUES('fresh','hosted-worker','2026')",
+  "UPDATE jobs SET challenge='Unconfirmed submission' WHERE id='fresh'",
+  "UPDATE jobs SET local_owner='browser' WHERE id='fresh'",
+  "UPDATE jobs SET handoff_available=1 WHERE id='fresh'",
+  "UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.checkedAt','2020-01-01') WHERE id='fresh'",
+  "UPDATE applicants SET consent=0 WHERE id='p'",
+  "UPDATE work_focus SET job_id='old0' WHERE user_id='u'",
+  "UPDATE searches SET enabled=0 WHERE user_id='u'"
+ ]){
+  const {db,add}=fixture();add('fresh');useSavedSearchQueue(db,'u',{applicant_id:'p'});setWorkFocus(db,'u',{enabled:true,auto_submit:false});
+  db.exec("UPDATE jobs SET status='queued',attempts=1 WHERE id='fresh';INSERT INTO events VALUES('fresh','2026','queued','Preparing a live application browser for applicant takeover')");
+  db.exec(mutation);assert(savedSearchClaimProblem(db,db.prepare("SELECT * FROM jobs WHERE id='fresh'").get()),mutation);db.close();
+ }
+});

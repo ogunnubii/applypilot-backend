@@ -26,6 +26,19 @@ export function inFlightApplication(db,userId,exceptId=''){
  const candidates=db.prepare("SELECT * FROM jobs WHERE user_id=? AND id!=? AND (status='running' OR local_phase='verifying' OR challenge='Submission in progress')").all(userId,exceptId);
  return candidates.find(job=>job.status==='running'||job.challenge==='Submission in progress'||!['submitted','interview','rejected','offer'].includes(job.status)||!receiptConfirmed(db,job));
 }
+const diagnosticEventTypes=['submission_started','manual_submission','manual_submission_retry','automatic_submission','applicant_reported_submission','submitted','manual_confirmation','running','local_browser','paused','needs_review','queued','filled','resumed','archived'];
+function diagnosticTimestamp(value){
+ if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)||!Number.isFinite(Date.parse(value)))return null;
+ return new Date(value).toISOString();
+}
+function blockerDiagnostics(db,userId,job){
+ const profile=db.prepare('SELECT execution_mode FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,userId);
+ const reservation=db.prepare("SELECT CASE WHEN owner='hosted-worker' THEN 'hosted-worker' ELSE 'local-browser' END AS source FROM autonomous_attempts WHERE job_id=?").get(job.id);
+ const source=reservation?.source||(job.status==='local_browser'||job.local_owner?'local-browser':job.status==='running'?'hosted-worker':null);
+ // Never select event messages: they can contain applicant answers or questions.
+ const events=db.prepare('SELECT e.type,e.at FROM events e JOIN jobs j ON j.id=e.job_id WHERE e.job_id=? AND j.user_id=? AND e.type IN ('+diagnosticEventTypes.map(()=>'?').join(',')+') ORDER BY e.rowid DESC LIMIT 5').all(job.id,userId,...diagnosticEventTypes);
+ return {updated_at:diagnosticTimestamp(job.updated_at),attempt_at:diagnosticTimestamp(job.local_attempt_at),worker_claim_at:diagnosticTimestamp(job.lease_at),profile_execution_mode:['cloud','local'].includes(profile?.execution_mode)?profile.execution_mode:null,recorded_execution_source:source,recent_events:events.map(event=>({type:event.type,at:diagnosticTimestamp(event.at)}))};
+}
 // Read-only reconciliation for a lost transition response. Never selects a job,
 // populates a batch, changes authorization, or reveals another account's data.
 export function savedSearchQueueState(db,userId,{applicant_id}={}){
@@ -33,7 +46,7 @@ export function savedSearchQueueState(db,userId,{applicant_id}={}){
  const applicantId=applicant_id||focus?.queue_applicant_id||batch?.applicant_id||null;
  if(applicantId&&!db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(applicantId,userId))throw Error('Choose your saved applicant profile.');
  const blocker=inFlightApplication(db,userId);
- return {mode:focus?.search_queue_only?'saved-search':'legacy',applicant_id:focus?.queue_applicant_id||null,checked_applicant_id:applicantId,batch_enabled:!!batch?.enabled,focus_enabled:!!focus?.enabled,auto_submit:!!focus?.auto_submit,paused:!focus?.enabled&&!focus?.auto_submit,active_structured_search:!!(applicantId&&currentSearchScope(db,{user_id:userId,applicant_id:applicantId})),blocker:blocker?{id:blocker.id,title:blocker.title,company:blocker.company,status:blocker.status,phase:blocker.local_phase||null,reason:blocker.status==='running'?'Application preparation is running':blocker.challenge==='Submission in progress'?'Submission is in progress':'A submission is still marked as awaiting verification; no employer receipt is confirmed'}:null};
+ return {mode:focus?.search_queue_only?'saved-search':'legacy',applicant_id:focus?.queue_applicant_id||null,checked_applicant_id:applicantId,batch_enabled:!!batch?.enabled,focus_enabled:!!focus?.enabled,auto_submit:!!focus?.auto_submit,paused:!focus?.enabled&&!focus?.auto_submit,active_structured_search:!!(applicantId&&currentSearchScope(db,{user_id:userId,applicant_id:applicantId})),blocker:blocker?{id:blocker.id,title:blocker.title,company:blocker.company,status:blocker.status,phase:blocker.local_phase||null,...blockerDiagnostics(db,userId,blocker),reason:blocker.status==='running'?'Application preparation is running':blocker.challenge==='Submission in progress'?'Submission is in progress':'A submission is still marked as awaiting verification; no employer receipt is confirmed'}:null};
 }
 export function useSavedSearchQueue(db,userId,{applicant_id}={}){
  const profile=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(applicant_id,userId);

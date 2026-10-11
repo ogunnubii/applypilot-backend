@@ -28,7 +28,7 @@ test('Gemini receives separate job context, exact evidence and field limits; ove
  const options={question,profile:{gemini_facts_consent:1},job:{title:'SRE',company:'Example'},jobContext:{description:'Build reliable Kubernetes platforms.',sourceUrl:'https://jobs.lever.co/example/id',status:'public_posting'},answers:{},experience:[approved('Ingress incident',fact)],maxLength:200,env:{GEMINI_API_KEY:'test'},fetchImpl:async(_url,request)=>{sent=JSON.parse(request.body);return output({answer:fact,reason:'',evidence:[{id:'1',quote:fact}]});}};
  assert.equal((await geminiFactAnswer(options)).answer,fact);const input=JSON.parse(sent.input);assert.equal(input.job.description,options.jobContext.description);assert.equal(input.limits.characters,200);assert.equal(input.limits.words,80);assert(!input.facts.some(f=>f.answer.includes('Build reliable')));
  assert.equal((await geminiFactAnswer({...options,maxLength:30})).answer,'');
- await assert.rejects(geminiFactAnswer({...options,fetchImpl:async()=>output({answer:'I led 50 engineers.',reason:'',evidence:[{id:'1',quote:'I led 50 engineers.'}]})}),/support/);
+ await assert.rejects(geminiFactAnswer({...options,fetchImpl:async()=>output({answer:'I led 50 engineers.',reason:'',evidence:[{id:'1',quote:'I led 50 engineers.'}]})}),/citation|support/);
  assert.deepEqual(answerLimit('Explain in a maximum of 200 characters',100),{characters:100,words:650});
 });
 test('public posting context validates job identity and never follows arbitrary or redirected URLs',async()=>{
@@ -71,4 +71,14 @@ test('ordinary work-style drafts distinguish prospective guidance from supported
  const fact='I maintain CI pipelines and collaborate with development and security teams.',answer=fact+' In an asynchronous team, I would document decisions and handoffs to keep context clear.';let sent;
  const result=await geminiFactAnswer({question:'Tell us about working in a remote environment and how you would communicate.',profile:{gemini_facts_consent:1},job:{title:'Cloud Engineer'},answers:{'Professional background':fact,'Over 18 - applicant confirmed':'Yes'},env:{GEMINI_API_KEY:'test'},fetchImpl:async(_url,request)=>{sent=JSON.parse(request.body);return output({answer,reason:'Transferable experience and a prospective approach.',evidence:[{id:'1',quote:fact}]});}});
  assert.equal(result.answer,answer);assert.match(sent.system_instruction,/clearly prospective approach/);assert.match(sent.system_instruction,/Do not claim a remote-work history/);assert.match(sent.system_instruction,/do not substitute a hypothetical incident/);assert(!JSON.parse(sent.input).facts.some(f=>/18/.test(f.question)));
+});
+
+test('Gemini citations tolerate resume line wraps but never changed facts or different source IDs',async()=>{
+ const fact='I collaborate with development, security and\n infrastructure teams. Deployment time fell by 60%.',question='Describe your collaboration experience.';
+ const options={question,profile:{gemini_facts_consent:1},job:{title:'Engineer'},answers:{'Professional background':fact},env:{GEMINI_API_KEY:'test'}};
+ const draft=(quote,id='1')=>geminiFactAnswer({...options,fetchImpl:async()=>output({answer:'I collaborate with development, security and infrastructure teams.',reason:'',evidence:[{id,quote}]})});
+ assert((await draft('I collaborate with development, security and infrastructure teams.')).answer);
+ await assert.rejects(draft('Deployment time fell by 90%.'),/citation/);
+ await assert.rejects(draft('Deployment time fell by 60%.','99'),/citation/);
+ await assert.rejects(draft('I led a fully remote global team.'),/citation/);
 });

@@ -27,13 +27,23 @@ test('public signup, existing owner preservation, tenant boundaries and durable 
  const start=async()=>{child=spawn(process.execPath,['server.js'],{cwd:resolve('.'),env:{...process.env,PORT:String(port),BIND_HOST:'127.0.0.1',PUBLIC_ORIGIN:base,PUBLIC_SIGNUP:'true'},stdio:['ignore','pipe','pipe']});child.stdout.on('data',x=>log+=x);child.stderr.on('data',x=>log+=x);for(let i=0;i<80;i++){try{if((await api('/api/health')).status===200)return;}catch{}await new Promise(r=>setTimeout(r,50));}throw Error(log);};
  try{
   await start();
-  assert.equal((await api('/api/health')).data.release,'2026-10-11-saved-date-controls');
+  assert.equal((await api('/api/health')).data.release,'2026-10-11-remote-first');
   const dashboard=await api('/assistant'),csp=dashboard.headers.get('content-security-policy');
   assert.match(csp,/img-src 'self' data:;/);assert.match(csp,/script-src 'self';/);assert.match(csp,/connect-src 'self';/);assert.doesNotMatch(csp,/script-src[^;]*(?:data:|unsafe-inline|unsafe-eval|\*)/);
   const homepage=await api('/');assert.equal(homepage.status,200);assert.equal(homepage.headers.get('x-robots-tag'),'index, follow');assert.match(homepage.data,/<h1[ >]/);
   const sitemap=await api('/sitemap.xml');assert.equal(sitemap.status,200);assert(!/\/(?:assistant|signup|login|setup|api)\b/.test(sitemap.data));
   db.prepare("INSERT INTO answer_history(id,user_id,applicant_id,job_id,question,answer,updated_at) VALUES(?,?,?,?,'Phone','PRIVATE OWNER PHONE','2026')").run(answer,owner,profile,job);
   const ownerToken=issueToken(owner);
+  const preferencePath='/api/searches/'+search+'/preferences',preferenceScope={roles:['Platform Engineer'],aliases:['SRE'],localPlaces:['ontario'],remotePlaces:['canada'],remoteWorldwide:true,remoteFromCountry:'canada',authorizedCountries:['canada'],preferBusinessContract:true,allowEmploymentFallback:true,preferRemote:false};
+  assert.equal((await api(preferencePath,{method:'PUT',data:{preferRemote:true}})).status,401);
+  assert.equal((await api(preferencePath,{token:ownerToken,method:'PUT',data:{preferRemote:true}})).status,400,'legacy scope cannot be silently replaced');
+  db.prepare('UPDATE searches SET scope_json=? WHERE id=?').run(JSON.stringify(preferenceScope),search);
+  const preferences=await api(preferencePath,{token:ownerToken,method:'PUT',data:{preferRemote:true}});
+  assert.equal(preferences.status,200);assert.equal(preferences.data.scope.preferRemote,true);assert.deepEqual(preferences.data.scope.roles,preferenceScope.roles);assert.deepEqual(preferences.data.scope.authorizedCountries,['canada']);
+  assert.equal(db.prepare('SELECT enabled FROM searches WHERE id=?').get(search).enabled,0,'ranking never enables paused discovery');
+  assert.equal((await api(preferencePath,{token:ownerToken,method:'PUT',data:{preferRemote:'false'}})).status,400);
+  assert.equal((await api(preferencePath,{token:ownerToken,method:'PUT',data:{preferRemote:false,authorizedCountries:['usa']}})).status,400,'ranking cannot change applicant eligibility');
+  assert.equal(JSON.parse(db.prepare('SELECT scope_json FROM searches WHERE id=?').get(search).scope_json).preferRemote,true,'rejected changes leave ranking intact');
   for(const path of ['/api/me','/api/applicants','/api/jobs','/api/answer-library','/api/applicants/'+profile+'/resume'])assert.equal((await api(path)).status,401,path);
   assert.equal((await api('/api/signup',{method:'POST',data:{email:'bad',password:'short'}})).status,400);
   assert.equal((await api('/api/signup',{method:'POST',raw:'{"email":'})).status,400,'interrupted payload creates no account');
@@ -52,6 +62,7 @@ test('public signup, existing owner preservation, tenant boundaries and durable 
   assert.equal((await api('/api/login',{method:'POST',data:{email:'new@example.test',password:{bad:true}}})).status,401);
   const login=await api('/api/login',{method:'POST',data:{email:'new@example.test',password:newPassword,remember:true}});assert.equal(login.status,200);assert.notEqual(login.data.token,token);
   for(const [path,key]of [['/api/applicants','applicants'],['/api/jobs','jobs'],['/api/answer-library','answers'],['/api/searches','searches'],['/api/activity','events'],['/api/application-history','records']]){const r=await api(path,{token});assert.equal(r.status,200,path);assert.deepEqual(r.data[key],[],path);}
+  assert.equal((await api(preferencePath,{token,method:'PUT',data:{preferRemote:false}})).status,404,'another account cannot change search ranking');
   for(const [path,method,data]of [
    ['/api/applicants/'+profile,'PUT',{name:'Intruder'}],['/api/applicants/'+profile+'/resume','GET'],['/api/applicants/'+profile+'/resume','POST',{}],['/api/applicants/'+profile+'/resume-previous','GET'],['/api/applicants/'+profile+'/experience','GET'],
    ['/api/jobs/'+job+'/events','GET'],['/api/jobs/'+job+'/answers','PUT',{question:'Phone',answer:'Stolen'}],['/api/jobs/'+job+'/queue','POST',{}],['/api/jobs/'+job+'/local/claim','POST',{}],['/api/jobs/'+job+'/local/packet','GET'],['/api/jobs/'+job+'/handoff/view','POST',{}],['/api/searches/'+search+'/toggle','POST',{}]

@@ -48,11 +48,24 @@ export function searchPriority(job){
  let metadata=job.metadata;try{metadata ||= JSON.parse(job.job_metadata_json||'{}')}catch{}
  return Number(metadata?.searchPriority)||0;
 }
-// Ranking is lexicographic: contract preference outranks remote/sponsorship
-// bonuses and fit/diversity. It never creates eligibility evidence.
+// Remote-first is the leading preference; business contracts lead within each
+// work arrangement. Preferences never create eligibility evidence.
 export function scopePriority(scope,eligibility,job){
  const remote=isScopeRemote(job);
- return (scope.preferBusinessContract&&eligibility.kind!=='business-contract'?100:0)+(scope.preferRemote&&!remote?10:0)+(scope.preferSponsorship&&!eligibility.sponsorshipAvailable&&eligibility.kind!=='sponsorship'?1:0);
+ return (scope.preferRemote&&!remote?100:0)+(scope.preferBusinessContract&&eligibility.kind!=='business-contract'?10:0)+(scope.preferSponsorship&&!eligibility.sponsorshipAvailable&&eligibility.kind!=='sponsorship'?1:0);
+}
+
+// Update ranking alone. Do not enable a search, broaden eligibility, alter
+// applicant facts, or touch application attempts and receipt protection.
+export function setSearchRemotePreference(db,userId,searchId,input){
+ const saved=db.prepare('SELECT scope_json FROM searches WHERE id=? AND user_id=?').get(searchId,userId);
+ if(!saved)return null;
+ if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>key!=='preferRemote')||typeof input.preferRemote!=='boolean')throw Error('Provide only a true or false remote-first preference');
+ if(!saved.scope_json)throw Error('This search needs a structured scope before its ranking can be changed');
+ const scope=normalizeSearchScope(JSON.parse(saved.scope_json));
+ scope.preferRemote=input.preferRemote;
+ db.prepare('UPDATE searches SET scope_json=? WHERE id=? AND user_id=?').run(JSON.stringify(scope),searchId,userId);
+ return {scope};
 }
 
 // Structured searches do not equate a foreign remote contract with permission

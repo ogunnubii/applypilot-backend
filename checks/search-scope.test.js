@@ -37,6 +37,26 @@ test('business contracts precede T4 fallback despite lower fit and employer dive
  assert.deepEqual(rankedJobs([t4,b2b]).map(x=>x.id),['contract','employee']);
  assert.deepEqual(diversifyApplications([t4,b2b],[{...b2b,id:'old',title:'Other',status:'submitted'}]).map(x=>x.id),['contract','employee']);
 });
+
+test('remote-first outranks onsite contracts, with B2B first among Canada and worldwide remote matches',()=>{
+ const row=(id,data,score,s=scope())=>({id,company:id,title:data.title,url:`https://jobs.lever.co/${id}/${id}`,match_score:score,status:'saved',job_metadata_json:JSON.stringify(jobIntelligence(data,scopeIntent(s)))});
+ const rows=[row('onsite-contract',job({location:'Toronto, Canada',remote:false,description:'We accept incorporated contractors.'}),100),row('remote-employee',job(),65),row('global-contract',job({location:'Worldwide remote',description:'We accept incorporated contractors. Work remotely from anywhere in the world.'}),60),row('canada-contract',job({description:'We accept incorporated contractors.'}),70)];
+ const ranked=rankedJobs(rows).map(x=>x.id);assert.deepEqual(ranked,['canada-contract','global-contract','remote-employee','onsite-contract']);
+ const diversified=diversifyApplications(rows,[{...rows[2],id:'prior',title:'Different role',status:'submitted'}]).map(x=>x.id);
+ assert(diversified.indexOf('global-contract')<diversified.indexOf('remote-employee'));assert(diversified.indexOf('remote-employee')<diversified.indexOf('onsite-contract'));
+ const noPreference=scope({preferRemote:false});assert.equal(rankedJobs([row('onsite',job({location:'Toronto, Canada',remote:false,description:'We accept incorporated contractors.'}),100,noPreference),row('remote',job(),65,noPreference)])[0].id,'onsite');
+ for(const data of [job({location:'Worldwide remote',description:'Must be authorized to work in the United States.'}),job({location:'London, UK',remote:false,description:'We offer visa sponsorship.'})])assert(!scopedWorkEligibility(data,scope()).eligible,'ranking never broadens eligibility');
+});
+
+test('remote ranking changes apply to untouched queue entries without rewriting application history',async()=>{
+ const {DatabaseSync}=await import('node:sqlite'),{prioritizeApplications}=await import('../application-diversity.js'),{setSearchRemotePreference}=await import('../search-scope.js');
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE searches(id,user_id,applicant_id,enabled,scope_json,created_at);CREATE TABLE jobs(id,company,title,url,normalized_url,status,attempts,local_attempt_at,confirmation,user_id);CREATE TABLE external_application_history(id,company,title,status,user_id);');
+ db.prepare('INSERT INTO searches VALUES(?,?,?,?,?,?)').run('s','u','p',1,JSON.stringify(scope({preferRemote:false})),'2026');
+ const make=(id,data)=>({id,user_id:'u',applicant_id:'p',title:'Platform Engineer',company:id,url:`https://jobs.lever.co/${id}/${id}`,status:'queued',attempts:0,job_metadata_json:JSON.stringify(jobIntelligence(data,scopeIntent(scope({preferRemote:false}))))});
+ const rows=[make('office',job({location:'Toronto, Canada',remote:false,description:'We accept incorporated contractors.'})),make('remote',job()),{...make('attempted',job()),attempts:1,status:'needs_review',local_attempt_at:'2026',challenge:'Unconfirmed submission'},{...make('confirmed',job()),attempts:1,status:'submitted',confirmation:'Employer receipt'}],before=JSON.stringify(rows);
+ setSearchRemotePreference(db,'u','s',{preferRemote:true});const result=prioritizeApplications(db,'u',rows);
+ assert(result.findIndex(x=>x.id==='remote')<result.findIndex(x=>x.id==='office'));assert.deepEqual(result.find(x=>x.id==='attempted'),rows[2]);assert.deepEqual(result.find(x=>x.id==='confirmed'),rows[3]);assert.equal(JSON.stringify(rows),before);db.close();
+});
 test('legacy text parsing no longer drops roles after 80 or instructions after 5000 characters',async()=>{
  const source=readFileSync(new URL('../discovery.js',import.meta.url),'utf8'),s=await import('../support-career.js');
  const part=source.slice(source.indexOf('const placeWords='),source.indexOf('export function profileSearchInstruction')).replace(/export /g,'');

@@ -1,5 +1,5 @@
 import {parkUnresolvedAttempt,unresolvedAttemptState,unresolvedAttemptMarker} from './unresolved-attempts.js';
-import {searchInstruction,normalizeSearchScope} from './search-scope.js';
+import {searchInstruction,normalizeSearchScope,setSearchRemotePreference} from './search-scope.js';
 import {canEmailAccount} from './account-policy.js';
 import {servePublicSite} from './public-site.js';
 import {populateBatch,batchSnapshot,resetSupportBatch,nextBatch,inActiveBatch,batchPreferences} from './application-batches.js';
@@ -97,7 +97,7 @@ if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
 }
 if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.29.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-saved-date-controls',extensionVersion:'0.6.29',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-remote-first',extensionVersion:'0.6.29',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -205,6 +205,11 @@ if(path==='/api/searches'&&req.method==='POST'){
   const scope=normalizeSearchScope(x.scope),instruction=searchInstruction(x.instruction||(scope?scope.roles.join(', '):'')),boards=parseBoards(x.boards);if(!scope)parseIntent(instruction);
   const id=randomUUID();db.prepare('INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,auto_queue,created_at,scope_json) VALUES(?,?,?,?,?,?,?,?)').run(id,uid,p.id,instruction,JSON.stringify(boards),x.auto_queue===true?1:0,now(),scope?JSON.stringify(scope):null);
   return send(res,201,{id});
+}
+const searchPreferenceRoute=path.match(/^\/api\/searches\/([a-f0-9-]+)\/preferences$/);
+if(searchPreferenceRoute&&req.method==='PUT'){
+ const result=setSearchRemotePreference(db,uid,searchPreferenceRoute[1],JSON.parse(await body(req)));
+ return result?send(res,200,result):send(res,404,{error:'Search not found'});
 }
 let searchRoute=path.match(/^\/api\/searches\/([a-f0-9-]+)\/(run|toggle)$/);
 if(searchRoute&&req.method==='POST'){

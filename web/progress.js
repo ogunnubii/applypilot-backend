@@ -293,7 +293,23 @@ async function updateDiscovery(force=false){
  let section=$('#discovery-status');if(!force&&(section?.contains(document.activeElement)||section?.querySelector('details[open]')))return;if(!section){section=el('section');section.id='discovery-status';section.style.cssText='padding:16px;border:1px solid #dce6df;border-radius:12px;margin-bottom:20px';placeWorkspacePanel(section);}
  try{const data=await api('/searches'),searches=(data.searches||[]).filter(s=>s.enabled);section.replaceChildren(el('strong','Automatic job discovery'));
  const controls=el('details');controls.append(el('summary','Manage saved searches'));
- for(const saved of data.searches||[]){const row=el('div'),toggle=el('button',saved.enabled?'Pause search':'Enable search');row.append(el('p',saved.instruction),toggle);toggle.onclick=async()=>{toggle.disabled=true;try{await api('/searches/'+saved.id+'/toggle','POST');await updateDiscovery(true);}catch(e){$('#notice').textContent=e.message;toggle.disabled=false;}};const run=el('button','Run search now');run.onclick=async()=>{run.disabled=true;run.textContent='Checking employer postings…';try{await api('/searches/'+saved.id+'/run','POST',{});await updateDiscovery(true);await refresh(true);}catch(e){$('#notice').textContent=e.message;run.disabled=false;run.textContent='Run search now';}};row.append(run);controls.append(row);}section.append(controls);
+ for(const saved of data.searches||[]){
+  const row=el('div'),toggle=el('button',saved.enabled?'Pause search':'Enable search');row.append(el('p',saved.instruction),toggle);
+  toggle.onclick=async()=>{toggle.disabled=true;try{await api('/searches/'+saved.id+'/toggle','POST');await updateDiscovery(true);}catch(e){$('#notice').textContent=e.message;toggle.disabled=false;}};
+  const run=el('button','Run search now');run.onclick=async()=>{run.disabled=true;run.textContent='Checking employer postings…';try{await api('/searches/'+saved.id+'/run','POST',{});await updateDiscovery(true);await refresh(true);}catch(e){$('#notice').textContent=e.message;run.disabled=false;run.textContent='Run search now';}};row.append(run);
+  let scope;try{scope=saved.scope_json?JSON.parse(saved.scope_json):null;}catch{}
+  if(scope){
+   const label=el('label'),remote=el('input'),status=el('p');remote.type='checkbox';remote.checked=scope.preferRemote===true;status.setAttribute('role','status');
+   label.append(remote,document.createTextNode(' Prioritize fully remote jobs first'));row.append(label,status);
+   const describe=()=>{status.textContent=(scope.preferRemote?'Remote first. ':'')+(scope.preferBusinessContract?'Incorporated / B2B contracts preferred within each work arrangement. ':'')+(scope.allowEmploymentFallback?'Employee roles remain a fallback. ':'')+'Location and work-eligibility checks still apply.';};describe();
+   remote.onchange=async()=>{
+    const before=scope.preferRemote===true,desired=remote.checked;remote.disabled=true;
+    try{const result=await api('/searches/'+saved.id+'/preferences','PUT',{preferRemote:desired});if(result.scope?.preferRemote!==desired)throw Error('Preference could not be verified. Refresh before retrying.');scope=result.scope;describe();status.textContent='Saved. '+status.textContent;}
+    catch(error){remote.checked=before;status.textContent=error.message;}finally{remote.disabled=false;}
+   };
+  }
+  controls.append(row);
+ }section.append(controls);
  if(!searches.length){section.append(el('p','No searches enabled. Add a saved search in profile setup.'));return;}
  const latest=searches.filter(s=>s.last_run).sort((a,b)=>b.last_run.localeCompare(a.last_run))[0],result=latest?.last_result;
  section.append(el('p',`${searches.length} enabled search${searches.length===1?'':'es'} · Checks every ${Math.round((data.intervalSeconds||60)/60)} minute(s), rotating employer boards. Newly found matches appear automatically; duplicates are skipped.`));

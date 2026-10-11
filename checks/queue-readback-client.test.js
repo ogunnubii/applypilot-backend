@@ -28,10 +28,32 @@ for(const client of ['assistant-client.js','web/progress.js']){
   w.fetch=async()=>({status:503,ok:false,json:async()=>{throw Error('<html>private-token</html>')}});await assert.rejects(w.api('/saved-search-queue?applicant_id=private-id'),e=>e.message==='Invalid server response (HTTP 503, GET /api/saved-search-queue).');dom.window.close();
  });
 }
-for(const client of ['assistant-client.js','web/progress.js'])test(client+' renders blocker evidence directly with UTC labels and missing details, without HTML or actions',async()=>{
+for(const client of ['assistant-client.js','web/progress.js'])test(client+' renders blocker evidence directly with UTC labels and missing details, without HTML and with unavailable quarantine disabled',async()=>{
  const source=readFileSync(new URL('../'+client,import.meta.url),'utf8'),dom=new JSDOM('<div id="home-summary"></div><p id="notice"></p>',{url:'https://example.test/?view=settings',runScripts:'outside-only'}),w=dom.window;
  w.$=s=>w.document.querySelector(s);w.el=(tag,text)=>{const e=w.document.createElement(tag);if(text)e.textContent=text;return e;};w.field=form=>{const e=w.document.createElement('input');form.append(e);return e;};w.refresh=async()=>{};
  w.api=async path=>path==='/applicants'?{applicants:[{id:'p',name:'Fixture'}]}:{mode:'legacy',batch_enabled:true,applicant_id:null,paused:true,active_structured_search:true,blocker:{id:'outside-batch',title:'Engineer <img src=x>',company:'Fixture',reason:'Submission is in progress',status:'local_browser',phase:'verifying',updated_at:'2026-10-11T04:00:00.000Z',attempt_at:null,worker_claim_at:null,profile_execution_mode:'cloud',recorded_execution_source:'local-browser',recent_events:[{type:'manual_submission',at:'2026-10-11T03:59:00.000Z'}]}};
  w.eval(source.slice(source.indexOf('function renderBatchControl('),source.indexOf('function automaticSubmissionEnabled')));w.renderBatchControl({enabled:true,selected:20,completed:11,job_ids:['some-other-job']});await new Promise(r=>setTimeout(r,0));
- const panel=w.document.querySelector('[aria-label="Blocking application details"]');assert(panel&&!panel.hidden);assert.match(panel.textContent,/Engineer <img src=x>/);assert.equal(panel.querySelector('img'),null);assert.match(panel.textContent,/Status: local_browser/);assert.match(panel.textContent,/Execution phase: verifying/);assert.match(panel.textContent,/Current profile execution mode: Hosted worker/);assert.match(panel.textContent,/Recorded execution source: Local browser record/);assert.match(panel.textContent,/2026-10-11 04:00:00.000 UTC/);assert.match(panel.textContent,/Submission attempt recorded: Details unavailable/);assert.match(panel.textContent,/not proof.*stopped/);assert.match(panel.textContent,/not a live heartbeat/);assert.match(panel.textContent,/manual_submission/);assert.equal(panel.querySelectorAll('button,a,input').length,0);dom.window.close();
+ const panel=w.document.querySelector('[aria-label="Blocking application details"]');assert(panel&&!panel.hidden);assert.match(panel.textContent,/Engineer <img src=x>/);assert.equal(panel.querySelector('img'),null);assert.match(panel.textContent,/Status: local_browser/);assert.match(panel.textContent,/Execution phase: verifying/);assert.match(panel.textContent,/Current profile execution mode: Hosted worker/);assert.match(panel.textContent,/Recorded execution source: Local browser record/);assert.match(panel.textContent,/2026-10-11 04:00:00.000 UTC/);assert.match(panel.textContent,/Submission attempt recorded: Details unavailable/);assert.match(panel.textContent,/not proof.*stopped/);assert.match(panel.textContent,/not a live heartbeat/);assert.match(panel.textContent,/manual_submission/);assert.equal(panel.querySelectorAll('button').length,1);assert.equal(panel.querySelector('button').disabled,true);assert.equal(panel.querySelectorAll('a,input').length,0);dom.window.close();
+});
+for(const client of ['assistant-client.js','web/progress.js'])test(client+' explicitly quarantines exact evidence once and verifies uncertain responses without retrying',async()=>{
+ for(const outcome of ['success','lost-response','unavailable','late-receipt','denied']){
+  const source=readFileSync(new URL('../'+client,import.meta.url),'utf8'),dom=new JSDOM('<div id="home-summary"></div><p id="notice"></p>',{url:'https://example.test/?view=settings',runScripts:'outside-only'}),w=dom.window;let posts=0,reads=0,done=false;
+  w.$=s=>w.document.querySelector(s);w.el=(tag,text)=>{const e=w.document.createElement(tag);if(text)e.textContent=text;return e;};w.field=form=>{const e=w.document.createElement('input');form.append(e);return e;};w.refresh=async()=>{};
+  w.api=async(path,method,data)=>{
+   if(path==='/applicants')return {applicants:[{id:'p',name:'Fixture'}]};
+   if(path==='/jobs/j/park-unresolved'){
+    if(method==='POST'){posts++;assert.equal(data.evidence,'snapshot');await new Promise(r=>setTimeout(r,0));done=true;if(outcome!=='success')throw Error('HTTP 502');return {message:'Receipt remains unresolved. Automation is paused.'};}
+    reads++;if(outcome==='unavailable')throw Error('HTTP 503');return {parked:outcome==='lost-response',quarantined:outcome==='lost-response',receipt_confirmed:outcome==='late-receipt'};
+   }
+   return {mode:'legacy',batch_enabled:true,paused:true,active_structured_search:true,blocker:done?null:{id:'j',title:'Engineer',company:'Fixture',unresolved_action:{eligible:outcome!=='denied',reason:outcome==='denied'?'A browser continuation is still dispatching.':'Eligible',evidence:'snapshot'}}};
+  };
+  w.eval(source.slice(source.indexOf('function renderBatchControl('),source.indexOf('function automaticSubmissionEnabled')));w.renderBatchControl({enabled:true});await new Promise(r=>setTimeout(r,0));
+  const button=[...w.document.querySelectorAll('button')].find(x=>x.textContent==='Keep receipt unresolved and continue');
+  if(outcome==='denied'){assert(button.disabled);assert.match(w.document.body.textContent,/continuation is still dispatching/);await button.onclick();assert.equal(posts,0);}else{
+   const first=button.onclick();await button.onclick();await first;assert.equal(posts,1);assert.equal(reads,outcome==='success'?0:1);
+   const notice=w.document.querySelector('#notice').textContent;
+   assert.match(notice,outcome==='unavailable'?/Could not verify.*Do not repeat/:outcome==='late-receipt'?/receipt is now confirmed/:/Receipt remains unresolved/);
+  }
+  dom.window.close();
+ }
 });

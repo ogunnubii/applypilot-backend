@@ -46,5 +46,21 @@ test('real API autosaves drafts, learns completed factual answers, resumes once 
   const rejectedLegacy=await api('/work-focus','PUT',{enabled:true,auto_submit:false});assert.equal(rejectedLegacy.status,200);assert.equal(rejectedLegacy.data.job_id,null,'legacy batch match needs a fresh current-scope discovery check');
 
 
+  const uncertain=randomUUID(),url='https://jobs.lever.co/'+uncertain+'/role';
+  db.prepare("INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,local_phase,challenge,local_attempt_at,local_owner,handoff_available,created_at,updated_at) VALUES(?,'u','p','Platform Engineer','Receipt fixture',?,?,'submitted','verifying','Applicant reported submission','2026-10-05T04:00:44Z','11111111-1111-1111-1111-111111111111',0,'2026','2026')").run(uncertain,url,url);
+  db.prepare("INSERT INTO events(job_id,at,type,message) VALUES(?,'2026','applicant_reported_submission','Applicant reported without receipt')").run(uncertain);
+  const parkPath='/jobs/'+uncertain+'/park-unresolved',state=await api(parkPath);assert.equal(state.status,200);assert.equal(state.data.eligibility.eligible,true);
+  db.exec("INSERT INTO users VALUES('other','other@example.test','fixture','2026')");
+  for(const method of ['GET','POST']){const r=await fetch('http://127.0.0.1:'+port+'/api'+parkPath,{method,headers:{Authorization:'Bearer '+issueToken('other'),'Content-Type':'application/json'},body:method==='POST'?JSON.stringify({evidence:state.data.eligibility.evidence}):undefined});assert.equal(r.status,404);}
+  const oldRecord=JSON.stringify(db.prepare('SELECT * FROM jobs WHERE id=?').get(uncertain)),oldTotals=operationSnapshot(db,'u').totals;
+  const parked=await Promise.all([api(parkPath,'POST',{evidence:state.data.eligibility.evidence}),api(parkPath,'POST',{evidence:state.data.eligibility.evidence})]);assert(parked.every(r=>r.status===200),JSON.stringify(parked));assert.equal(parked.filter(r=>r.data.alreadyParked).length,1);
+  assert.equal(JSON.stringify(db.prepare('SELECT * FROM jobs WHERE id=?').get(uncertain)),oldRecord);assert.deepEqual(operationSnapshot(db,'u').totals,oldTotals);
+  for(const [action,method] of [['claim','POST'],['packet','GET'],['attempt','POST'],['progress','POST'],['step','POST']])assert.equal((await api('/jobs/'+uncertain+'/local/'+action,method,method==='POST'?{}:undefined)).status,409);
+  const deleted=await api('/jobs/'+uncertain,'DELETE',{confirm:uncertain});assert.equal(deleted.status,409);assert.match(deleted.data.error,/protected/);
+  const receipt=await api('/jobs/'+uncertain+'/local/submitted','POST',{url,afterSubmit:true,receipt:'Thank you for applying. Your application has been received.'});assert.equal(receipt.status,200,JSON.stringify(receipt));
+  const confirmed=await api(parkPath);assert.equal(confirmed.data.receipt_confirmed,true);assert.equal(confirmed.data.parked,true);assert.equal(confirmed.data.quarantined,false);
+  assert.equal((await api('/jobs/'+uncertain+'/local/attempt','POST',{})).status,409);
+
+
  }finally{child.kill();await exited;db.close();}
 });

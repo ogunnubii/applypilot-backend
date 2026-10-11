@@ -1,3 +1,4 @@
+import {installUnresolvedAttempts,unresolvedAttemptQuarantined,unresolvedAttemptEligibility,unresolvedAttemptMarker} from './unresolved-attempts.js';
 import {matchAssessment} from './matching.js';
 import {currentScopeAssessment,currentSearchScope,scopeIntent,searchScopeSignature} from './search-scope.js';
 import {prioritizeApplications} from './application-diversity.js';
@@ -13,6 +14,7 @@ import {companyKey,historyKey} from './application-history.js';
 
 const now=()=>new Date().toISOString();
 export function installSingleApplication(db){
+ installUnresolvedAttempts(db);
  db.exec(`CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT);
  CREATE TABLE IF NOT EXISTS application_progress(job_id TEXT PRIMARY KEY,required_total INTEGER NOT NULL,required_filled INTEGER NOT NULL,updated_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS autonomous_attempts(job_id TEXT PRIMARY KEY,owner TEXT NOT NULL,created_at TEXT NOT NULL);`);
@@ -33,7 +35,7 @@ export function inFlightApplication(db,userId,exceptId=''){
  // Receipt routes may retain a historical verifying phase. Exempt only a
  // completed employer-confirmed record; never infer receipt from status alone.
  const candidates=db.prepare("SELECT * FROM jobs WHERE user_id=? AND id!=? AND (status='running' OR local_phase='verifying' OR challenge='Submission in progress')").all(userId,exceptId);
- return candidates.find(job=>!archivedApplicationQuarantined(db,job)&&(job.status==='running'||job.challenge==='Submission in progress'||!['submitted','interview','rejected','offer'].includes(job.status)||!receiptConfirmed(db,job)));
+ return candidates.find(job=>!unresolvedAttemptQuarantined(db,job)&&!archivedApplicationQuarantined(db,job)&&(job.status==='running'||job.challenge==='Submission in progress'||!['submitted','interview','rejected','offer'].includes(job.status)||!receiptConfirmed(db,job)));
 }
 const diagnosticEventTypes=['submission_started','manual_submission','manual_submission_retry','automatic_submission','applicant_reported_submission','submitted','manual_confirmation','running','local_browser','paused','needs_review','queued','filled','resumed','archived'];
 function diagnosticTimestamp(value){
@@ -55,7 +57,7 @@ export function savedSearchQueueState(db,userId,{applicant_id}={}){
  const applicantId=applicant_id||focus?.queue_applicant_id||batch?.applicant_id||null;
  if(applicantId&&!db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(applicantId,userId))throw Error('Choose your saved applicant profile.');
  const blocker=inFlightApplication(db,userId);
- return {mode:focus?.search_queue_only?'saved-search':'legacy',applicant_id:focus?.queue_applicant_id||null,checked_applicant_id:applicantId,batch_enabled:!!batch?.enabled,focus_enabled:!!focus?.enabled,auto_submit:!!focus?.auto_submit,paused:!focus?.enabled&&!focus?.auto_submit,active_structured_search:!!(applicantId&&currentSearchScope(db,{user_id:userId,applicant_id:applicantId})),blocker:blocker?{id:blocker.id,title:blocker.title,company:blocker.company,status:blocker.status,phase:blocker.local_phase||null,...blockerDiagnostics(db,userId,blocker),reason:blocker.status==='running'?'Application preparation is running':blocker.challenge==='Submission in progress'?'Submission is in progress':'A submission is still marked as awaiting verification; no employer receipt is confirmed'}:null};
+ return {mode:focus?.search_queue_only?'saved-search':'legacy',applicant_id:focus?.queue_applicant_id||null,checked_applicant_id:applicantId,batch_enabled:!!batch?.enabled,focus_enabled:!!focus?.enabled,auto_submit:!!focus?.auto_submit,paused:!focus?.enabled&&!focus?.auto_submit,active_structured_search:!!(applicantId&&currentSearchScope(db,{user_id:userId,applicant_id:applicantId})),blocker:blocker?{id:blocker.id,title:blocker.title,company:blocker.company,status:blocker.status,phase:blocker.local_phase||null,unresolved_action:unresolvedAttemptEligibility(db,blocker),...blockerDiagnostics(db,userId,blocker),reason:blocker.status==='running'?'Application preparation is running':blocker.challenge==='Submission in progress'?'Submission is in progress':'A submission is still marked as awaiting verification; no employer receipt is confirmed'}:null};
 }
 export function useSavedSearchQueue(db,userId,{applicant_id}={}){
  const profile=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(applicant_id,userId);
@@ -176,6 +178,7 @@ export function reserveAutonomousAttempt(db,jobId,userId,owner){
  db.exec('BEGIN IMMEDIATE');
  try{
   const j=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,userId);
+  if(j&&unresolvedAttemptMarker(db,userId,jobId))throw Error('This unresolved application is parked and cannot be submitted again.');
   if(!j||!focusAllowsSubmit(db,j)||!['running','local_browser'].includes(j.status))throw Error('Autonomous submission is not enabled for this selected application.');
   if(j.status==='local_browser'&&j.local_owner!==owner)throw Error('This application belongs to another browser.');
   if(hasSubmissionEvidence(db,j))throw Error('A submission may already have occurred. Check the employer receipt.');

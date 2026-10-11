@@ -1,3 +1,4 @@
+import {parkUnresolvedAttempt,unresolvedAttemptState,unresolvedAttemptMarker} from './unresolved-attempts.js';
 import {searchInstruction,normalizeSearchScope} from './search-scope.js';
 import {canEmailAccount} from './account-policy.js';
 import {servePublicSite} from './public-site.js';
@@ -96,7 +97,7 @@ if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
 }
 if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.28.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-archived-attempt-fence',extensionVersion:'0.6.28',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-unresolved-attempt-quarantine',extensionVersion:'0.6.28',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -128,7 +129,7 @@ const restoreArchiveRoute=path.match(/^\/api\/application-archive\/([a-f0-9-]+)\
 if(restoreArchiveRoute&&req.method==='POST'){try{return send(res,200,restoreApplication(db,uid,restoreArchiveRoute[1]));}catch(e){return send(res,409,{error:e.message});}}
 
 const deleteRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)$/);
-if(deleteRoute&&req.method==='DELETE'){const x=JSON.parse(await body(req));if(x.confirm!==deleteRoute[1])return send(res,400,{error:'Confirm permanent deletion of this application'});try{return send(res,200,deleteApplication(db,uid,deleteRoute[1]));}catch(e){return send(res,409,{error:e.message});}}
+if(deleteRoute&&req.method==='DELETE'){const x=JSON.parse(await body(req));if(x.confirm!==deleteRoute[1])return send(res,400,{error:'Confirm permanent deletion of this application'});try{if(unresolvedAttemptMarker(db,uid,deleteRoute[1]))return send(res,409,{error:'This unresolved application is protected. Its attempt history and duplicate barrier must be retained.'});return send(res,200,deleteApplication(db,uid,deleteRoute[1]));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/notifications'&&['GET','PUT'].includes(req.method)){
  const emailAllowed=canEmailAccount(db,uid);
  if(req.method==='PUT'){const x=JSON.parse(await body(req));if(typeof x.enabled!=='boolean')return send(res,400,{error:'Choose whether to enable blocker emails'});if(x.enabled&&!emailAllowed)return send(res,403,{error:'Email notifications are unavailable until mailbox ownership can be verified.'});db.prepare('INSERT INTO notification_preferences(user_id,enabled) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled').run(uid,x.enabled?1:0);}
@@ -150,6 +151,8 @@ if(path==='/api/saved-answer-recovery'&&req.method==='GET')return send(res,200,s
 if(path==='/api/answer-library'&&req.method==='GET')return send(res,200,{answers:db.prepare('SELECT a.*,j.company,j.title FROM answer_history a JOIN jobs j ON j.id=a.job_id WHERE a.user_id=? ORDER BY a.updated_at DESC LIMIT 500').all(uid).map(a=>({...a,canReuse:canReuse(a.question)}))});
 const libraryRoute=path.match(/^\/api\/answer-library\/([a-f0-9-]+)$/);
 if(libraryRoute&&['PUT','DELETE'].includes(req.method)){try{if(req.method==='DELETE')deleteLibrary(db,uid,libraryRoute[1]);else{const x=JSON.parse(await body(req));updateLibrary(db,uid,libraryRoute[1],x.answer,x.reuse===true);}return send(res,200,{ok:true});}catch(e){return send(res,400,{error:e.message});}}
+const unresolvedRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/park-unresolved$/);
+if(unresolvedRoute&&['GET','POST'].includes(req.method)){try{if(req.method==='GET')return send(res,200,unresolvedAttemptState(db,uid,unresolvedRoute[1]));const input=JSON.parse(await body(req));return send(res,200,parkUnresolvedAttempt(db,uid,unresolvedRoute[1],input.evidence));}catch(e){return send(res,e.message==='Application not found.'?404:409,{error:e.message});}}
 if(path==='/api/saved-search-queue'&&req.method==='GET'){try{return send(res,200,savedSearchQueueState(db,uid,{applicant_id:new URL(req.url,'http://localhost').searchParams.get('applicant_id')||undefined}));}catch(e){return send(res,409,{error:e.message||'Could not read saved search queue state'});}}
 if(path==='/api/application-batch'&&['GET','POST'].includes(req.method)){try{if(req.method==='GET')return send(res,200,populateBatch(db,uid)||{enabled:false});const x=JSON.parse(await body(req));if(x.action==='saved-search')return send(res,200,useSavedSearchQueue(db,uid,x));if(x.action==='next')return send(res,200,nextBatch(db,uid));if(x.action!=='reset')throw Error('Choose reset or next batch');const result=resetSupportBatch(db,uid,x);return send(res,200,result);}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/work-focus'&&['GET','PUT'].includes(req.method)){try{return send(res,200,req.method==='PUT'?setWorkFocus(db,uid,JSON.parse(await body(req))):ensureFocusedJob(db,uid));}catch(e){return send(res,409,{error:e.message});}}
@@ -247,6 +250,7 @@ if(localRoute){
  const focus=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(uid);if(focus&&focus.job_id!==j.id&&['claim','packet','step'].includes(localRoute[2]))return send(res,409,{error:'This application is parked while you work on one job at a time.'});
  if(!inActiveBatch(db,j)&&['claim','packet','step','answer'].includes(localRoute[2]))return send(res,409,{error:'This application is outside your active batch.'});
  const action=localRoute[2],owner=req.headers['x-applypilot-device'];
+ if(unresolvedAttemptMarker(db,uid,j.id)&&action!=='submitted')return send(res,409,{error:'This unresolved application is parked. Only a genuine employer receipt can reconcile it; execution and retries are blocked.'});
  if(typeof owner!=='string'||!/^[a-f0-9-]{36}$/.test(owner))return send(res,400,{error:'Update the extension and reconnect this browser'});
  if(action==='claim'&&req.method==='POST'){
   const savedQueueProblem=savedSearchClaimProblem(db,j);if(savedQueueProblem)return send(res,409,{error:savedQueueProblem});

@@ -99,6 +99,16 @@ const path=require('node:path');
    }else assert.equal((await review(page)).missing.length,1,mode);
    if(mode==='edited')assert.equal(await page.locator('#location').inputValue(),'Applicant edit');
   }
-  console.log('PASS: hosted input commits, async location selection and resume, edit/ambiguity protection, and one-click receipt guards verified');
+  // Optional texting opt-in inside a required phone wrapper must neither be
+  // answered by the worker nor block an otherwise ready automatic submission.
+  await page.setContent('<div class="ashby-application-form-field-entry"><label class="ashby-application-form-question-title _required_fixture">Phone Number</label><input type="tel" id="phone" required><div class="ashby-application-form-texting-consent-description"><label><input type="radio" name="communicationConsent">Yes - I consent to text messages</label><label><input type="radio" name="communicationConsent">No - I do not consent</label></div></div><button id="final">Submit application</button>');
+  await fill(page,{phone:'4165550132',answers_json:'{}'});
+  assert.equal((await review(page)).missing.length,0);
+  assert.equal((await review(page)).required,1);
+  assert.equal(await page.locator('[name="communicationConsent"]:checked').count(),0);
+  await page.locator('#final').evaluate(e=>{e.onclick=()=>{window.clicks++;document.body.innerHTML='<p>Your application has been received</p>';};});
+  assert.equal((await submitHostedApplication({...submission,submit:page.locator('#final')})).status,'submitted');
+  assert.equal(reservations,2,'one reservation for each distinct synthetic form');
+  console.log('PASS: hosted input commits, async location, optional consent isolation, and one-click receipt guards verified');
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

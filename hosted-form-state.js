@@ -4,7 +4,10 @@ export function hostedFormState(target) {
  const clean=value=>String(value||'').replace(/\s+/g,' ').trim();
  const text=e=>clean(e?.innerText||e?.textContent);
  const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>1&&r.height>1&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0'&&!e.closest('[hidden],[aria-hidden="true"]');};
- const wrapperFor=e=>e.closest('.ashby-application-form-field-entry,.ashby-application-form-input-radio-group,[data-field-entry-id],[data-automation-id*="formField" i],.application-question,fieldset,[role="group"],[class*="field" i]');
+ // Text-message consent is a separate optional question nested inside Ashby's
+ // required Phone field. It must not inherit the phone label or required mark.
+ // Native/ARIA requirements on the consent controls still count normally.
+ const wrapperFor=e=>e.closest('.ashby-application-form-texting-consent-description,.ashby-application-form-field-entry,.ashby-application-form-input-radio-group,[data-field-entry-id],[data-automation-id*="formField" i],.application-question,fieldset,[role="group"],[class*="field" i]');
  const titleFor=e=>wrapperFor(e)?.querySelector(':scope > .ashby-application-form-question-title,:scope > legend,:scope > label');
  const ids=value=>clean(value).split(/\s+/).map(id=>text(document.getElementById(id))).filter(Boolean).join(' ');
  function describe(e){

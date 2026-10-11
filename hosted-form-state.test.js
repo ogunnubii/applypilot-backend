@@ -20,6 +20,21 @@ function fixture(markup=html){
  const read=w.eval('('+hostedFormState.toString()+')');
  return {dom,w,read,d:w.document};
 }
+
+test('optional messaging consent nested under a required phone does not become a missing phone answer',()=>{
+ const sms='<div class="ashby-application-form-texting-consent-description"><p>Receive text message updates?</p><label><input type="radio" name="communicationConsent">Yes - I consent to receiving text messages</label><label><input type="radio" name="communicationConsent">No - I do not consent to receiving text messages</label></div>';
+ const f=fixture(field('Phone Number','<input id="phone" type="tel" required value="4165550132">'+sms));
+ try{
+  const state=f.read();assert.equal(state.required,1);assert.equal(state.filled,1);assert.equal(state.missing.length,0);
+  const radio=f.d.querySelector('[type=radio]');
+  assert.equal(f.read(radio).required,false);assert.match(f.read(radio).label,/consent to receiving text messages/);
+  assert.equal(f.d.querySelector('[type=radio]:checked'),null);
+  radio.required=true;assert.equal(f.read().required,2);assert.equal(f.read().missing.length,1);
+  assert.match(f.read().missing[0],/consent/);
+  radio.required=false;radio.setAttribute('aria-required','true');assert.equal(f.read().missing.length,1);
+  radio.removeAttribute('aria-required');f.d.querySelector('#phone').value='';assert.deepEqual([...f.read().missing],['Phone Number']);
+ }finally{f.dom.window.close();}
+});
 test('label-only required questions count once, including clipped resume and custom No choice',()=>{
  const f=fixture();try{
   const state=f.read();assert.equal(state.required,7);assert.equal(state.filled,0);

@@ -7,6 +7,15 @@ import {matches} from '../matching.js';
 import {diversifyApplications} from '../application-diversity.js';
 const scope=(extra={})=>normalizeSearchScope({roles:['Platform Engineer'],localPlaces:['Ontario'],remotePlaces:['Canada'],remoteWorldwide:true,remoteFromCountry:'canada',authorizedCountries:['canada'],preferBusinessContract:true,allowEmploymentFallback:true,preferRemote:true,preferSponsorship:true,...extra});
 const job=(extra={})=>({title:'Platform Engineer',location:'Remote Canada',remote:true,description:'Full-time employment.',...extra});
+
+test('foreign job locations override generic company worldwide-remote benefits',()=>{
+ for(const location of ['DACH; Germany','United Kingdom; United States','Remote USWEST','Remote EMEA']){
+  assert.equal(scopedWorkEligibility(job({location,description:'Work from anywhere in the world. Fully remote company.'}),scope()).eligible,false,location);
+ }
+ for(const location of ['Remote; USEAST; Canada','Worldwide remote','Toronto, Canada']){
+  assert.equal(scopedWorkEligibility(job({location,description:'Full-time employment. Work from anywhere in the world.'}),scope()).eligible,true,location);
+ }
+});
 test('structured titles preserve long lists, punctuation and case-insensitive deduplication without silent limits',()=>{
  const roles=Array.from({length:249},(_,i)=>`Platform Reliability and Operations Engineer ${i}`);
  roles.push(roles[0].toUpperCase());const s=scope({roles});assert.equal(s.roles.length,249);assert.equal(s.roles[248],roles[248]);
@@ -99,3 +108,4 @@ test('Setup imports structured scope through the existing signed-in form and rej
  await form.onsubmit({preventDefault(){},target:form});assert.equal(calls[0][0],'/searches');assert.equal(calls[0][2].scope.roles[0],'Platform Engineer');assert.equal(calls[0][2].scope_json,undefined);assert.equal(calls[1][0],'/searches/new-search/run');
  calls.length=0;form.elements.scope_json.value='{invalid';await form.onsubmit({preventDefault(){},target:form});assert.equal(calls.length,0);assert.match(notices.at(-1),/Nothing was saved/);assert.equal(form.querySelector('button').disabled,false);dom.window.close();
 });
+

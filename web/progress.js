@@ -505,8 +505,8 @@ function renderPreparationCampaign(c={}){
  const signature=JSON.stringify(c);if(box.dataset.signature===signature)return;box.dataset.signature=signature;
  box.replaceChildren(el('h2',c.id?'Your '+c.target+'-application preparation campaign':'Prepare 200 applications in Chrome'));
  if(c.id){
-  const counts=el('div');counts.className='completion-grid';
-  for(const [label,value]of [['Selected',c.selected],['Forms prepared',c.prepared],['Ready for Submit now',c.ready],['Completed',c.completed]]){const cell=el('div');cell.append(el('strong',String(value)),el('span',label));counts.append(cell);}box.append(counts);
+  const counts=el('div');counts.className='completion-grid';counts.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin:18px 0';
+  for(const [label,value]of [['Selected',c.selected],['Forms prepared',c.prepared],['Ready for Submit now',c.ready],['Completed',c.completed]]){const cell=el('div'),number=el('strong',String(value));number.style.cssText='display:block;font-size:32px;line-height:1.4';cell.style.cssText='background:white;border-radius:12px;padding:16px';cell.append(number,el('span',label));counts.append(cell);}box.append(counts);
   box.append(el('p',(c.enabled?'Active':'Paused')+' · '+c.batch_size+' unfinished applications at a time · final Submit stays with you.'));
   box.append(el('p','Titles rotate before repeating a title. Prepared counts mean the final form was fully filled at least once. Ready now requires a recent browser check. Neither means submitted.'));
   if(c.selected<c.target)box.append(el('p','The remaining '+(c.target-c.selected)+' places fill as fresh eligible jobs arrive and space opens in the current batch.'));
@@ -1025,7 +1025,7 @@ function compactJobCards(){
    if(child.tagName==='P'||child.tagName==='LABEL'||child.tagName==='BUTTON'&&child.textContent==='Delete application permanently')detail.append(child);
   }
   const autonomous=automaticSubmissionEnabled()&&card.id==='job-'+activeFocus.job_id&&card.dataset.autonomous==='true';
-  const notes={ready:autonomous?'Filled form paused before submission. Check the application below; no employer receipt is recorded yet.':'Filled — review the employer form and click Submit.',answers:'Your answer is needed above.',employer:'Verification or an employer declaration needs your attention.',held:'Paused by the employer application limit.',awaiting:'Submission attempted. Check for a receipt before retrying.',review:'Open the saved form to check the next step.',preparing:autonomous?'Preparing this application for automatic submission. Success requires an employer receipt.':'Autofill in progress - final Submit stays with you.'};
+  const notes={ready:autonomous?'Filled form paused before submission. Check the application below; no employer receipt is recorded yet.':'Filled — review the employer form and click Submit.',answers:'Your answer is needed above.',employer:'Verification or an employer declaration needs your attention.',held:'Paused by the employer application limit.',awaiting:'Submission attempted. Check for a receipt before retrying.',review:'Open the saved form to check the next step.',preparing:autonomous?'Preparing this application for automatic submission. Success requires an employer receipt.':activePreparation.enabled&&['saved','queued'].includes(card.dataset.state)?'Waiting for Chrome preparation — final Submit stays with you.':'Autofill in progress - final Submit stays with you.'};
   const note=card.querySelector('.manual-autofill')?'Autofill can prepare this form. Review pay and eligibility before you click Submit.':card.dataset.local!=='true'&&card.querySelector('.manual-application-link')?'Review the posting and apply on its website. Pay and eligibility still need checking.':notes[card.dataset.preparation];if(note){const p=el('p',note);p.className='job-next-step';heading.after(p);}
   if(detail.children.length>1)card.append(detail);
  }

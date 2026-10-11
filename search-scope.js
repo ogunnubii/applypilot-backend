@@ -77,6 +77,10 @@ export function scopedWorkEligibility(job,scope){
  if(!text.trim())return {eligible:false,reason:'Employer description is required to verify work eligibility'};
  const canada=ontarioLocation(location)||/\bcanada\b/i.test(location);
  const global=/\b(worldwide|anywhere|global)\b/i.test(location)||/\b(remote worldwide|worldwide remote|work (?:remotely )?from anywhere(?: in the world)?)\b/i.test(text);
+ // Posting locations outrank a company's generic remote-work benefits. A role
+ // listed for DACH or the US/UK is not made Canada-eligible by a worldwide slogan.
+ const namedForeignRegion=/\b(?:DACH|EMEA|APAC|Europe|European Union|Germany|Deutschland|Austria|Switzerland|United Kingdom|United States|USA|USEAST|USWEST|UK|France|Spain|Italy|Netherlands|Ireland|Poland|Portugal|India|Australia|New Zealand|Singapore|Japan|Brazil|Mexico|London|Berlin|Paris|Bangalore|Bengaluru|New York|San Francisco)\b/i.test(location);
+ if(remote&&!canada&&namedForeignRegion&&!/\b(?:worldwide|anywhere|global)\b/i.test(location))return {eligible:false,reason:'The role lists locations outside Canada; a general worldwide-remote statement is insufficient'};
  const restriction=/\banywhere\s+in\s+(?:the\s+)?(?:US|USA|United States|UK|United Kingdom|Europe)\b|\b(?:US|USA|United States|UK|EU|Europe)[ -]only\b|\b(?:must|need to)\s+(?:be\s+)?(?:based|reside|located|live)\s+in\s+(?!Canada\b)|\b(?:only|restricted to|limited to)\s+(?:the\s+)?(?:US|USA|United States|UK|EU|Europe)\b|\b(?:excluding|except|not available in)\s+Canada\b/i.test(location+' '+text);
  const foreignAuthorization=/\b(?:must|need to|required to)\s+(?:already\s+)?(?:be\s+)?(?:legally\s+)?(?:authorized|eligible)\s+to\s+work\s+in\s+(?:the\s+)?(?:US|USA|U\.S\.?|United States|UK|United Kingdom)(?=\W|$)|\b(?:US|United States)\s+work\s+authorization\s+(?:is\s+)?required/i.test(text);
  if(foreignAuthorization)return {eligible:false,restriction:'foreign-work-authorization',reason:'Posting requires foreign work authorization; Canadian authorization is insufficient'};
@@ -109,3 +113,4 @@ export function currentScopeAssessment(db,job){
 }
 
 export function searchScopeSignature(scope){return createHash('sha256').update(JSON.stringify(normalizeSearchScope(scope))).digest('hex');}
+

@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {approvedHostedCheckbox,approvedHostedRadioIndex,hostedFieldAnswer,hostedOptionChoice,protectedHostedQuestion,scopedHostedComboboxOptions} from './hosted-form.js';
 
+test('Canadian phone formatting agrees while different numbers, extensions and unscoped country changes pause',()=>{
+ const field={label:'Phone Number',type:'tel'},profile={phone:'+1 (416) 555-0132',location:'Toronto, Ontario, Canada'};
+ for(const phone of ['4165550132','+14165550132','1-416-555-0132'])assert.equal(hostedFieldAnswer(field,profile,{'Phone number':phone})?.answer,profile.phone);
+ for(const phone of ['4165550133','4165550132 ext 4','+44165550132'])assert.equal(hostedFieldAnswer(field,profile,{'Phone number':phone}),null);
+ assert.equal(hostedFieldAnswer(field,{phone:'+14165550132'},{Phone:'4165550132'}),null);
+ assert.equal(hostedFieldAnswer(field,{phone:'+44 (20) 1234-5678'},{Phone:'+442012345678'})?.answer,'+44 (20) 1234-5678');
+});
+
 test('hosted personal name and current-location wording resolve saved profile facts',()=>{
  const profile={name:'Fixture Applicant',location:'Toronto, Ontario, Canada'};
  for(const label of ['Legal Name','Full Legal Name','Your legal full name','Please enter your legal name','candidateLegalName'])assert.equal(hostedFieldAnswer({label},profile)?.answer,profile.name,label);

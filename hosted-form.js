@@ -45,6 +45,15 @@ function trustedAnswer(kind,profile,answers){
  const direct=knownAnswer(CANONICAL[kind],profile,{});
  const saved=[...new Set(Object.entries(answers||{}).filter(([question,value])=>profileKind(question)===kind&&!protectedHostedQuestion(question)&&!THIRD_PARTY_CONTACT.test(policyText(question))&&['string','number','boolean'].includes(typeof value)&&String(value).trim()).map(([,value])=>String(value).trim()))];
  const comparable=value=>{
+  if(kind==='phone'){
+   const phone=String(value).trim().replace(/[\s().-]/g,'');
+   // Formatting is not a conflicting fact. Local ten-digit numbers may
+   // match +1 only when the applicant explicitly lives in Canada.
+   const canada=/\bcanada\s*$/i.test(String(profile?.location||''))||/^canada$/i.test(String(profile?.country||answers?.Country||'').trim());
+   if(canada&&/^(?:\+?1)?[2-9]\d{2}[2-9]\d{6}$/.test(phone))return '+1'+phone.slice(-10);
+   if(/^\+?\d+$/.test(phone))return phone;
+   return String(value).trim();
+  }
   if(kind==='linkedin')try{
    const url=new URL(String(value));
    if(['http:','https:'].includes(url.protocol)&&['linkedin.com','www.linkedin.com'].includes(url.hostname)&&!url.username&&!url.password&&!url.port&&/^\/in\/[^/]+\/?$/.test(url.pathname)&&[...url.searchParams.keys()].every(key=>key.startsWith('utm_')))

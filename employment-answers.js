@@ -2,10 +2,12 @@ import {scopedWorkEligibility} from './search-scope.js';
 // Employer eligibility questions use explicit applicant answers, never model
 // inference, search preferences, nationality or an inferred immigration status.
 const clean=value=>String(value??'').normalize('NFKC').replace(/[\u2013\u2014]/g,'-').replace(/[?*]+$/g,'').replace(/\s+/g,' ').trim().toLowerCase();
-export const EMPLOYMENT_KEYS={availability:'Available to start',canadaAuthorization:'Work authorization - Canada',canadaSponsorship:'Visa sponsorship now or in future - Canada',over18:'Over 18 - applicant confirmed'};
+export const EMPLOYMENT_KEYS={availability:'Available to start',canadaAuthorization:'Work authorization - Canada',canadaSponsorship:'Visa sponsorship now or in future - Canada',over18:'Over 18 - applicant confirmed',currentEmployer:'Current employer',currentTitle:'Current job title'};
 const yesNo=value=>/^(yes|no)$/i.test(String(value||'').trim())?String(value).trim().toLowerCase()==='yes'?'Yes':'No':null;
 function questionKind(value){
  const q=clean(value);
+ if(/^(?:your )?current(?:\s*\/\s*most recent| or most recent)? (?:company(?: name)?|employer(?: name)?)$/.test(q))return 'currentEmployer';
+ if(/^(?:your )?current(?:\s*\/\s*most recent| or most recent)? (?:job )?title$/.test(q))return 'currentTitle';
  if(/^are you (?:over (?:the age of )?(?:18|eighteen)(?: years old| years of age)?|at least (?:18|eighteen)(?: years old| years of age)?)$/.test(q))return 'adult';
  if(/^(?:when (?:can|could) you start(?: a new role| work| employment)?|(?:what is your )?(?:earliest start date|availability to start|available to start|notice period))$/.test(q))return 'availability';
  const where='(?:canada|the (?:country|location) (?:where|in which) (?:the|this) (?:job|role|position) is (?:located|based)|this country)';
@@ -43,6 +45,13 @@ export function approvedEmploymentAnswer(field,profile){
  const entries=Object.entries(context.application||{}).filter(([q])=>clean(q)===clean(question));
  if(new Set(entries.map(([,a])=>clean(a))).size>1)return null;
  const exact=entries.length?String(entries[0][1]).trim():null;
+ if(kind==='currentEmployer'||kind==='currentTitle'){
+  const saved=context.facts[EMPLOYMENT_KEYS[kind]],value=exact??saved;
+  // Historical employment is not automatically current employment. Only the
+  // dedicated current-profile fact or this application's explicit answer counts.
+  if(exact&&saved&&clean(exact)!==clean(saved))return null;
+  return typeof value==='string'&&value.trim()&&value.length<=200?{kind:'employment',answer:value.trim()}:null;
+ }
  if(kind==='adult'){
   // Only an explicit age-threshold answer is usable. No inference from dates,
   // degree, work history, consent checkboxes, or another age threshold.

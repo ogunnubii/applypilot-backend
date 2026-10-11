@@ -163,3 +163,18 @@ test('searchable location types a query without blur or pretending an option is 
  const f=fixture('<input role="combobox"><input role="combobox" value="User selection"><button role="combobox">Choose</button>');
  try{const e=f.w.document.querySelector('input');await typeHostedSearch(f.locator(e),'Toronto, Ontario, Canada');assert.equal(e.value,'Toronto, Ontario, Canada');assert.equal(e.dataset.applypilotUncommittedSearch,'true');assert.equal(f.w.document.activeElement,e);assert(!f.calls.includes('blur'));assert.equal(await typeHostedSearch(f.locator(f.w.document.querySelectorAll('input')[1]),'Replacement'),false);assert.equal(await typeHostedSearch(f.locator(f.w.document.querySelector('button')),'Replacement'),false);}finally{f.dom.window.close();}
 });
+
+test('an unchanged worker-owned location query can resume without typing twice or overwriting edits',async()=>{
+ const f=fixture('<input role="combobox">');
+ try{
+  const input=f.w.document.querySelector('input'),locator=f.locator(input);
+  assert.equal(await typeHostedSearch(locator,'Toronto, Ontario, Canada'),true);
+  const count=f.calls.length;
+  assert.equal(await typeHostedSearch(locator,'Toronto, Ontario, Canada'),true);
+  assert.equal(f.calls.length,count);
+  input.value='Applicant edit';assert.equal(await typeHostedSearch(locator,'Toronto, Ontario, Canada'),false);
+  assert.equal(input.value,'Applicant edit');
+  input.value='Toronto, Ontario, Canada';delete input.dataset.applypilotUncommittedSearch;
+  assert.equal(await typeHostedSearch(locator,'Toronto, Ontario, Canada'),false);
+ }finally{f.dom.window.close();}
+});

@@ -6,8 +6,8 @@ const fs=require('node:fs');
 const path=require('node:path');
 
 (async()=>{
- const {fillHostedText}=await import('../hosted-input.js');
- const {hostedFieldAnswer}=await import('../hosted-form.js');
+ const {fillHostedText,typeHostedSearch}=await import('../hosted-input.js');
+ const {hostedFieldAnswer,hostedOptionChoice,protectedHostedQuestion,scopedHostedComboboxOptions}=await import('../hosted-form.js');
  const {submitHostedApplication}=await import('../hosted-submission.js');
  const {hostedFormState}=await import('../hosted-form-state.js');
  const worker=fs.readFileSync(path.join(__dirname,'../worker.js'),'utf8');
@@ -66,6 +66,39 @@ const path=require('node:path');
   await fillHostedText(page.locator('#controlled'),'Élodie 王');assert.equal(await page.evaluate(()=>controlledState),'Élodie 王');
   assert.equal(await fillHostedText(page.locator('#existing'),'Replacement'),false);assert.equal(await page.locator('#existing').inputValue(),'Applicant edit');
   await assert.rejects(fillHostedText(page.locator('#truncated'),'Full answer'),{code:'HOSTED_INPUT_NOT_RETAINED'});
-  console.log('PASS: hosted keyboard/blur commits real framework state; exact values, Unicode, multiline, truncation, existing edits, ARIA errors, disabled Submit, and one-click receipt guards verified');
+  // Exercise the real worker custom-control loop against an async remote-style
+  // picker. A stale option must not make it stop before the matching city arrives.
+  const customSource=worker.slice(worker.indexOf('async function customControls('),worker.indexOf('\nasync function recordFormProgress('));
+  const customControls=new Function('fieldDescriptor','hostedFieldAnswer','protectedHostedQuestion','typeHostedSearch','scopedHostedComboboxOptions','prepareHostedDropdown','authorizeResearchFill','fillHostedButtonGroups','db',customSource+';return customControls;')(
+   locator=>locator.evaluate(hostedFormState),hostedFieldAnswer,protectedHostedQuestion,typeHostedSearch,scopedHostedComboboxOptions,
+   async(_db,_job,p,d,opts,answers)=>hostedOptionChoice(d,opts,p,answers),()=>true,async()=>{},null);
+  for(const mode of ['fresh','resume','edited','ambiguous']){
+   await page.setContent('<label>Location<input id="location" role="combobox" aria-controls="cities" aria-expanded="false" required></label><div role="listbox" id="cities"></div><button id="never-submit">Submit</button>');
+   await page.evaluate(mode=>{
+    window.selections=0;window.submits=0;
+    const city=document.querySelector('#location'),list=document.querySelector('#cities'),answer='Toronto, Ontario, Canada';
+    document.querySelector('#never-submit').onclick=()=>window.submits++;
+    if(mode!=='fresh'){city.value=mode==='edited'?'Applicant edit':answer;city.dataset.applypilotUncommittedSearch='true';}
+    const render=()=>{
+     city.setAttribute('aria-expanded','true');list.innerHTML='<div role="option">Toronto, Ohio, United States</div>';
+     clearTimeout(window.pickerTimer);window.pickerTimer=setTimeout(()=>{
+      list.innerHTML='<div role="option">'+answer+'</div>'+(mode==='ambiguous'?'<div role="option">'+answer+'</div>':'');
+      for(const option of list.children)option.onclick=()=>{window.selections++;city.value=option.textContent;city.setAttribute('aria-expanded','false');list.innerHTML='';};
+     },900);
+    };
+    city.onclick=render;city.oninput=render;
+   },mode);
+   const p={location:'Toronto, Ontario, Canada',answers_json:'{}'};
+   await customControls(page,p,{});
+   assert.equal(await page.evaluate(()=>selections),['fresh','resume'].includes(mode)?1:0,mode);
+   assert.equal(await page.evaluate(()=>submits),0,mode);
+   if(['fresh','resume'].includes(mode)){
+    assert.equal(await page.locator('#location').inputValue(),p.location);
+    assert.equal(await page.locator('#location').getAttribute('data-applypilot-uncommitted-search'),null);
+    assert.equal((await review(page)).missing.length,0);
+   }else assert.equal((await review(page)).missing.length,1,mode);
+   if(mode==='edited')assert.equal(await page.locator('#location').inputValue(),'Applicant edit');
+  }
+  console.log('PASS: hosted input commits, async location selection and resume, edit/ambiguity protection, and one-click receipt guards verified');
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -9,6 +9,17 @@ const visa='Will you now or in the future require sponsorship for employment vis
 function profile(location='Toronto, Ontario, Canada',saved=facts,application={}){const p={answers_json:JSON.stringify(saved)},j={job_metadata_json:JSON.stringify({location}),answers_json:JSON.stringify(application)};return {...p,employment_context:employmentContext(p,j)};}
 const options=[{label:'Yes',value:'yes'},{label:'No',value:'no'}];
 
+test('current employer and title use explicit current facts, never old employer captures or desired roles',()=>{
+ const saved={[K.currentEmployer]:'Fixture Company',[K.currentTitle]:'Senior Cloud Engineer'};
+ for(const label of ['Current employer','Current/Most Recent Company Name','Your current or most recent employer'])assert.equal(hostedFieldAnswer({label},profile('Canada',saved))?.answer,saved[K.currentEmployer],label);
+ for(const label of ['Current job title','Current/Most Recent Job Title'])assert.equal(hostedFieldAnswer({label},profile('Canada',saved))?.answer,saved[K.currentTitle],label);
+ for(const label of ['Previous employer','Desired job title','Current employer phone number','Your supervisor current job title','I certify my current job title'])assert.equal(hostedFieldAnswer({label},profile('Canada',saved)),null,label);
+ assert.equal(hostedFieldAnswer({label:'Current employer',description:'Provide the employer of your reference'},profile('Canada',saved)),null);
+ assert.equal(hostedFieldAnswer({label:'Current employer'},profile('Canada',{}, {'Employer':'Old Company'})),null);
+ assert.equal(hostedFieldAnswer({label:'Current employer'},profile('Canada',saved,{'Current employer':'Other Company'})),null);
+ assert.equal(hostedFieldAnswer({label:'Current employer'},profile('Canada',{}, {'Current employer':'Approved Company'}))?.answer,'Approved Company');
+});
+
 test('observed location-based eligibility wording uses only approved country facts',()=>{
  const authorization='Are you legally authorized to work in the location where this role is based?';
  const sponsorship='Will you now or in the future require visa sponsorship?';

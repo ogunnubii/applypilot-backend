@@ -11,7 +11,12 @@ const TEXT_TYPES=new Set(['text','email','tel','url','search','number','textarea
 export async function typeHostedSearch(locator,answer){
  const value=String(answer??'');
  if(!value||!await locator.evaluate(e=>e.matches('input[role="combobox"]')&&['text','search'].includes(e.type)))return false;
- if(!await locator.isEditable()||await locator.inputValue()!=='')return false;
+ if(!await locator.isEditable())return false;
+ if(await locator.inputValue()!==''){
+  // Resume only our own uncommitted, unchanged search. Never rewrite a
+  // selected value or a user's edit while waiting for remote suggestions.
+  return await locator.inputValue()===value&&await locator.evaluate(e=>e.dataset.applypilotUncommittedSearch==='true');
+ }
  await locator.click();
  if(!await locator.isEditable()||await locator.inputValue()!=='')return false;
  await locator.evaluate(e=>e.dataset.applypilotUncommittedSearch='true');

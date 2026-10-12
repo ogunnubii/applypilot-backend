@@ -115,7 +115,7 @@ function recoverDiscoveryEligibility(db,c,date){
  // This is never a reset of an opened form, selected member or attempted job.
  const rows=db.prepare(`SELECT * FROM jobs j WHERE user_id=? AND applicant_id=?
  AND status='needs_review' AND challenge='Pipeline needs attention' AND attempts=0
- AND local_owner IS NULL AND local_attempt_at IS NULL AND COALESCE(local_phase,'')=''
+ AND local_owner IS NULL AND local_attempt_at IS NULL AND COALESCE(local_phase,'') IN ('','ready')
  AND handoff_available=0 AND COALESCE(confirmation,'')=''
  AND NOT EXISTS(SELECT 1 FROM automatic_members m WHERE m.job_id=j.id)
  AND EXISTS(SELECT 1 FROM events e WHERE e.job_id=j.id AND e.type='discovered')

@@ -6,11 +6,11 @@ import {installSingleApplication,inFlightApplication,receiptConfirmed,startOneAp
 import {normalizeSearchScope,scopeIntent} from '../search-scope.js';
 import {jobIntelligence} from '../job-intelligence.js';
 const scope=normalizeSearchScope({roles:['Platform Engineer'],localPlaces:['ontario'],remotePlaces:['canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true,preferRemote:true});
-test('saved search preview and selection respect salary and annotated interview exclusions',()=>{
+test('saved search preview drops disabled legacy salary filters and retains annotated interview exclusions',()=>{
  const {db,add}=fixture();useSavedSearchQueue(db,'u',{applicant_id:'p'});add('low');add('interview');
  db.exec("UPDATE jobs SET company='Example' WHERE id='interview';INSERT INTO external_application_history VALUES('interview','u','Example','Platform Engineer (Weekend Shift)','interview','example','platformengineerweekendshift')");
  db.prepare("UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.pay',json(?)) WHERE id='low'").run(JSON.stringify([{currency:'CAD',annualMin:85000,annualMax:110000}]));
- const r=savedSearchQueueState(db,'u',{applicant_id:'p'}).readiness;assert.equal(r.eligible,0);assert.match(r.held_jobs.find(j=>j.id==='low').reason,/below/);assert.match(r.held_jobs.find(j=>j.id==='interview').reason,/interview/);db.close();
+ const r=savedSearchQueueState(db,'u',{applicant_id:'p'}).readiness;assert.equal(r.eligible,1);assert.deepEqual(r.candidates.map(j=>j.id),['low']);assert.match(r.held_jobs.find(j=>j.id==='interview').reason,/interview/);db.close();
 });
 test('one-job preparation cannot reserve a Submit and remains selected for applicant review',()=>{
  const {db,add}=fixture();useSavedSearchQueue(db,'u',{applicant_id:'p'});add('manual');add('later');

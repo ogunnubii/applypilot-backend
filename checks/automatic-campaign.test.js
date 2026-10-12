@@ -64,13 +64,13 @@ test('explicit preparation recovery preserves the member, records assistance and
  }
 });
 
-test('prior attempts, interviews, below-target pay, ineligible locations and other owners never enter',()=>{
+test('prior attempts, interviews, ineligible locations and other owners never enter; disabled legacy pay targets do not transfer',()=>{
  const f=fixture();f.add('good');f.add('interview','AI Support Engineer','OpenAI');
  f.db.exec("INSERT INTO external_application_history VALUES('interview','u','OpenAI','AI Support Engineer (Weekend Shift)','interview','openai','aisupportengineerweekendshift')");
  for(const id of ['attempt','clicked','old','local','foreign','low','wrong-country'])f.add(id);
  f.db.exec("INSERT INTO autonomous_attempts VALUES('attempt','hosted-worker','2026');UPDATE jobs SET local_attempt_at='2026' WHERE id='clicked';UPDATE jobs SET status='submitted',confirmation='Thank you for applying' WHERE id='old';UPDATE jobs SET local_owner='existing' WHERE id='local';UPDATE jobs SET user_id='other' WHERE id='foreign';UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.location','Germany','$.description','Remote within Germany only') WHERE id='wrong-country'");
  f.db.prepare("UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.pay',json(?)) WHERE id='low'").run(JSON.stringify([{currency:'CAD',annualMin:85000,annualMax:110000}]));
- const old=f.get('old');assert.deepEqual(f.start().members.map(m=>m.job_id),['good']);assert.deepEqual(f.get('old'),old);f.db.close();
+ const old=f.get('old');assert.deepEqual(f.start().members.map(m=>m.job_id).sort(),['good','low']);assert.deepEqual(f.get('old'),old);f.db.close();
 });
 
 test('twenty settled dispositions open the next twenty once, survive restart and keep uncertain attempts protected',()=>{

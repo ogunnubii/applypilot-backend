@@ -208,13 +208,15 @@ async function refresh(force=false){
    };card.insertBefore(resume,actions);
    if(!job.local_attempt_at){const automatic=el('button','Continue autofill');automatic.className='continue-autofill';automatic.onclick=async()=>{automatic.disabled=true;actions.open=true;msg.textContent='Resuming saved answers…';try{await resumeLocalApplication(job.id);msg.textContent=automaticSubmissionFor(job)?'Selected application resumed with automatic submission enabled.':'Autofill resumed. Final Submit stays with you.';await refresh(true);}catch(e){msg.textContent=e.message;}finally{automatic.disabled=false;}};card.insertBefore(automatic,actions);}
   }
-  if(job.status!=='local_browser'&&!human&&!upload&&!job.handoff_available&&!job.metadata?.manualReview){
-   const form=el('form');form.oninput=()=>{form.dataset.dirty='true'};
-   const fields=[];
-   if(questions.length){for(const question of [...new Set(questions)]){const input=field(form,question);fields.push({question,input});chatQuestionTools(form,question,job,input);}}
-   else{const q=field(form,'Question shown on the employer form');q.maxLength=4000;const input=field(form,'Your answer');fields.push({questionInput:q,input});chatQuestionTools(form,()=>q.value,job,input)}
-   for(const f of fields)autoSaveField(f.input,()=>f.question||f.questionInput.value,[job],form);
-   form.onsubmit=e=>e.preventDefault();actions.append(form);
+  if(questions.length&&!upload&&!job.handoff_available){
+   const answers=el('section');answers.className='prepared-answers';answers.append(el('h3','Prepared answers'));
+   let saved={};try{saved=JSON.parse(job.answers_json||'{}')}catch{}
+   for(const question of [...new Set(questions)]){
+    const row=el('div'),value=Object.hasOwn(saved,question)?saved[question]:null;
+    row.append(el('strong',question));
+    row.append(el('p',typeof value==='string'&&value.trim()?value:'Deferred — '+(job.draft_needs?.[question]||'No supported answer is saved yet. ApplyPilot uses your approved facts and AI where supported; other eligible jobs can continue.')));answers.append(row);
+   }
+   actions.append(answers);
   }
   const link=el('a',job.metadata?.manualReview?'Open application':'Open this application on the employer site');link.href=job.url;link.target='_blank';link.rel='noopener noreferrer';if(job.metadata?.manualReview){link.className='primary manual-application-link';card.insertBefore(link,actions);}else actions.append(link);
   if(human||upload)actions.append(el('p',job.challenge==='Unconfirmed submission'?'Check whether the employer received this application before trying again.':job.challenge==='Ready to submit'?'Review the filled application in the live browser, then click the employer’s Submit button yourself.':'Use Take over to work in the worker’s browser. The separate employer link starts a different browser session.'));

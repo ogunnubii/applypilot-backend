@@ -71,6 +71,17 @@ for(const client of ['assistant-client.js','web/progress.js']){
    }finally{f.close();}
   });
  }
+ test(client+' blocked application shows persisted answers and deferrals without requesting manual drafting',async()=>{
+  const f=fixture(client);
+  try{
+   const job=f.state.jobs.find(j=>j.id==='blocked');job.required_fields_json=JSON.stringify(['Describe your skills','Can you commit to overnight shifts?']);job.answers_json=JSON.stringify({'Describe your skills':'Approved fictional experience.'});
+   await f.w.refresh(true);
+   const card=f.w.document.querySelector('#job-blocked'),answers=card.querySelector('.prepared-answers');
+   assert(answers);assert.match(answers.textContent,/Approved fictional experience/);assert.match(answers.textContent,/Deferred/);
+   assert.equal(answers.querySelectorAll('textarea,input,button').length,0);assert(!card.textContent.includes('Help draft an answer'));
+   assert(f.calls.every(call=>call.method==='GET'));
+  }finally{f.close();}
+ });
  test(client+' settings pending filter is not overridden by focus or batch',async()=>{
   const f=fixture(client,{batch:{enabled:true,selected:1,job_ids:['openai']}});
   try{

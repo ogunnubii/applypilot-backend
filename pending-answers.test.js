@@ -29,6 +29,19 @@ test('pending answer recovery never touches attempted, confirmed, live or exclud
  }
  const f=fixture();f.add('j',['Describe your experience']);await f.run({check:()=> 'Employer security hold',answer:()=>{throw Error('must not call')}});assert.deepEqual(f.answers('j'),{});f.db.close();
 });
+
+test('background contact answers use verified profile fields and never send contact conflicts to AI',async()=>{
+ const f=fixture();f.db.exec("ALTER TABLE applicants ADD COLUMN name; ALTER TABLE applicants ADD COLUMN email; ALTER TABLE applicants ADD COLUMN phone; ALTER TABLE applicants ADD COLUMN location; UPDATE applicants SET name='Fictional Example',email='fictional@example.invalid',phone='+442079460000',location='London, UK'");
+ f.add('j',['Full name','Email','Phone','Current location']);let calls=0;
+ const answer=async()=>{calls++;return {answer:'must not be used'};};
+ assert.equal((await f.run({answer})).filled,4);assert.equal(calls,0);
+ assert.deepEqual(f.answers('j'),{'Full name':'Fictional Example',Email:'fictional@example.invalid',Phone:'+442079460000','Current location':'London, UK'});
+ f.db.exec("UPDATE applicants SET answers_json='{\"Email\":\"conflict@example.invalid\"}'");f.add('conflict',['Email']);
+ assert.equal((await f.run({answer})).filled,0);assert.equal(calls,0);assert.deepEqual(f.answers('conflict'),{});
+ f.db.exec("UPDATE applicants SET email='conflict@example.invalid'");
+ assert.equal((await f.run({answer})).filled,1,'profile correction invalidates the deferred answer fingerprint');assert.equal(calls,0);
+ assert.equal(f.answers('conflict').Email,'conflict@example.invalid');f.db.close();
+});
 test('provider failures are bounded and do not stop supported jobs; edits and new attempts win over AI',async()=>{
  const f=fixture();f.add('bad',['Describe your skills']);f.add('good',['Explain your background']);let calls=0;
  const answer=async input=>{assert.equal(input.persist,false);calls++;if(input.job.id==='bad')throw Error('Provider offline');return {answer:'Saved professional experience.',source:'approved_facts'};};
@@ -36,4 +49,15 @@ test('provider failures are bounded and do not stop supported jobs; edits and ne
  for(const mutation of ["UPDATE applicants SET consent=0","UPDATE jobs SET local_attempt_at='2026'","UPDATE jobs SET answers_json='{\"Describe your skills\":\"My correction\"}'"]){
   const f=fixture();f.add('j',['Describe your skills']);const result=await f.run({answer:async()=>{f.db.exec(mutation);return {answer:'Stale AI answer',source:'approved_facts'};}});assert.equal(result.filled,0);assert.notEqual(f.answers('j')['Describe your skills'],'Stale AI answer');f.db.close();
  }
+});
+
+test('an explicit saved annual CAD floor answers salary expectations without an active legacy batch',async()=>{
+ const f=fixture(),question='What are your salary expectations?';f.add('j',[question]);
+ f.db.exec("UPDATE applicants SET answers_json='{\"Minimum annual salary target (CAD)\":\"87000\"}'");
+ assert.equal((await f.run()).filled,1);assert.equal(f.answers('j')[question],'At least CAD 87,000 per year, depending on the role and total compensation.');
+ for(const value of ['87000 USD','-87000','not supplied']){
+  f.add(value,[question]);f.db.prepare('UPDATE applicants SET answers_json=?').run(JSON.stringify({'Minimum annual salary target (CAD)':value}));
+  await f.run();assert.deepEqual(f.answers(value),{});
+ }
+ f.db.close();
 });

@@ -234,6 +234,11 @@ async function handle(m,sender){
   b.touched=Date.now();await saveRecord(b);return {continue:true};
  }
  if(m.action==='assistance'){b.assisted=true;await saveRecord(b);return api('/jobs/'+b.id+'/local/assistance','POST',{kind:'human'});}
+ if(m.action==='cover-letter'){
+  if(b.attempted)throw Error('Submission already started.');
+  const result=await api('/jobs/'+b.id+'/local/cover-letter','POST',{question:m.question,required:m.required,format:m.format,accept:m.accept,maxLength:m.maxLength,fieldHelp:m.fieldHelp});
+  if(result.manualSubmit){b.autonomousSubmit=false;await saveRecord(b);}return result;
+ }
  if(m.action==='answer'){if(b.attempted)throw Error('Submission already started.');return api('/jobs/'+b.id+'/local/answer','POST',{question:m.question,choices:m.choices,answerFormat:m.answerFormat,maxLength:m.maxLength,fieldHelp:m.fieldHelp});}
  if(m.action==='research-answer')return api('/jobs/'+b.id+'/local/research-answer','POST',{question:m.question});
  if(m.action==='research-used')return api('/jobs/'+b.id+'/local/research-used','POST',{questions:m.questions});

@@ -1,5 +1,36 @@
 # ApplyPilot
 
+## Required cover letters (helper 0.6.36)
+
+When an active application requires a clearly identified cover letter, ApplyPilot
+prepares a short letter naming the saved role and company, using verbatim relevant
+sentences from the applicant's saved Professional background or confirmed experience
+entries. No model or external provider is used, and job requirements never become
+applicant claims. Optional letters are left empty. If professional facts, role
+identity or space are insufficient, the form asks for the missing information or
+the applicant's own letter.
+
+Chrome and hosted preparation support required text boxes and PDF/DOCX upload
+fields, choose an accepted format, and preserve populated fields and existing
+application-specific letters. A resume is never substituted for a cover letter.
+Unsupported upload formats and ambiguous combined resume/letter fields require
+manual handling. PDF generation uses the installed Playwright Chromium;
+DOCX generation does not need a browser.
+
+Letters remain scoped to their owner, applicant and job. Review the saved text
+under **Review cover letter** in the application card and edit the employer form
+before submitting. Changes to profile facts, confirmed experience or role context
+mark previews stale and trigger fresh preparation for empty fields. Existing
+employer-form edits remain untouched. Cover-letter preparation never queues a
+paused application or authorizes submission; an application with a prepared
+letter requires the applicant's final review and manual Submit click, including
+when an automatic campaign was already enabled.
+
+`npm test` includes service, document extraction and isolated API checks.
+`node checks/cover-letter-browser-smoke.cjs` runs 20 fully intercepted
+Chrome/hosted scenarios; optionally set `TEST_BROWSER_PATH` to Chrome or Edge.
+No real employer application is sent by these checks.
+
 ApplyPilot keeps the existing Node 24 API, SQLite database, discovery service, Playwright worker, dashboard and Manifest V3 extension. Applications use saved applicant facts and exact approved answers. The form worker no longer generates application answers with an AI model; the existing advisory chat remains separate.
 
 ## Guarded autonomous applications

@@ -12,6 +12,7 @@ import {ensureFocusedJob,savedSearchClaimProblem,focusAllowsSubmit,reserveAutono
 import {applicationLimit,employerHold,recordEmployerLimit} from './employer-limits.js';
 import {installLibrary,reusableAnswers,captureAnswers,confirmLibrary} from './answer-library.js';
 import {installDrafts} from './answer-drafts.js';
+import {installCoverLetters,prepareCoverLetter} from './cover-letter.js';
 import {hasResearchDraftForQuestion,installResearch,markResearchDraftUsed} from './google-research.js';
 import {researchConsentWithdrawn} from './research-consent.js';
 import {automaticTextAnswer} from './automatic-answer.js';
@@ -26,6 +27,7 @@ import {runDueSearches} from './discovery.js';
 import {prioritizeApplications} from './application-diversity.js';
 installLibrary(db);
 installDrafts(db);
+installCoverLetters(db);
 installResearch(db);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function set(job,status,message,challenge=null,confirmation=null){if(db.prepare('SELECT status FROM jobs WHERE id=?').get(job.id)?.status==='archived')return;db.prepare('UPDATE jobs SET status=?,challenge=?,confirmation=?,updated_at=? WHERE id=?').run(status,challenge,confirmation,now(),job.id);event(job.id,status,message)}
@@ -75,6 +77,15 @@ async function custom(page,p,j){
   const l=inputs.nth(i);if(await l.inputValue().catch(()=>'')!=='')continue;
   const descriptor=await fieldDescriptor(l),q=descriptor.label||descriptor.ariaLabel||descriptor.description||descriptor.placeholder||descriptor.name||descriptor.id;if(!q)continue;
   if(descriptor.ambiguous||descriptor.contextRequired){if(descriptor.required)unresolved.push(q);continue;}
+  if(/\bcover[\s_-]*letter\b/i.test(q)){
+   if(!descriptor.required)continue;
+   try{
+    const result=await prepareCoverLetter(db,j.user_id,j.id,{question:q,required:true,fieldHelp:descriptor.description,maxLength:await l.evaluate(e=>e.maxLength>=0?e.maxLength:4000),check:job=>employerHold(db,job)?.message||savedSearchClaimProblem(db,job)||''});
+    if(!sameApplication(page.url(),j.url)||JSON.stringify(await fieldDescriptor(l))!==JSON.stringify(descriptor))continue;
+    if(result.answer){await l.evaluate(e=>e.dataset.applypilotApplicationOnly='true');if(await fillHostedText(l,result.answer))event(j.id,'cover_letter','Prepared a cover letter. Review it and click Submit yourself.');}
+    else {unresolved.push(q);event(j.id,'answer_blocked',result.reason);}
+   }catch(error){unresolved.push(q);event(j.id,'answer_blocked',error.message);}continue;
+  }
   const approved=hostedFieldAnswer(descriptor,p,answers);
   if(approved?.kind==='employment'){if(await fillHostedText(l,approved.answer,{kind:approved.kind}))event(j.id,'answer',`Filled approved application fact: ${q}`);continue;}
   if(protectedHostedQuestion(q+' '+(descriptor.description||''))){if(descriptor.required)unresolved.push(q);continue;}
@@ -222,6 +233,7 @@ async function attachHostedResume(page,p){
   return {index,active:!e.disabled&&!e.matches(':disabled')&&!e.closest('[hidden],[aria-hidden="true"]')&&(visible(e)||visible(wrapper)),label:[...e.labels||[]].map(l=>l.innerText).join(' '),id:e.id.replace(/[_-]/g,' '),name:e.name.replace(/[_-]/g,' '),context:wrapper?.querySelector('legend,label')?.innerText||''};
  }).filter(f=>f.active));
  if(!fields.length)return {attached:false};
+ if(fields.every(f=>/\bcover[\s_-]*letter\b/i.test([f.label,f.id,f.name,f.context].join(' '))))return {attached:false};
  const selected=pickResumeField(fields);
  if(selected<0)return {issue:'Cannot identify a unique resume upload. Fields: '+fields.map(f=>f.label||f.id||f.name||'unlabelled upload').join('; ')};
  const file=files.nth(fields[selected].index);
@@ -236,6 +248,24 @@ async function attachHostedResume(page,p){
 // Fill newly revealed questions without replaying uploads or overwriting edits.
 // Two quiet seconds after the final change catches debounced validation and
 // delayed conditional sections before a form is described as ready.
+async function attachHostedCoverLetters(page,job){
+ const files=page.locator('input[type="file"]');
+ for(let i=0;i<await files.count();i++){
+  const file=files.nth(i),descriptor=await fieldDescriptor(file),question=descriptor.label||descriptor.ariaLabel||descriptor.name;
+  if(!/\bcover[\s_-]*letter\b/i.test(question)||/\b(?:resume|cv|curriculum)\b/i.test(question)||!descriptor.required||descriptor.ambiguous||descriptor.contextRequired)continue;
+  const actionable=e=>{const wrapper=e.closest('.ashby-application-form-field-entry,.application-question,fieldset,[class*="upload" i],[class*="field" i]')||e.closest('label')||e.parentElement;const visible=n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return r.width>1&&r.height>1&&s.display!=='none'&&s.visibility!=='hidden';};return !e.files?.length&&!e.disabled&&!e.matches(':disabled')&&!e.closest('[hidden],[aria-hidden="true"]')&&(visible(e)||visible(wrapper));};
+  if(!await file.evaluate(actionable))continue;
+  const accept=await file.getAttribute('accept')||'';
+  const result=await prepareCoverLetter(db,job.user_id,job.id,{question,required:true,format:'file',accept,fieldHelp:descriptor.description,check:j=>employerHold(db,j)?.message||savedSearchClaimProblem(db,j)||''});
+  if(!result.file)return {issue:result.reason};
+  const current=await fieldDescriptor(file);
+  if(!sameApplication(page.url(),job.url)||JSON.stringify(current)!==JSON.stringify(descriptor)||(await file.getAttribute('accept')||'')!==accept||!await file.evaluate(actionable))continue;
+  await file.setInputFiles({name:result.file.name,mimeType:result.file.mimeType,buffer:Buffer.from(result.file.base64,'base64')});
+  if(!await file.evaluate(e=>!!e.files?.length&&[...e.files].every(f=>f.size>0)))return {issue:'The employer did not retain the cover-letter attachment.'};
+  event(job.id,'cover_letter','Attached a cover letter. Review it and click Submit yourself.');
+ }
+ return {};
+}
 async function prepareHostedFields(page,p,job,wait){
  const final=page.getByRole?.('button',{name:/^(submit application|submit|send application|complete application)$/i});
  if(final&&await final.count()===1)await final.scrollIntoViewIfNeeded().catch(()=>{});
@@ -246,6 +276,7 @@ async function prepareHostedFields(page,p,job,wait){
   filled+=await fill(page,p);
   const upload=await attachHostedResume(page,p);if(upload.issue)return {check,unknown,filled,uploadIssue:upload.issue};
   if(upload.attached)event(job.id,'upload','Resume selected in the identified resume field; checking employer validation');
+  try{const letter=await attachHostedCoverLetters(page,job);if(letter.issue)return {check,unknown,filled,uploadIssue:letter.issue};}catch(error){return {check,unknown,filled,uploadIssue:error.message};}
   if(!await selections(page,p,job)||!await radios(page,p,job)||!await checkboxes(page,p,job))return {withdrawn:true};
   const text=await custom(page,p,job);if(text.withdrawn)return {withdrawn:true};
   const controls=await customControls(page,p,job);if(controls.withdrawn)return {withdrawn:true};

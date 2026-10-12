@@ -52,17 +52,17 @@ const path=require('node:path');
   // Its delayed search and destructive blur behavior must be handled with
   // trusted input/mousedown events; typing a city alone is never completion.
   const leverUrl='https://jobs.lever.co/fixture/12345/apply';
-  await context.route(leverUrl,route=>route.fulfill({contentType:'text/html',body:`<form><label for="location-input">Current location</label><div class="application-field"><input class="location-input" id="location-input" name="location" required><input type="hidden" name="selectedLocation"><div class="dropdown-container" style="display:none"><div class="dropdown-results"></div></div></div><button type="button" id="submit">Submit application</button></form><script>
+  await context.route(leverUrl,route=>route.fulfill({contentType:'text/html',body:`<form><label><div class="application-label">Current location <span>✱</span></div><div class="application-field"><input class="location-input" id="location-input" name="location" required><input type="hidden" name="selectedLocation"><div class="dropdown-container" style="display:none"><div class="dropdown-results"></div><div style="display:none">No location found. Try entering a different location</div><div style="display:none">Loading</div></div></div></label><button type="button" id="submit">Submit application</button></form><script>
    window.submits=0;window.trustedSelection=false;document.querySelector('#submit').onclick=()=>window.submits++;
    const input=document.querySelector('#location-input'),hidden=document.querySelector('[name=selectedLocation]'),menu=document.querySelector('.dropdown-container'),results=document.querySelector('.dropdown-results');let timer;
-   input.oninput=()=>{menu.style.display='block';clearTimeout(timer);timer=setTimeout(()=>{results.innerHTML='<div class="dropdown-location">Toronto, Ohio, United States</div><div class="dropdown-location">Toronto, Ontario, Canada</div>';},500);};
+   input.oninput=()=>{menu.style.display='block';clearTimeout(timer);timer=setTimeout(()=>{results.innerHTML='<div class="dropdown-location">Toronto, Ohio, United States</div><div class="dropdown-location">Toronto, ON, CAN</div>';},500);};
    input.onblur=()=>{if(menu.style.display!=='none'){input.value='';hidden.value='';results.innerHTML='';menu.style.display='none';}};
    results.onmousedown=event=>{if(!event.target.matches('.dropdown-location'))return;window.trustedSelection=event.isTrusted;menu.style.display='none';input.value=event.target.textContent;hidden.value=JSON.stringify({name:event.target.textContent});results.innerHTML='';};
   </script>`}));
   const lever=await context.newPage();await lever.goto(leverUrl);
   const leverResult=await prepare(lever,profile,{id:'lever-fixture',url:leverUrl,answers_json:'{}'},ms=>lever.waitForTimeout(ms));
-  assert.equal(await lever.locator('#location-input').inputValue(),profile.location);
-  assert.equal(JSON.parse(await lever.locator('[name=selectedLocation]').inputValue()).name,profile.location);
+  assert.equal(await lever.locator('#location-input').inputValue(),'Toronto, ON, CAN');
+  assert.equal(JSON.parse(await lever.locator('[name=selectedLocation]').inputValue()).name,'Toronto, ON, CAN');
   assert.equal(await lever.evaluate(()=>trustedSelection),true);assert.equal(await lever.evaluate(()=>submits),0);assert.deepEqual(leverResult.check.missing,[]);
   console.log('PASS: hosted iframe preparation, complete labels, multiselect, deferred location, conditional fields, upload completion and no-submit guards');
   console.log('PASS: Lever delayed location selection, trusted employer commit, readback and no-submit guard');

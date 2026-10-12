@@ -3,7 +3,7 @@
 export function hostedFormState(target) {
  const clean=value=>String(value||'').replace(/\s+/g,' ').trim();
  const text=e=>clean(e?.innerText||e?.textContent);
- const labelText=e=>{if(!e)return '';const clone=e.cloneNode(true);clone.querySelectorAll('input,textarea,select,button,[role="option"],script,style').forEach(node=>node.remove());return clean(clone.textContent);};
+ const labelText=e=>{if(!e)return '';const clone=e.cloneNode(true);clone.querySelectorAll('input,textarea,select,button,[role="option"],.dropdown-container,script,style').forEach(node=>node.remove());return clean(clone.textContent);};
  const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>1&&r.height>1&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0'&&!e.closest('[hidden],[aria-hidden="true"]');};
  // Text-message consent is a separate optional question nested inside Ashby's
  // required Phone field. It must not inherit the phone label or required mark.

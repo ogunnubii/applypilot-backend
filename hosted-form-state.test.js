@@ -21,6 +21,11 @@ function fixture(markup=html){
  return {dom,w,read,d:w.document};
 }
 
+test('Lever wrapping location labels exclude dynamic suggestions and hidden search hints',()=>{
+ const f=fixture('<form><li class="application-question"><label><div class="application-label">Current location <span>✱</span></div><div class="application-field"><input id="location" name="location" class="location-input" required><input type="hidden" name="selectedLocation"><div class="dropdown-container"><div class="dropdown-results"><div class="dropdown-location">Toronto, ON, CAN</div></div><div class="dropdown-no-results">No location found. Try entering a different location</div><div class="dropdown-loading-results">Loading</div></div></div></label></li></form>');
+ try{assert.equal(f.read(f.d.getElementById('location')).label,'Current location ✱');assert.deepEqual([...f.read().missing],['Current location ✱']);}finally{f.dom.window.close();}
+});
+
 test('optional messaging consent nested under a required phone does not become a missing phone answer',()=>{
  const sms='<div class="ashby-application-form-texting-consent-description"><p>Receive text message updates?</p><label><input type="radio" name="communicationConsent">Yes - I consent to receiving text messages</label><label><input type="radio" name="communicationConsent">No - I do not consent to receiving text messages</label></div>';
  const f=fixture(field('Phone Number','<input id="phone" type="tel" required value="4165550132">'+sms));

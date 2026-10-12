@@ -3,10 +3,17 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {JSDOM} from 'jsdom';
 import {hostedFormState} from './hosted-form-state.js';
-import {fillHostedText,typeHostedSearch,sameHostedInputValue} from './hosted-input.js';
+import {fillHostedText,typeHostedSearch,sameHostedInputValue,sameLeverLocation} from './hosted-input.js';
 import {hostedFieldKind,hostedFieldAnswer,protectedHostedQuestion} from './hosted-form.js';
 
 const worker=readFileSync(new URL('./worker.js',import.meta.url),'utf8');
+
+test('Lever complete Canadian location aliases preserve city, province and country identity',()=>{
+ for(const label of ['Berlin, Germany','London, United Kingdom'])assert(sameLeverLocation(label,label));
+ assert.equal(sameLeverLocation('',''),false);
+ for(const actual of ['Toronto, ON, CAN','Toronto, Ontario, Canada','Toronto, ON, Canada'])assert(sameLeverLocation(actual,'Toronto, Ontario, Canada'));
+ for(const actual of ['Toronto, Ohio, United States','Toronto, ON, US','Toronto, ON','Toronto','Toronto, Ontario, CA','Ottawa, ON, CAN','Toronto, BC, CAN','',', ON, CAN'])assert(!sameLeverLocation(actual,'Toronto, Ontario, Canada'),actual);
+});
 
 test('approved immediate availability selects the calendar Today option instead of typing non-date text',async()=>{
  for(const count of [0,1,2]){
@@ -213,7 +220,7 @@ test('Lever location selects an exact scoped option and reads the employer paylo
 });
 
 test('Lever queries, mismatched payloads and ambiguous or missing options never count as completed',async()=>{
- for(const labels of [[],['Toronto, Ohio, United States'],['Toronto, Ontario, Canada','Toronto, Ontario, Canada']]){
+ for(const labels of [[],['Toronto, Ohio, United States'],['Toronto, Ontario, Canada','Toronto, Ontario, Canada'],['Toronto, ON, CAN','Toronto, Ontario, Canada']]){
   const f=leverFixture(labels);
   try{
    assert.equal(await fillHostedText(f.l,'Toronto, Ontario, Canada',{kind:'location'}),false);

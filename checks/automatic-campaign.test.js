@@ -82,6 +82,9 @@ test('recovery excludes unknown errors, validation, declarations, security and a
   if(marker==='declaration')f.db.exec("UPDATE jobs SET challenge='Employer declaration' WHERE id='j'");
   if(marker==='missing-fact')f.db.exec("UPDATE jobs SET challenge='Missing answers' WHERE id='j'");
   const original=f.get('j');populateAutomaticCampaign(f.db,'u');assert.deepEqual(f.get('j'),original,marker);
+  if(marker==='unclosed')assert.match(automaticMember(f.db,f.get('j')).reason,/closure of the failed browser/);
+  if(marker==='scope')assert.match(automaticMember(f.db,f.get('j')).reason,/enabled structured search/);
+  if(marker==='expired')assert.match(automaticMember(f.db,f.get('j')).reason,/fresh, available employer posting/);
   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM automatic_preparation_recovery').get().n,0,marker);f.db.close();
  }
 });

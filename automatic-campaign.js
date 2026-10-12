@@ -81,19 +81,20 @@ export function transientPreparationFailure(message){
 
 function recoverTransientPreparation(db,c,j,m,date){
  if(m.batch_number!==c.current_batch||!['pending','blocked'].includes(m.outcome)||j.status!=='needs_review'||j.challenge!=='Worker error')return null;
- if(j.local_owner||j.handoff_available||j.confirmation||submissionStarted(db,j)||memberProblem(db,j))return null;
+ if(j.local_owner||j.handoff_available||j.confirmation||submissionStarted(db,j))return null;
  if(db.prepare('SELECT execution_mode FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,j.user_id)?.execution_mode!=='cloud')return null;
  const failure=db.prepare("SELECT rowid AS failure_id,message FROM events WHERE job_id=? AND type='needs_review' ORDER BY rowid DESC LIMIT 1").get(j.id);
  const cause=transientPreparationFailure(failure?.message);if(!cause)return null;
+ const problem=memberProblem(db,j);if(problem)return {outcome:'blocked',reason:'Automatic recovery held: '+problem};
  // The worker has to close the failed context before another one can be opened.
- if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND rowid>? AND type='handoff_closed' LIMIT 1").get(j.id,failure.failure_id))return null;
+ if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND rowid>? AND type='handoff_closed' LIMIT 1").get(j.id,failure.failure_id))return {outcome:'blocked',reason:'Automatic recovery held: closure of the failed browser has not been recorded.'};
  let recovery=db.prepare('SELECT * FROM automatic_preparation_recovery WHERE job_id=?').get(j.id);
  if((recovery?.retries||0)>=2){
   if(recovery.last_failure!==failure.failure_id){
    db.prepare('UPDATE automatic_preparation_recovery SET next_at=NULL,last_failure=? WHERE job_id=?').run(failure.failure_id,j.id);
    db.prepare("INSERT INTO events(job_id,at,type,message) VALUES(?,?,'automatic_recovery_exhausted','Two automatic preparation recoveries were used. This form is deferred; other eligible jobs continue.')").run(j.id,date);
   }
-  return null;
+  return {outcome:'blocked',reason:'Automatic recovery exhausted: two preparation retries used; other jobs continue.'};
  }
  if(!recovery||recovery.last_failure!==failure.failure_id){
   const next=new Date(Date.parse(date)+((recovery?.retries||0)?120000:30000)).toISOString();
@@ -145,7 +146,7 @@ export function populateAutomaticCampaign(db,uid){
     else{reason=memberProblem(db,j);if(reason)outcome='deferred';}
    }
    const recovery=!evidence.get(j.id)?.confirmed&&recoverTransientPreparation(db,c,j,m,now());
-   if(recovery){outcome='pending';reason=recovery.reason;}
+   if(recovery){outcome=recovery.outcome||'pending';reason=recovery.reason;}
    if(outcome!==m.outcome||reason!==m.reason)db.prepare('UPDATE automatic_members SET outcome=?,reason=?,settled_at=? WHERE job_id=?').run(outcome,reason,outcome==='pending'?null:now(),j.id);
   }
   let batch=db.prepare('SELECT * FROM automatic_members WHERE campaign_id=? AND batch_number=? ORDER BY position').all(c.id,c.current_batch);

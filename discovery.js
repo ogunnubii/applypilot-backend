@@ -1,4 +1,4 @@
-import {normalizeSearchScope,scopeIntent,searchPriority,currentSearchScope} from './search-scope.js';
+import {normalizeSearchScope,scopeIntent,searchPriority,currentSearchScope,searchScopeSignature} from './search-scope.js';
 import {ashbyPosting} from './ashby-posting.js';
 import {supportIntent,remoteCanadaIntent,t4FallbackIntent,refreshSalaryRates} from './support-career.js';
 import {batchPreferences} from './application-batches.js';
@@ -219,8 +219,8 @@ function saveMetadata(id,metadata){
  db.prepare('UPDATE jobs SET job_metadata_json=?,match_score=?,discovery_priority=?,metadata_attempt_at=? WHERE id=?').run(JSON.stringify(metadata),metadata.score||0,metadata.available!==false&&metadata.eligibility?.eligible?100-(metadata.score||0):1000,now(),id);
 }
 async function refreshTrackedJobs(userId,applicant,intent){
- const cutoff=new Date(Date.now()-15*60000).toISOString(),daily=new Date(Date.now()-86400000).toISOString();
- const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status NOT IN ('duplicate','archived') AND (metadata_attempt_at IS NULL OR metadata_attempt_at<?) AND (json_extract(job_metadata_json,'$.available')=0 OR json_extract(job_metadata_json,'$.checkedAt') IS NULL OR json_extract(job_metadata_json,'$.checkedAt')<?) ORDER BY CASE WHEN status IN ('saved','queued') THEN 0 ELSE 1 END,metadata_attempt_at,created_at DESC LIMIT 4").all(userId,applicant.id,cutoff,daily);
+ const cutoff=new Date(Date.now()-15*60000).toISOString(),daily=new Date(Date.now()-86400000).toISOString(),signature=intent.scope?searchScopeSignature(intent.scope):null;
+ const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status NOT IN ('duplicate','archived') AND (metadata_attempt_at IS NULL OR metadata_attempt_at<?) AND (json_extract(job_metadata_json,'$.available')=0 OR json_extract(job_metadata_json,'$.checkedAt') IS NULL OR json_extract(job_metadata_json,'$.checkedAt')<? OR (? IS NOT NULL AND COALESCE(json_extract(job_metadata_json,'$.searchScopeSignature'),'')!=?)) ORDER BY CASE WHEN status IN ('saved','queued') THEN 0 ELSE 1 END,metadata_attempt_at,created_at DESC LIMIT 4").all(userId,applicant.id,cutoff,daily,signature,signature);
  let refreshed=0;const errors=[];
  await Promise.all(rows.map(async row=>{
   db.prepare('UPDATE jobs SET metadata_attempt_at=? WHERE id=?').run(now(),row.id);

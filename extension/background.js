@@ -92,6 +92,35 @@ async function retrySubmissionRecords(){
  }
 }
 
+// Persist evidence before network I/O. This outbox can only synchronize receipts;
+// it never opens a tab, fills a field, uploads a file or requests another Submit.
+async function flushReceipt(record){
+ const pending=record.pendingReceipt;if(!pending)return {ok:true};
+ if(Object.keys(record.pendingClicks||{}).length)return {pending:true};
+ if(record.receiptSyncRejected)return {pending:true,needsReview:true};
+ if(record.receiptRetryAt>Date.now())return {pending:true};
+ try{
+  const result=await api('/jobs/'+record.id+'/local/submitted','POST',pending);
+  record.receiptEvidence=pending;delete record.pendingReceipt;
+  record.receiptRetryAt=0;record.receiptSyncError='';record.phase='submitted';record.auto=false;
+  await saveRecord(record);return result;
+ }catch(error){
+  record.receiptFailures=(record.receiptFailures||0)+1;record.receiptSyncError=error.message;
+  // Auth/ownership/identity failures require review; transient failures retain
+  // durable evidence with capped backoff, at most three requests per alarm.
+  record.receiptSyncRejected=!!error.status&&error.status<500&&![401,408,429].includes(error.status);
+  record.receiptRetryAt=Date.now()+Math.min(300000,5000*2**Math.min(record.receiptFailures-1,6));
+  record.auto=false;record.phase='receipt_pending';await saveRecord(record);
+  return {pending:true,needsReview:record.receiptSyncRejected};
+ }
+}
+async function retryReceipts(){
+ let count=0;for(const record of Object.values((await read()).records)){
+  if(!record.pendingReceipt||record.receiptSyncRejected||record.receiptRetryAt>Date.now())continue;
+  if(count++>=3)break;await flushReceipt(record);
+ }
+}
+
 async function flushAnswerOutbox(record){
  for(const [question,answer]of Object.entries(record.pendingAnswers||{})){
   try{record.lastSavedAnswers=record.lastSavedAnswers||{};if(JSON.stringify(record.lastSavedAnswers[question])!==JSON.stringify(answer)){await api('/jobs/'+record.id+'/answers','PUT',{question,answer:typeof answer==='string'?answer:answer.answer,remember:true,autosave:true,resume:answer.resume===true});Object.defineProperty(record.lastSavedAnswers,question,{value:answer,enumerable:true,configurable:true,writable:true});}delete record.pendingAnswers[question];await saveRecord(record);}
@@ -102,6 +131,7 @@ async function flushAnswerOutbox(record){
 async function tick(){
  for(const r of Object.values((await read()).records))if(Object.keys(r.pendingAnswers||{}).length)await flushAnswerOutbox(r);
  await retrySubmissionRecords();
+ await retryReceipts();
 
  const s=await read();if(!s.enabled||s.userPaused)return;
  const active=Object.values(s.records).find(r=>r.auto&&['ready','verifying'].includes(r.phase));
@@ -239,15 +269,18 @@ async function handle(m,sender){
  if(m.action==='remember')return api('/jobs/'+b.id+'/answers','PUT',{question:m.question,answer:m.answer,remember:true});
  if(m.action==='receipt'){
   if(!b.attempted)throw Error('No submission action observed in this tab.');
-  const r=await api('/jobs/'+b.id+'/local/submitted','POST',{receipt:m.receipt,url:sender.url,afterSubmit:true});
-  b.phase='submitted';b.auto=false;await saveRecord(b);await tick();return r;
+  if(!P.receipt(m.receipt)||!P.sameApplication(sender.url,b.url))throw Error('A matching employer receipt is required.');
+  if(b.receiptEvidence)return {ok:true};
+  b.pendingReceipt||={receipt:String(m.receipt).slice(0,300),url:sender.url,afterSubmit:true,observedAt:new Date().toISOString(),receiptId:crypto.randomUUID()};
+  b.auto=false;b.phase='receipt_pending';await saveRecord(b);
+  const result=await flushReceipt(b);await tick();return result;
  }
  throw Error('Unsupported action');
 }
 // Serialize storage mutations across messages, alarms and tab events.
 let chain=Promise.resolve();
 function serial(fn){const result=chain.then(fn);chain=result.catch(()=>{});return result;}
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{(['list','dashboard-status','state','attention-position','answer','research-answer'].includes(m.action)?handle(m,sender):serial(()=>handle(m,sender))).then(data=>reply({ok:true,data})).catch(e=>reply({ok:false,error:e.message}));return true;});
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{(['list','dashboard-status','state','attention-position','answer','research-answer'].includes(m.action)?handle(m,sender):serial(()=>handle(m,sender))).then(data=>reply({ok:true,data})).catch(e=>reply({ok:false,error:e.message,status:e.status}));return true;});
 chrome.alarms.onAlarm.addListener(a=>{if(a.name==='queue')return serial(tick).catch(()=>{});});
 chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.interrupted=!r.attempted&&r.auto&&r.phase==='ready';r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted'&&r.phase!=='prepared')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:!s.userPaused,error:'Browser restarted. Eligible preparation resumes in its existing tab after sign-in; previous submission attempts remain protected.'});}));
 chrome.runtime.onInstalled.addListener(()=>serial(initialize));

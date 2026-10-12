@@ -8,6 +8,7 @@ function harness(shared={}){
   if(!args)return [{result:{ready:true}}];
   const [,route,method,data,device]=args;shared.calls.push({route,method,data,device});
   if(shared.offlineAnswers&&route.endsWith('/answers'))throw Error('Fixture connection unavailable');
+  if(shared.receiptFailure&&route.endsWith('/submitted'))return [{result:{error:'Receipt sync unavailable',status:shared.receiptFailure}}];
   if(route==='/jobs')return [{result:{data:{jobs,preparation:shared.preparation}}}];
   const [,id,action]=route.match(/\/jobs\/([^/]+)\/local\/(.*)/)||[];
   if(action==='claim'){shared.claims[id]||={attempted:false};return [{result:{data:shared.claims[id]}}];}
@@ -29,6 +30,29 @@ test('interrupted campaign resumes once in its exact existing form, without navi
  r.touched=Date.now()-100000;let fills=0;h.chrome.tabs.sendMessage=async(id,m)=>{if(m.action==='fill')fills++;return null;};
  await h.events.alarm({name:'queue'});assert.equal(h.shared.store.records.a.tabId,tabId);assert.equal(h.shared.store.records.a.recoveryCount,1);assert.equal(fills,1);assert(h.shared.store.records.a.auto);
  h.shared.store.records.a.touched=Date.now()-100000;await h.events.alarm({name:'queue'});assert.equal(fills,1,'no endless recovery loop');assert(h.shared.store.records.b.auto);assert(!h.shared.calls.some(c=>c.route.endsWith('/attempt')));
+});
+
+test('receipt outbox survives 502, closed tab, Stop and service worker restart without another employer action',async()=>{
+ const h=harness();await h.send('open',{id:'a'});await h.send('attempt',{before:'Application form',human:true,clickId:'original'},h.sender('a'));
+ h.shared.receiptFailure=502;
+ const result=await h.send('receipt',{receipt:'Thank you for applying. Your application has been received.'},h.sender('a'));
+ assert(result.ok);assert(result.data.pending);const evidence=structuredClone(h.shared.store.records.a.pendingReceipt);
+ assert(evidence.receiptId);assert(evidence.observedAt);await h.send('stop');
+ const attempts=h.shared.calls.filter(c=>c.route.endsWith('/attempt')).length,tabs=h.shared.tabs.length;
+ h.shared.tabs=h.shared.tabs.filter(t=>t.id!==h.shared.store.records.a.tabId);
+ const next=harness(h.shared);await next.events.startup();h.shared.receiptFailure=0;h.shared.store.records.a.receiptRetryAt=0;
+ await next.events.alarm({name:'queue'});
+ assert.equal(h.shared.store.records.a.pendingReceipt,undefined);assert.deepEqual(h.shared.store.records.a.receiptEvidence,evidence);
+ assert.equal(h.shared.store.records.a.phase,'submitted');assert.equal(h.shared.store.enabled,false);
+ assert.equal(h.shared.calls.filter(c=>c.route.endsWith('/attempt')).length,attempts);assert.equal(h.shared.tabs.length,tabs-1);
+ const receipts=h.shared.calls.filter(c=>c.route.endsWith('/submitted'));assert.equal(receipts.length,2);assert.equal(JSON.stringify(receipts[0].data),JSON.stringify(receipts[1].data));
+});
+
+test('receipt sync identity rejection keeps evidence for review without hammering the server',async()=>{
+ const h=harness();await h.send('open',{id:'a'});await h.send('attempt',{before:'Application form',human:true},h.sender('a'));await h.send('stop');
+ h.shared.receiptFailure=409;const r=await h.send('receipt',{receipt:'Thank you for applying'},h.sender('a'));assert(r.data.needsReview);
+ await h.events.alarm({name:'queue'});await h.events.alarm({name:'queue'});
+ assert(h.shared.store.records.a.pendingReceipt);assert.equal(h.shared.calls.filter(c=>c.route.endsWith('/submitted')).length,1);
 });
 
 test('preparation heartbeat retains activity without clearing blockers or manufacturing ready evidence',async()=>{

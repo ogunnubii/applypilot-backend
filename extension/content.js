@@ -4,6 +4,7 @@ if(globalThis.__applypilotAgentLoaded)return;globalThis.__applypilotAgentLoaded=
 let packet,bar,note,started=false,initialReceipt=false,attempted=false,timer,busy=false,stopped=false,lastStep='',stepAt=0,submitAt=0,pageWaitAt=Date.now();
 const aiTried=new Map(),aiIssues=new Map();
 let assistanceSent=false,submissionRecording=false,lastNativeSubmitClickAt=0,automaticSubmissionInProgress=false;
+let monitorFailures=0,monitorRetryAt=0,pendingReceipt='';
 const norm=P.normalize;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const visible=e=>!!e?.isConnected&&!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).display!=='none';
@@ -38,7 +39,7 @@ function ambiguousHelp(e,fields=controls()){
  const descriptions=new Set(fields.filter(other=>normalizeDescriptor(label(other))===question).map(other=>referencedText(other,'aria-describedby')).filter(Boolean));
  return descriptions.size>1;
 }
-async function send(action,data={}){const r=await chrome.runtime.sendMessage({action,...data});if(!r?.ok)throw Error(r?.error||'ApplyPilot connection unavailable');return r.data;}
+async function send(action,data={}){const r=await chrome.runtime.sendMessage({action,...data});if(!r?.ok)throw Object.assign(Error(r?.error||'ApplyPilot connection unavailable'),{status:r?.status});return r.data;}
 async function recordAssistance(){if(!started||assistanceSent)return;try{await send('assistance');assistanceSent=true;}catch{/* The boundary remains unknown if tracking cannot sync. */}}
 function bodyText(){return [...document.body.childNodes].filter(e=>e.nodeType===3||e.nodeType===1&&e!==bar&&!e.matches('script,style,noscript,template')&&visible(e)).map(e=>e.nodeType===3?e.textContent:e.innerText||'').join('\n');}
 function siteIssue(){return P.employerPageIssue({title:document.title,text:bodyText(),hasForm:controls().length>0||!!document.querySelector('form')});}
@@ -321,6 +322,10 @@ function applicationEntry(){
  return entries.length===1?entries[0]:null;
 }
 async function advance(){
+ if(!bar)mount();
+ // Capture the receipt before a backend/state check can fail. Once attempted,
+ // this branch performs evidence synchronization only, including after Stop.
+ if(attempted&&!initialReceipt){pendingReceipt=pendingReceipt||receipt();if(pendingReceipt){const result=await send('receipt',{receipt:pendingReceipt});note.textContent=result?.pending?(result.needsReview?'Employer receipt saved in this browser. Sign in or review synchronization; do not resubmit.':'Employer receipt saved in this browser. Synchronization will retry automatically; do not resubmit.'):'Employer receipt verified. Application submitted.';stopped=true;clearInterval(timer);return;}}
  const state=await send('state');attempted=attempted||state.attempted;const issue=siteIssue();if(issue){stopped=true;clearInterval(timer);const result=await send('site-error',{code:issue.code,empty:controls().length===0&&!document.querySelector('form'),initial:lastStep===''});note.textContent=result.message;return;}
  const text=receipt();if(text&&!initialReceipt&&attempted){await send('receipt',{receipt:text});note.textContent='Employer receipt verified. Application submitted.';stopped=true;clearInterval(timer);return;}
  if(attempted){if(!submitAt)submitAt=Date.now();note.textContent=Date.now()-submitAt>30000?'Submission uncertain. Check the employer receipt before retrying.':'Awaiting employer confirmation. Your Submit click is not yet a confirmed submission.';return;}
@@ -359,7 +364,12 @@ async function observeManualSubmission(){
  catch(error){if(note)note.textContent='Your click was sent to the employer. ApplyPilot could not record it: '+error.message+'. Check the employer confirmation.';}
  finally{submissionRecording=false;}
 }
-async function monitor(){if(!started||busy||stopped)return;busy=true;try{if(!attempted)await fill();await advance();}catch(e){stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}finally{busy=false;}}
+async function monitor(){if(!started||busy||stopped||Date.now()<monitorRetryAt)return;busy=true;try{if(!attempted)await fill();await advance();monitorFailures=0;monitorRetryAt=0;}catch(e){
+ if(attempted&&(!e.status||e.status>=500||e.status===429)){
+  monitorRetryAt=Date.now()+Math.min(60000,2500*2**Math.min(monitorFailures++,5));
+  if(note)note.textContent='Receipt synchronization is reconnecting. The application will not be submitted again.';
+ }else{stopped=true;clearInterval(timer);if(note)note.textContent='Connection or form error: '+e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}
+}finally{busy=false;}}
 // Recheck saved answers in the existing form. Explicit preparation campaigns may
 // advance non-submit steps; the final action still requires its separate grant.
 let savedRefreshBusy=false,lastRefreshSignature='',formChanged=false,formChangeTimer;
@@ -393,10 +403,10 @@ async function resumeFill(){
  if(busy)throw Error('Form preparation is already running. Wait for it to finish.');busy=true;clearInterval(timer);pageWaitAt=Date.now();
  try{packet=await send('packet');attempted=attempted||!!packet.job.attempted||!!(await send('state')).attempted;
   if(!started){initialReceipt=!!receipt()&&!attempted;started=true;}
-  stopped=false;attemptedCustom=new WeakMap();await fill();await advance();if(!stopped)timer=setInterval(monitor,2500);
+  stopped=false;attemptedCustom=new WeakMap();if(!attempted)await fill();await advance();if(!stopped)timer=setInterval(monitor,2500);
  }finally{busy=false;}
 }
-async function begin(){try{await resumeFill();}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched and can be linked later. */}}
+async function begin(){try{await resumeFill();}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;if(attempted){started=true;startReceiptMonitor();}else await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched and can be linked later. */}}
 
 const pendingHumanAnswers=new Map();let answerSaveTimer,answerSaveBusy=false;
 async function flushHumanAnswers(){

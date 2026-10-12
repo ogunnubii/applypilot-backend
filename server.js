@@ -1,4 +1,5 @@
 import {parkUnresolvedAttempt,unresolvedAttemptState,unresolvedAttemptMarker} from './unresolved-attempts.js';
+import {installReceiptSync,syncLocalReceipt} from './receipt-sync.js';
 import {preparationCampaign,preparationMember,startPreparationCampaign,populatePreparationCampaign,preparationSnapshot,preparationClaimProblem,recordPreparationProgress} from './preparation-campaign.js';
 import {searchInstruction,normalizeSearchScope,setSearchRemotePreference} from './search-scope.js';
 import {canEmailAccount} from './account-policy.js';
@@ -47,7 +48,7 @@ installAccounts(db);authClientAddress({socket:{},headers:{}});
 import {parseBoards,parseIntent,profileSearchInstruction,runSearch,SEARCH_INTERVAL_SECONDS} from './discovery.js';
 import {resumeRoles,resumeText} from './resume.js';
 installNotifications(db);installLibrary(db);installDrafts(db);installResearch(db);db.exec('CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT)');
-installArchive(db);installLanguagePolicy(db);installManualSubmitRecords(db);installContinuations(db);installPublicFill(db);installResumeEditor(db);installSavedRecovery(db);
+installArchive(db);installLanguagePolicy(db);installManualSubmitRecords(db);installContinuations(db);installPublicFill(db);installResumeEditor(db);installSavedRecovery(db);installReceiptSync(db);
 installFunnel(db);let funnelBusy=false;async function funnelTick(){if(funnelBusy)return;funnelBusy=true;try{await processFunnel(db);}catch(error){console.error('Job funnel:',error.message);}finally{funnelBusy=false}}
 const funnelTimer=setInterval(funnelTick,30000);funnelTimer.unref();setTimeout(funnelTick,2000).unref();
 const savedRecoveryTick=()=>{try{recoverSavedAnswers(db);}catch(error){console.error('Saved-answer recovery:',error.message);}};
@@ -96,9 +97,9 @@ if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-typ
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
-if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.34.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
+if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.35.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-12-form-preparation-completeness',extensionVersion:'0.6.34',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,commit:process.env.RAILWAY_GIT_COMMIT_SHA||null,release:'2026-10-12-durable-receipt-sync',extensionVersion:'0.6.35',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -295,8 +296,7 @@ if(localRoute){
  }
  if(j.local_owner!==owner)return send(res,409,{error:'Application belongs to another browser'});
  if(['submitted','interview','rejected','offer'].includes(j.status)&&action==='attempt')return send(res,200,{ok:true,confirmed:true});
- if(j.status==='submitted'&&action==='submitted'&&employerReceipt(j.confirmation))return send(res,200,{ok:true});
- if(j.status!=='local_browser'&&!(j.status==='submitted'&&j.challenge==='Applicant reported submission'&&action==='submitted'))return send(res,409,{error:'This application is not active in your browser'});
+ if(j.status!=='local_browser'&&!(action==='submitted'&&['submitted','interview','rejected','offer'].includes(j.status)))return send(res,409,{error:'This application is not active in your browser'});
  if(action==='assistance'&&req.method==='POST'){
    const x=JSON.parse(await body(req));
    if(!['human','tracking','partial'].includes(x.kind))return send(res,400,{error:'Unknown assistance record'});
@@ -376,9 +376,7 @@ if(localRoute){
   const x=JSON.parse(await body(req)),receipt=text(x.receipt,300);
   if(applicationLimit(x.receipt)){recordEmployerLimit(db,uid,j.id,x.receipt,{source:'Employer response reported by browser helper'});return send(res,409,{error:'The employer limit message is not a submission receipt.'});}
   if(!j.local_attempt_at||!sameApplication(x.url,j.url)||x.afterSubmit!==true||!employerReceipt(receipt))return send(res,400,{error:'An employer receipt after submission is required'});
-  db.prepare("UPDATE jobs SET status='submitted',confirmation=?,challenge=NULL,updated_at=? WHERE id=? AND (status='local_browser' OR status='submitted' AND challenge='Applicant reported submission')").run('Browser extension observed: '+receipt,now(),j.id);
-  confirmLibrary(db,j);
-  event(j.id,'submitted','Browser extension observed employer confirmation: '+receipt);return send(res,200,{ok:true});
+  try{const result=syncLocalReceipt(db,j.id,uid,owner,x);confirmLibrary(db,j);return send(res,200,result);}catch(error){return send(res,409,{error:error.message});}
  }
  return send(res,405,{error:'Method not allowed'});
 }

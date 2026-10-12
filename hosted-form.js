@@ -4,8 +4,8 @@ import {approvedEmploymentAnswer} from './employment-answers.js';
 // Hosted automation is deliberately narrower than the answer library. These
 // are stable contact/profile facts; employment eligibility, compensation and
 // voluntary self-identification always remain human decisions.
-const PROFILE_KINDS=new Set(['name','first','last','email','phone','location','city','region','country','postal','linkedin','github','website','school','degree','discipline']);
-const CANONICAL={name:'Full name',first:'First name',last:'Last name',email:'Email address',phone:'Phone number',location:'Current location',city:'City',region:'Province / State',country:'Country',postal:'Postal code',linkedin:'LinkedIn',github:'GitHub',website:'Website',school:'School',degree:'Degree',discipline:'Field of study'};
+const PROFILE_KINDS=new Set(['name','first','last','email','phone','location','timezone','city','region','country','postal','linkedin','github','website','school','degree','discipline']);
+const CANONICAL={name:'Full name',first:'First name',last:'Last name',email:'Email address',phone:'Phone number',location:'Current location',timezone:'Time zone',city:'City',region:'Province / State',country:'Country',postal:'Postal code',linkedin:'LinkedIn',github:'GitHub',website:'Website',school:'School',degree:'Degree',discipline:'Field of study'};
 const AUTOCOMPLETE={name:'name','given-name':'first','family-name':'last',email:'email',tel:'phone','address-level2':'city','address-level1':'region','postal-code':'postal','country-name':'country'};
 
 function policyText(value){return String(value||'').normalize('NFKC').replace(/([a-z\d])([A-Z])/g,'$1 $2').replace(/[_/.*?\u2731:()-]+/g,' ').replace(/\s+/g,' ').trim();}
@@ -38,10 +38,13 @@ export function hostedFieldKind(field){
  const kinds=parts.map(profileKind).filter(Boolean);
  const token=autocompleteKind(field);if(token)kinds.push(token);
  const type=String(field?.type||'').toLowerCase();if(type==='email')kinds.push('email');if(type==='tel')kinds.push('phone');
- const unique=[...new Set(kinds)];return unique.length===1&&PROFILE_KINDS.has(unique[0])?unique[0]:null;
+ const unique=[...new Set(kinds)];
+ if(unique.some(kind=>['location','timezone'].includes(kind))&&/\b(?:relocat(?:e|ed|ing|ion)|preferred|preference|willing|availability|available to|overlap|work schedule)\b/i.test(context))return null;
+ return unique.length===1&&PROFILE_KINDS.has(unique[0])?unique[0]:null;
 }
 
 function trustedAnswer(kind,profile,answers){
+ if(kind==='timezone')return knownAnswer(CANONICAL[kind],profile,answers);
  const direct=knownAnswer(CANONICAL[kind],profile,{});
  const saved=[...new Set(Object.entries(answers||{}).filter(([question,value])=>profileKind(question)===kind&&!protectedHostedQuestion(question)&&!THIRD_PARTY_CONTACT.test(policyText(question))&&['string','number','boolean'].includes(typeof value)&&String(value).trim()).map(([,value])=>String(value).trim()))];
  const comparable=value=>{
@@ -78,9 +81,12 @@ export function hostedOptionChoice(field,options,profile,answers={}){
  const question=questionFor(field),optionContext=(options||[]).flatMap(option=>[option?.label,option?.value]).join(' ');
  const employment=approvedEmploymentAnswer(field,profile);
  if(employment){const matches=(options||[]).filter(o=>!o.disabled&&normalize(o.label)===normalize(employment.answer));return matches.length===1?matches[0]:null;}
- if(!question||protectedHostedQuestion(textParts(field).join(' ')+' '+optionContext))return null;
+ const questionContext=policyText([...textParts(field),field?.description||''].join(' '));
+ if(!question||protectedHostedQuestion(questionContext+' '+optionContext))return null;
  const trusted=hostedFieldAnswer(field,profile,answers);
- if(!trusted&&GENERIC_QUESTION.test(policyText(question)))return null;
+ // A conflicting or disallowed profile fact must not fall through to an
+ // exact saved answer for the same label. Routine custom questions retain it.
+ if(!trusted&&(GENERIC_QUESTION.test(policyText(question))||textParts(field).some(part=>PROFILE_KINDS.has(profileKind(part)))))return null;
  const answer=trusted?.answer??savedAnswer(question,answers);if(answer===null||answer===undefined||answer==='')return null;
  const matches=(options||[]).filter(option=>!option.disabled&&(trusted?optionMatches(CANONICAL[trusted.kind],option.label,answer,profile):normalize(option.label)===normalize(answer)||String(option.value)===String(answer)));
  return matches.length===1?matches[0]:null;

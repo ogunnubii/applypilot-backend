@@ -29,11 +29,13 @@ test('real campaign API gives Chrome manual preparation packets, prevents other 
   assert.equal((await api('/jobs/'+job.id+'/local/claim','POST',{})).status,200);
   const packet=await api('/jobs/'+job.id+'/local/packet');assert.equal(packet.status,200);assert.equal(packet.data.prepareSteps,true);assert.equal(packet.data.autonomousSubmit,false);
   assert.equal(packet.data.savedFactsAvailable,true);
-  db.prepare("UPDATE applicants SET location='Toronto, Ontario, Canada',answers_json=? WHERE id='p'").run(JSON.stringify({'LinkedIn':'https://www.linkedin.com/in/fixture','Available to start':'Immediately','Work authorization - Canada':'Yes'}));
+  db.prepare("UPDATE applicants SET location='Toronto, Ontario, Canada',answers_json=? WHERE id='p'").run(JSON.stringify({'LinkedIn':'https://www.linkedin.com/in/fixture','Available to start':'Immediately','Work authorization - Canada':'Yes','Time zone':'America/Toronto'}));
   for(const [question,answer,choices] of [
    ['Can you please share a link to your LinkedIn Profile?','https://www.linkedin.com/in/fixture',[]],
    ['Where are you currently located? (City & Country)','Toronto, Ontario, Canada',[]],
    ['Legal Name','Fixture',[]],
+   ['Location: (Please confirm your work/residency location)','Toronto, Ontario, Canada',[]],
+   ['Which time zone do you primarily work in?','Eastern Time (ET)',['Pacific Time (PT)','Eastern Time (ET)','Other (please specify)']],
    ['What is your earliest start date?','Immediately',[]],
    ['When can you start a new role?','Immediately',[]],
    ['Are you legally authorized to work in the country you are applying for? ✱','yes',['yes','no']]

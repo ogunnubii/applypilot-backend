@@ -72,12 +72,18 @@
    name:['full name','your full name','name','your name','first and last name','your first and last name','first & last name','your first & last name'],first:['first name','given name'],last:['last name','family name','surname'],
    email:['email','email address','your email','your email address'],phone:['phone','phone number','telephone','telephone number','mobile','mobile phone','mobile number','contact number','contact phone number','primary phone number'],
    location:['location','current location','where are you currently located city & country','where are you currently located city and country','where are you currently located city country'],city:['location city','city','current city','city of residence','town','town city','city town'],country:['country','country of residence','current country','residence country'],
+   timezone:['time zone','timezone','your time zone','your timezone','current time zone','primary time zone','work time zone','which time zone do you primarily work in','what time zone do you primarily work in','which time zone do you work in','what time zone do you work in','which time zone are you based in','what time zone are you based in','which time zone are you in','what time zone are you in'],
    region:['state','province','state province','province state'],postal:['postal code','zip code','zip postal code'],
    linkedin:['linkedin','linkedin profile','linkedin url','linkedin profile url'],github:['github','github profile','github url','github profile url'],
    website:['website','website url','personal website','personal website url','portfolio','portfolio url','portfolio website','portfolio website url','website portfolio','website or portfolio','personal site','personal site url'],
    school:['school','university','college university','school name','university name'],degree:['degree','degree type'],discipline:['discipline','field of study','major']
   };
-  function fieldKind(question){const q=normalize(question).replace(/[():/_-]/g,' ').replace(/\b(optional|required)\b/g,'').replace(/\s+/g,' ').trim();const direct=Object.keys(aliases).find(k=>aliases[k].includes(q));if(direct)return direct;
+  function fieldKind(question){const q=normalize(question).replace(/[():/_-]/g,' ').replace(/\btimezone\b/g,'time zone').replace(/\b(optional|required)\b/g,'').replace(/\s+/g,' ').trim();const direct=Object.keys(aliases).find(k=>aliases[k].includes(q));if(direct)return direct;
+    // Confirming the applicant's present work/residency location is a contact
+    // fact. Keep the whole question anchored so relocation and eligibility
+    // questions cannot borrow that answer. Inline city/country help is common.
+    if(/^(?:location )?(?:please )?confirm your (?:current )?work residency location(?: city (?:and |& )?country)?$/.test(q)||/^(?:current )?location city (?:and |& )?country$/.test(q))return 'location';
+    if(aliases.timezone.includes(q.replace(/^(?:applicant|candidate|user|profile)\s+/,'')))return 'timezone';
     // Anchored wording variants only: no fuzzy matching or employer/third-party URLs.
     const prompted=q.replace(/^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:provide|enter|share|list)\s+(?:a\s+)?(?:link\s+to\s+)?(?:your\s+)?/,'').replace(/^(?:what is|what's)\s+your\s+/,'');
     const personal=prompted.replace(/^your\s+/,'').replace(/\s+below$/,'').replace(/\s+link$/,'').trim();
@@ -85,18 +91,49 @@
     const social=personal.replace(/\s+(?:profile\s+)?(?:url|link)$/,'').replace(/\s+profile$/,'').trim();
     if(['linkedin','github'].includes(social))return social;
     if(/^(?:please\s+)?(?:enter|provide|share)\s+your\s+/.test(q)||/^(?:what is|what's)\s+your\s+/.test(q)){
-      return ['name','first','last','email','phone','city','country','region','postal'].find(k=>aliases[k].includes(prompted));
+      return ['name','first','last','email','phone','city','country','region','postal','timezone'].find(k=>aliases[k].includes(prompted));
     }
     return undefined;
   }
+  // These are display labels for clock-rule regions, not a city-to-timezone
+  // inference. Fixed offsets/EST/PST alone do not identify a DST-observing zone.
+  const timeZoneRegions=[
+   {name:'eastern',short:'et',pair:'est/edt',offset:'05',ids:['america/toronto','america/new_york']},
+   {name:'central',short:'ct',pair:'cst/cdt',offset:'06',ids:['america/winnipeg','america/chicago']},
+   {name:'mountain',short:'mt',pair:'mst/mdt',offset:'07',ids:['america/edmonton','america/denver']},
+   {name:'pacific',short:'pt',pair:'pst/pdt',offset:'08',ids:['america/vancouver','america/los_angeles']}
+  ];
+  function timeZoneIdentity(value){
+   const text=normalize(value);
+   if(/^(?:[a-z_]+(?:\/[a-z0-9_+\-]+)+|utc|gmt)$/.test(text))try{
+    const id=normalize(new Intl.DateTimeFormat('en',{timeZone:String(value).trim()}).resolvedOptions().timeZone);
+    return {id,region:timeZoneRegions.find(region=>region.ids.includes(id))?.name};
+   }catch{}
+   for(const region of timeZoneRegions){
+    const labels=[`${region.name} time`,`${region.name} time zone`,`${region.name} time (${region.short})`,`${region.name} time (${region.pair})`,`${region.name} time (us & canada)`,`${region.name} time (us and canada)`,`north american ${region.name} time`];
+    const withoutOffset=text.replace(new RegExp(`^\\((?:utc|gmt)-${region.offset}:00\\)\\s*`),'');
+    if(labels.includes(withoutOffset))return {region:region.name};
+   }
+   const annotated=text.match(/^(.+) \(([a-z_]+(?:\/[a-z0-9_+\-]+)+)\)$/);
+   if(annotated){const label=timeZoneIdentity(annotated[1]),zone=timeZoneIdentity(annotated[2]);if(label?.region&&zone?.id&&label.region===zone.region)return zone;}
+   return null;
+  }
+  function sameTimeZone(a,b){
+   if(normalize(a)===normalize(b))return true;
+   const left=timeZoneIdentity(a),right=timeZoneIdentity(b);if(!left||!right)return false;
+   if(left.id&&right.id)return left.id===right.id;
+   return !!left.region&&left.region===right.region;
+  }
+  function explicitTimeZone(profile,answers){
+   const values=[profile?.timezone,profile?.timeZone,profile?.time_zone,...Object.entries(answers||{}).filter(([question])=>fieldKind(question)==='timezone'&&!sensitive(question)).map(([,value])=>value)].filter(value=>typeof value==='string'&&value.trim()).map(value=>value.trim());
+   return values.length&&values.every((value,index)=>values.slice(index+1).every(other=>sameTimeZone(value,other)))?values[0]:null;
+  }
   function knownAnswer(question,profile,answers){
    if(sensitive(question)||normalize(question)==='required field')return null;
-   const exact=savedAnswer(question,answers);if(exact!==null)return exact;
    const kind=fieldKind(question);
-   if(!kind){
-    if(/^what country and time zone are you based in$/.test(normalize(question))&&/^Toronto,\s*Ontario,\s*Canada$/i.test(profile?.location||''))return 'Canada — Eastern Time (America/Toronto)';
-    return null;
-   }
+   if(kind==='timezone')return explicitTimeZone(profile,answers);
+   const exact=savedAnswer(question,answers);if(exact!==null)return exact;
+   if(!kind)return null;
    const values=[...new Set(Object.keys(answers||{}).filter(k=>fieldKind(k)===kind&&!sensitive(k)).map(k=>String(answers[k]).trim()).filter(Boolean))];
    if(values.length>1)return null;if(values.length===1)return values[0];
    const p=profile||{},parts=String(p.location||'').split(',').map(x=>x.trim()),name=String(p.name||'').trim();
@@ -106,6 +143,7 @@
   function optionMatches(question,option,answer,profile){
    const kind=fieldKind(question),o=normalize(option),a=normalize(answer);
    if(o===a)return true;
+   if(kind==='timezone')return sameTimeZone(option,answer);
    if(kind==='country')return o.replace(/\s*\+\d+\s*$/,'').trim()===a;
    if(kind==='city'){
     const clean=v=>normalize(v).replace(/\bontario\b/g,'on').replace(/[^a-z0-9]+/g,' ').trim();

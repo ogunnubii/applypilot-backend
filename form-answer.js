@@ -2,7 +2,7 @@ import {canResearchQuestion,researchForJob,markResearchDraftUsed} from './google
 import {canDraftProfessional,draftForJob} from './answer-drafts.js';
 import {researchConsentWithdrawn} from './research-consent.js';
 import {reusableAnswers} from './answer-library.js';
-import {hostedFieldAnswer} from './hosted-form.js';
+import {hostedFieldAnswer,hostedOptionChoice} from './hosted-form.js';
 import {employmentContext} from './employment-answers.js';
 import {currentSearchScope} from './search-scope.js';
 const parse=s=>{try{return JSON.parse(s||'{}')}catch{return {}}};
@@ -19,9 +19,12 @@ export async function prepareFormAnswer(db,uid,id,question,{research=researchFor
  if(researchConsentWithdrawn(db,id,p.id))throw Error('AI answer consent changed. Review this application.');
  // Chrome uses the same approved facts as the hosted worker before asking AI.
  // Eligibility remains scoped to this posting and explicit applicant answers.
- const approved=hostedFieldAnswer({label:question,description:fieldHelp},{...p,employment_context:employmentContext(p,job,currentSearchScope(db,job))},{...reusableAnswers(db,p),...parse(job.answers_json)});
+ const field={label:question,description:fieldHelp},trustedProfile={...p,employment_context:employmentContext(p,job,currentSearchScope(db,job))},savedFacts={...reusableAnswers(db,p),...parse(job.answers_json)};
+ const approved=hostedFieldAnswer(field,trustedProfile,savedFacts);
  if(approved){
-  const answer=choiceAnswer(approved.answer);
+  // Reuse the same deterministic display-label mapping as hosted and Chrome
+  // dropdowns (for example America/Toronto -> Eastern Time (ET)).
+  const answer=choices.length?hostedOptionChoice(field,choices.map(label=>({label})),trustedProfile,savedFacts)?.label||'':choiceAnswer(approved.answer);
   if(!answer)return {answer:'',reason:'Your saved answer does not match one of the current choices.'};
   if(answer.length>maxLength||answerFormat==='number'&&!/^-?\d+(?:\.\d+)?$/.test(answer.trim()))return {answer:'',reason:'Your saved answer needs the format required by this employer.'};
   const answers=parse(job.answers_json);Object.defineProperty(answers,question,{value:answer,enumerable:true,configurable:true,writable:true});

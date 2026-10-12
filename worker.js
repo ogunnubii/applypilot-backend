@@ -38,7 +38,7 @@ function claim(){
  try{
   const candidates=db.prepare("SELECT * FROM jobs WHERE status='queued' AND COALESCE(json_extract(job_metadata_json,'$.available'),1)!=0 AND applicant_id IN (SELECT id FROM applicants WHERE execution_mode='cloud') AND local_owner IS NULL AND (NOT EXISTS(SELECT 1 FROM application_batch_preferences b WHERE b.user_id=jobs.user_id AND b.enabled=1) OR EXISTS(SELECT 1 FROM application_batch_members m JOIN application_batch_preferences b ON b.current_batch=m.batch_id AND b.enabled=1 WHERE m.job_id=jobs.id AND m.user_id=jobs.user_id)) AND (NOT EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1) OR id=(SELECT job_id FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1)) ORDER BY match_score DESC,discovery_priority,created_at").all();let j;
   for(const userId of new Set(candidates.map(job=>job.user_id))){
-   j=prioritizeApplications(db,userId,candidates.filter(job=>job.user_id===userId)).find(job=>(!handoffs?.full()||automaticMember(db,job))&&job.metadata?.eligibility?.eligible!==false&&!employerHold(db,job)&&!savedSearchClaimProblem(db,job));
+   j=prioritizeApplications(db,userId,candidates.filter(job=>job.user_id===userId)).find(job=>(!handoffs?.full()||automaticMember(db,job)&&automaticCampaign(db,job.user_id)?.mode==='automatic')&&job.metadata?.eligibility?.eligible!==false&&!employerHold(db,job)&&!savedSearchClaimProblem(db,job));
    if(j)break;
   }
   if(j){db.prepare("UPDATE jobs SET status='running',attempts=attempts+1,lease_at=?,updated_at=? WHERE id=?").run(now(),now(),j.id);event(j.id,'running','Opening employer application')}

@@ -20,7 +20,7 @@ test('local claim distinguishes hosted members from outsiders without changing a
  const records=()=>({jobs:db.prepare('SELECT * FROM jobs ORDER BY id').all(),events:db.prepare('SELECT * FROM events ORDER BY id').all(),attempts:db.prepare('SELECT * FROM autonomous_attempts').all(),campaigns:db.prepare('SELECT * FROM automatic_campaigns').all(),members:db.prepare('SELECT * FROM automatic_members ORDER BY job_id').all()});
  try{
   let ready=false;for(let i=0;i<80;i++){try{if((await api('/health')).status===200){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,50));}assert(ready,log);
-  db.exec("INSERT INTO automatic_campaigns VALUES('u','campaign','p',1,20,2,'2026')");
+  db.exec("INSERT INTO automatic_campaigns VALUES('u','campaign','p',1,20,2,'2026','automatic')");
   // A historical settled member still owns its execution source; it need not
   // be the selected/current job to produce the hosted-worker error.
   db.prepare("INSERT INTO automatic_members VALUES(?,'u','campaign',1,1,'DevOps Engineer','blocked','Manual review','2026','2026')").run(member);

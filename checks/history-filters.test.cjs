@@ -83,8 +83,7 @@ for(const client of ['assistant-client.js','web/progress.js']){
   const f=fixture(client);
   try{
    await f.w.refresh(true);
-   assert.match(f.w.document.querySelector('#missing-answers').textContent,/Notice period/);
-   assert.doesNotMatch(f.w.document.querySelector('#missing-answers').textContent,/Start date/,'history rendering must not expand automatic answer-saving scope');
+   assert.equal(f.w.document.querySelector('#missing-answers'),null,'history never creates a question panel');
    assert.deepEqual(Array.from(f.w.document.querySelector('#application-archive-control').archiveCandidates,j=>j.id),['openai']);
    f.filter('all');f.search('receipt');
    f.state.jobs.push({...f.state.jobs.find(j=>j.id==='receipt'),id:'receipt-new',title:'New receipt role'});

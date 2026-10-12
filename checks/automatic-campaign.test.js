@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {installBatches} from '../application-batches.js';
 import {installSingleApplication,focusAllowsSubmit,reserveAutonomousAttempt,savedSearchClaimProblem} from '../single-application.js';
 import {installPreparationCampaign} from '../preparation-campaign.js';
-import {installAutomaticCampaign,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,automaticSnapshot,automaticMember} from '../automatic-campaign.js';
+import {installAutomaticCampaign,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,automaticSnapshot,automaticMember,recoverAutomaticPreparation} from '../automatic-campaign.js';
 import {prioritizeApplications} from '../application-diversity.js';
 import {normalizeSearchScope,scopeIntent} from '../search-scope.js';
 import {jobIntelligence} from '../job-intelligence.js';
@@ -42,6 +42,23 @@ test('automatic authorization selects 20 fresh jobs and fences the manual and le
  const outside=f.db.prepare("SELECT * FROM jobs WHERE status='saved' LIMIT 1").get();assert.match(savedSearchClaimProblem(f.db,outside),/outside/);
  assert.equal(populateAutomaticCampaign(f.db,'u').selected,20);
  assert.equal(automaticSnapshot(f.db,'other').mode,'manual');f.db.close();
+});
+
+test('explicit preparation recovery preserves the member, records assistance and refuses every submission marker',()=>{
+ for(const marker of ['none','intent','local','receipt','other-owner','stopped','wrong-user','old-batch']){
+  const f=fixture();f.add('j');f.start();f.db.exec("UPDATE jobs SET status='needs_review',challenge='Form validation',attempts=1 WHERE id='j'");populateAutomaticCampaign(f.db,'u');
+  if(marker==='intent')f.db.exec("INSERT INTO autonomous_attempts VALUES('j','hosted-worker','2026')");
+  if(marker==='local')f.db.exec("UPDATE jobs SET local_attempt_at='2026' WHERE id='j'");
+  if(marker==='receipt')f.db.exec("INSERT INTO events VALUES('j','2026','submitted','Employer confirmed')");
+  if(marker==='other-owner')f.db.exec("UPDATE jobs SET local_owner='existing-browser' WHERE id='j'");
+  if(marker==='stopped')stopAutomaticCampaign(f.db,'u');
+  if(marker==='old-batch')f.db.exec('UPDATE automatic_campaigns SET current_batch=2');
+  if(marker==='none'){
+   assert.deepEqual(recoverAutomaticPreparation(f.db,'u','j'),{ok:true});assert.equal(f.get('j').status,'queued');assert.equal(automaticMember(f.db,f.get('j')).outcome,'pending');assert.equal(f.db.prepare("SELECT count(*) n FROM events WHERE type='human_assistance'").get().n,1);assert.equal(automaticSnapshot(f.db,'u').totals.selected,1);
+   assert.throws(()=>recoverAutomaticPreparation(f.db,'u','j'));
+  }else{const before=f.get('j');assert.throws(()=>recoverAutomaticPreparation(f.db,marker==='wrong-user'?'other':'u','j'));assert.deepEqual(f.get('j'),before);}
+  f.db.close();
+ }
 });
 
 test('prior attempts, interviews, below-target pay, ineligible locations and other owners never enter',()=>{

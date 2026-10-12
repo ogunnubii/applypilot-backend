@@ -1,6 +1,6 @@
 import {parkUnresolvedAttempt,unresolvedAttemptState,unresolvedAttemptMarker} from './unresolved-attempts.js';
 import {installReceiptSync,syncLocalReceipt} from './receipt-sync.js';
-import {automaticCampaign,automaticMember,automaticSnapshot,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign} from './automatic-campaign.js';
+import {automaticCampaign,automaticMember,automaticSnapshot,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,recoverAutomaticPreparation} from './automatic-campaign.js';
 import {preparationCampaign,preparationMember,startPreparationCampaign,populatePreparationCampaign,preparationSnapshot,preparationClaimProblem,recordPreparationProgress} from './preparation-campaign.js';
 import {searchInstruction,normalizeSearchScope,setSearchRemotePreference} from './search-scope.js';
 import {canEmailAccount} from './account-policy.js';
@@ -101,7 +101,7 @@ if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
 }
 if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.36.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,commit:process.env.RAILWAY_GIT_COMMIT_SHA||null,release:'2026-10-12-required-cover-letters',extensionVersion:'0.6.36',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,commit:process.env.RAILWAY_GIT_COMMIT_SHA||null,release:'2026-10-12-saved-form-facts',extensionVersion:'0.6.36',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -162,6 +162,7 @@ if(path==='/api/application-batch'&&['GET','POST'].includes(req.method)){try{if(
 if(path==='/api/work-focus/start-one'&&req.method==='POST'){try{const input=JSON.parse(await body(req));return send(res,200,startOneApplication(db,uid,input.job_id));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/work-focus/prepare-one'&&req.method==='POST'){try{const input=JSON.parse(await body(req));return send(res,200,startOneApplication(db,uid,input.job_id,{auto_submit:false}));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/work-focus'&&['GET','PUT'].includes(req.method)){try{return send(res,200,req.method==='PUT'?setWorkFocus(db,uid,JSON.parse(await body(req))):ensureFocusedJob(db,uid));}catch(e){return send(res,409,{error:e.message});}}
+if(path==='/api/automatic-campaign/recover'&&req.method==='POST'){try{const input=JSON.parse(await body(req));return send(res,200,recoverAutomaticPreparation(db,uid,input.job_id));}catch(error){return send(res,409,{error:error.message});}}
 if(path==='/api/automatic-campaign'&&['GET','POST','PUT'].includes(req.method)){
  try{
   if(req.method==='GET')return send(res,200,populateAutomaticCampaign(db,uid));

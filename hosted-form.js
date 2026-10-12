@@ -25,11 +25,14 @@ const autocompleteKind=field=>AUTOCOMPLETE[String(field?.autocomplete||'').toLow
 // is not the applicant's saved name/current location.
 function profileKind(value){
  const spaced=policyText(value),q=spaced.toLowerCase().replace(/^(?:applicant|candidate|user|profile)\s+/,'').replace(/\s+required$/,'');
+ // These observed labels explicitly accept alternative professional links.
+ // LinkedIn is one accepted choice, so use the saved LinkedIn fact unchanged.
+ if(/^(?:linkedin profile or website|linkedin, portfolio, personal website, github)$/.test(q.replace(/\blinked in\b/g,'linkedin').replace(/\bgit hub\b/g,'github')))return 'linkedin';
  const direct=fieldKind(value)||fieldKind(spaced)||fieldKind(q);if(direct)return direct;
  if(/^(?:(?:please )?(?:enter|provide) )?(?:your )?(?:(?:full )?legal name|legal full name)$/.test(q))return 'name';
  if(/^(?:your )?legal (?:first|given) name$/.test(q))return 'first';
  if(/^(?:your )?legal (?:last|family) name$/.test(q))return 'last';
- if(/^(?:where are you (?:currently )?(?:located|based)|what is your current location|(?:please )?(?:enter|provide) your current location|your current location)$/.test(q))return 'location';
+ if(/^(?:where are you (?:currently )?(?:located|based)|where do you live|what is your current location|(?:please )?(?:enter|provide) your current location|your current location)$/.test(q))return 'location';
  return null;
 }
 
@@ -83,7 +86,7 @@ export function hostedOptionChoice(field,options,profile,answers={}){
  if(field?.ambiguous||field?.contextRequired)return null;
  const question=questionFor(field),optionContext=(options||[]).flatMap(option=>[option?.label,option?.value]).join(' ');
  const employment=approvedEmploymentAnswer(field,profile);
- if(employment){const matches=(options||[]).filter(o=>!o.disabled&&normalize(o.label)===normalize(employment.answer));return matches.length===1?matches[0]:null;}
+ if(employment){const matches=(options||[]).filter(o=>!o.disabled&&[employment.answer,...employment.qualifiedAnswers||[]].some(answer=>normalize(o.label)===normalize(answer)));return matches.length===1?matches[0]:null;}
  const questionContext=policyText([...textParts(field),field?.description||''].join(' '));
  if(!question||protectedHostedQuestion(questionContext+' '+optionContext))return null;
  const trusted=hostedFieldAnswer(field,profile,answers);
@@ -101,7 +104,7 @@ export function approvedHostedRadioIndex(options,answers={},profile={}){
  const context=(options||[]).flatMap(option=>[option?.question,option?.description,option?.label,option?.value]).join(' ');
  if(questions.length!==1||GENERIC_QUESTION.test(policyText(options?.[0]?.question)))return -1;
  const employment=approvedEmploymentAnswer({label:options[0].question,description:options[0].description},profile);
- if(employment){const matches=options.map((option,index)=>({option,index})).filter(({option})=>!option.disabled&&normalize(option.label)===normalize(employment.answer));return matches.length===1?matches[0].index:-1;}
+ if(employment){const matches=options.map((option,index)=>({option,index})).filter(({option})=>!option.disabled&&[employment.answer,...employment.qualifiedAnswers||[]].some(answer=>normalize(option.label)===normalize(answer)));return matches.length===1?matches[0].index:-1;}
  if(protectedHostedQuestion(context))return -1;
  const answer=savedAnswer(options[0].question,answers);if(answer===null)return -1;
  const matches=(options||[]).map((option,index)=>({option,index})).filter(({option})=>!option.disabled&&normalize(option.label)===normalize(answer));

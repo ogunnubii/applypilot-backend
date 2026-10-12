@@ -50,6 +50,23 @@ export function startAutomaticCampaign(db,uid,{applicant_id,mode,auto_submit,bat
 }
 export function stopAutomaticCampaign(db,uid){db.prepare('UPDATE automatic_campaigns SET enabled=0 WHERE user_id=?').run(uid);return automaticSnapshot(db,uid);}
 
+// Explicit recovery is limited to a current-batch form that never reached
+// submission. Keep the same job/member and record assistance; a changed label
+// or challenge can never erase a durable attempt or employer receipt.
+export function recoverAutomaticPreparation(db,uid,jobId){
+ db.exec('BEGIN IMMEDIATE');try{
+  const c=automaticCampaign(db,uid),j=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,uid),m=automaticMember(db,j);
+  if(!c?.enabled||!m||m.campaign_id!==c.id||m.batch_number!==c.current_batch||m.outcome!=='blocked')throw Error('Only a blocked form in the active batch can resume.');
+  if(!['paused','needs_review'].includes(j.status)||j.local_owner||j.handoff_available||submissionStarted(db,j))throw Error('An existing browser or possible submission is protected from restarting.');
+  if(!['Missing answers','Form validation','Sensitive action','Worker error'].includes(j.challenge))throw Error('This employer step is deferred.');
+  const problem=memberProblem(db,j);if(problem)throw Error(problem);
+  db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=?").run(now(),j.id);
+  db.prepare("UPDATE automatic_members SET outcome='pending',reason=NULL,settled_at=NULL WHERE job_id=?").run(j.id);
+  db.prepare("INSERT INTO events(job_id,at,type,message) VALUES(?,?,'human_assistance','Preparation explicitly resumed after review; any eventual completion is assisted.')").run(j.id,now());
+  db.exec('COMMIT');return {ok:true};
+ }catch(error){db.exec('ROLLBACK');throw error;}
+}
+
 // Batch boundaries and each terminal disposition are persisted independently of
 // the browser. An unresolved receipt settles scheduling, never duplicate safety.
 export function populateAutomaticCampaign(db,uid){

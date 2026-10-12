@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {installBatches} from '../application-batches.js';
 import {installSingleApplication,focusAllowsSubmit,reserveAutonomousAttempt,savedSearchClaimProblem} from '../single-application.js';
 import {installPreparationCampaign} from '../preparation-campaign.js';
-import {installAutomaticCampaign,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,automaticSnapshot,automaticMember,recoverAutomaticPreparation} from '../automatic-campaign.js';
+import {installAutomaticCampaign,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,automaticSnapshot,automaticMember,recoverAutomaticPreparation,transientPreparationFailure} from '../automatic-campaign.js';
 import {prioritizeApplications} from '../application-diversity.js';
 import {normalizeSearchScope,scopeIntent} from '../search-scope.js';
 import {jobIntelligence} from '../job-intelligence.js';
@@ -32,6 +32,91 @@ function fixture(path=':memory:'){
  const get=id=>db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
  return {db,add,get,start:(options={})=>startAutomaticCampaign(db,'u',{applicant_id:'p',mode:'automatic',auto_submit:true,batch_size:20,...options})};
 }
+
+function failBeforeSubmit(f,{message='Worker stopped: locator.evaluate: Target crashed',closed=true}={}){
+ f.db.prepare("UPDATE jobs SET status='needs_review',challenge='Worker error',attempts=attempts+1 WHERE id='j'").run();
+ f.db.prepare("INSERT INTO events VALUES('j',?,'needs_review',?)").run(new Date().toISOString(),message);
+ if(closed)f.db.prepare("INSERT INTO events VALUES('j',?,'handoff_closed','Failed context closed before submission')").run(new Date().toISOString());
+}
+
+test('automatic preparation recovery waits, respects Stop, preserves history and exhausts two durable retries',()=>{
+ const f=fixture();f.add('j');f.add('other');f.start();failBeforeSubmit(f);
+ const before=Date.now();let c=populateAutomaticCampaign(f.db,'u');
+ let r=f.db.prepare("SELECT * FROM automatic_preparation_recovery WHERE job_id='j'").get();
+ assert.equal(r.retries,0);assert(Date.parse(r.next_at)>=before+30000);assert.equal(f.get('j').status,'needs_review');
+ assert.equal(c.members.find(m=>m.job_id==='j').outcome,'pending');
+ populateAutomaticCampaign(f.db,'u');assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE type='automatic_recovery_scheduled'").get().n,1);
+ f.db.exec("UPDATE automatic_preparation_recovery SET next_at='2000'");stopAutomaticCampaign(f.db,'u');populateAutomaticCampaign(f.db,'u');assert.equal(f.get('j').status,'needs_review');
+ f.start();assert.equal(f.get('j').status,'queued');assert.equal(f.get('j').attempts,1);assert.equal(f.db.prepare("SELECT retries FROM automatic_preparation_recovery WHERE job_id='j'").get().retries,1);
+ failBeforeSubmit(f);const second=Date.now();populateAutomaticCampaign(f.db,'u');r=f.db.prepare("SELECT * FROM automatic_preparation_recovery WHERE job_id='j'").get();assert(Date.parse(r.next_at)>=second+120000);
+ f.db.exec("UPDATE automatic_preparation_recovery SET next_at='2000'");populateAutomaticCampaign(f.db,'u');assert.equal(f.get('j').status,'queued');assert.equal(f.get('j').attempts,2);
+ failBeforeSubmit(f);c=populateAutomaticCampaign(f.db,'u');assert.equal(f.get('j').status,'needs_review');assert.equal(c.members.find(m=>m.job_id==='j').outcome,'blocked');
+ stopAutomaticCampaign(f.db,'u');f.start();populateAutomaticCampaign(f.db,'u');
+ assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE type='automatic_preparation_recovery'").get().n,2);
+ assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE type='automatic_recovery_exhausted'").get().n,1);
+ assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE type='human_assistance'").get().n,0);
+ assert.equal(focusAllowsSubmit(f.db,f.get('other')),true);assert.equal(f.get('j').attempts,3);f.db.close();
+});
+
+test('recovery excludes unknown errors, validation, declarations, security and all submission or ownership evidence',()=>{
+ for(const message of ['Worker stopped: locator.click: Timeout 5000ms exceeded.','Worker stopped: Target page, context or browser has been closed','Worker stopped: page.goto: net::ERR_CERT_AUTHORITY_INVALID','Worker stopped: page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE','Missing required fields: Salary','Your application submission was flagged as possible spam.'])assert.equal(transientPreparationFailure(message),'');
+ assert(transientPreparationFailure('Worker stopped: page.goto: net::ERR_CONNECTION_RESET at https://example.test'));
+ assert(transientPreparationFailure('Worker stopped: page.goto: Timeout 45000ms exceeded.\nCall log:'));
+ for(const marker of ['unclosed','intent','receipt','local','phase','event','owner','handoff','hold','stopped','old-batch','consent','local-mode','scope','expired','unknown','declaration','missing-fact']){
+  const f=fixture();f.add('j');f.start();failBeforeSubmit(f,{closed:marker!=='unclosed'});
+  if(marker==='intent')f.db.exec("INSERT INTO autonomous_attempts VALUES('j','hosted-worker','2026')");
+  if(marker==='receipt')f.db.exec("UPDATE jobs SET confirmation='Employer receipt' WHERE id='j'");
+  if(marker==='local')f.db.exec("UPDATE jobs SET local_attempt_at='2026' WHERE id='j'");
+  if(marker==='phase')f.db.exec("UPDATE jobs SET local_phase='uncertain' WHERE id='j'");
+  if(marker==='event')f.db.exec("INSERT INTO events VALUES('j','2026','submission_started','Reserved')");
+  if(marker==='owner')f.db.exec("UPDATE jobs SET local_owner='browser' WHERE id='j'");
+  if(marker==='handoff')f.db.exec("UPDATE jobs SET handoff_available=1 WHERE id='j'");
+  if(marker==='hold')f.db.exec("INSERT INTO employer_limits VALUES('u','p','lever:j','9999','Employer hold')");
+  if(marker==='stopped')stopAutomaticCampaign(f.db,'u');
+  if(marker==='old-batch')f.db.exec('UPDATE automatic_campaigns SET current_batch=2');
+  if(marker==='consent')f.db.exec('UPDATE applicants SET consent=0');
+  if(marker==='local-mode')f.db.exec("UPDATE applicants SET execution_mode='local'");
+  if(marker==='scope')f.db.exec('UPDATE searches SET enabled=0');
+  if(marker==='expired')f.db.exec("UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.checkedAt','2000')");
+  if(marker==='unknown')f.db.exec("UPDATE events SET message='Worker stopped: unexpected exception' WHERE type='needs_review'");
+  if(marker==='declaration')f.db.exec("UPDATE jobs SET challenge='Employer declaration' WHERE id='j'");
+  if(marker==='missing-fact')f.db.exec("UPDATE jobs SET challenge='Missing answers' WHERE id='j'");
+  const original=f.get('j');populateAutomaticCampaign(f.db,'u');assert.deepEqual(f.get('j'),original,marker);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM automatic_preparation_recovery').get().n,0,marker);f.db.close();
+ }
+});
+
+test('recovery survives process restarts without bypassing budget or abandoning pending batch work',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'applypilot-auto-recovery-')),path=join(dir,'db.sqlite');
+ const f=fixture(path);f.db.exec('ALTER TABLE jobs ADD COLUMN lease_at');f.add('j');for(let n=0;n<19;n++)f.add('other'+n);f.start();
+ f.db.exec("UPDATE jobs SET status='needs_review',challenge='Missing answers' WHERE id!='j';UPDATE jobs SET status='running',attempts=1 WHERE id='j'");
+ const source=readFileSync('local-state.js','utf8'),code=source.slice(source.indexOf('export function recoverWorkerJobs'),source.indexOf('export function rememberAnswers')).replace('export ','');
+ const recover=(db)=>new Function('db','event','now',code+';return recoverWorkerJobs;')(db,(id,type,message)=>db.prepare('INSERT INTO events VALUES(?,?,?,?)').run(id,new Date().toISOString(),type,message),()=>new Date().toISOString())();
+ recover(f.db);assert.equal(f.get('j').status,'needs_review');assert.equal(f.get('j').challenge,'Worker error');
+ let c=populateAutomaticCampaign(f.db,'u');assert.equal(c.current_batch,1);assert.equal(c.settled,19);
+ f.db.exec("UPDATE automatic_preparation_recovery SET next_at='2000'");populateAutomaticCampaign(f.db,'u');f.db.close();
+ const db=new DatabaseSync(path);installAutomaticCampaign(db);assert.equal(db.prepare("SELECT retries FROM automatic_preparation_recovery WHERE job_id='j'").get().retries,1);
+ db.exec("UPDATE jobs SET status='running',attempts=attempts+1 WHERE id='j'");recover(db);populateAutomaticCampaign(db,'u');db.exec("UPDATE automatic_preparation_recovery SET next_at='2000'");populateAutomaticCampaign(db,'u');
+ assert.equal(db.prepare("SELECT retries FROM automatic_preparation_recovery WHERE job_id='j'").get().retries,2);
+ db.exec("UPDATE jobs SET status='running',attempts=attempts+1 WHERE id='j'");recover(db);c=populateAutomaticCampaign(db,'u');assert.equal(c.current_batch,2);assert.equal(db.prepare("SELECT status FROM jobs WHERE id='j'").get().status,'needs_review');
+ assert.equal(db.prepare("SELECT attempts FROM jobs WHERE id='j'").get().attempts,3);db.close();rmSync(dir,{recursive:true});
+});
+
+test('fresh metadata repairs only discovery-only eligibility blocks and retains their audit history',()=>{
+ const f=fixture();f.start();
+ for(const id of ['good','opened','selected','uncertain','other-reason','invalid','held','no-discovery','assisted']){
+  f.add(id);f.db.prepare("UPDATE jobs SET status='needs_review',challenge='Pipeline needs attention' WHERE id=?").run(id);
+  if(id!=='no-discovery')f.db.prepare("INSERT INTO events VALUES(?,'2026','discovered','Native source evidence')").run(id);
+  f.db.prepare("INSERT INTO events VALUES(?,'2026','needs_review',?)").run(id,id==='other-reason'?'Consent required':'This job does not meet the saved work eligibility requirements.');
+ }
+ f.db.exec("UPDATE jobs SET attempts=1 WHERE id='opened';UPDATE jobs SET local_attempt_at='2026' WHERE id='uncertain';UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.eligibility.eligible',json('false')) WHERE id='invalid';INSERT INTO employer_limits VALUES('u','p','lever:held','9999','Employer hold');INSERT INTO events VALUES('assisted','2026','human_assistance','Reviewed form');");
+ const c=f.db.prepare('SELECT * FROM automatic_campaigns').get();f.db.prepare("INSERT INTO automatic_members VALUES('selected','u',?,1,1,'DevOps Engineer','blocked','Existing blocker','2026','2026')").run(c.id);
+ populateAutomaticCampaign(f.db,'u');assert.equal(f.get('good').status,'queued');assert(automaticMember(f.db,f.get('good')));
+ for(const id of ['opened','selected','uncertain','other-reason','invalid','held','no-discovery','assisted'])assert.equal(f.get(id).status,'needs_review',id);
+ assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE job_id='good' AND type='needs_review'").get().n,1);
+ assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE type='discovery_eligibility_recovered'").get().n,1);
+ populateAutomaticCampaign(f.db,'u');assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE type='discovery_eligibility_recovered'").get().n,1);f.db.close();
+});
 
 test('automatic authorization selects 20 fresh jobs and fences the manual and legacy queues',()=>{
  const f=fixture();for(let n=0;n<45;n++)f.add('j'+n,roles[n%3]);

@@ -56,7 +56,8 @@ test('upgrade removes legacy quota triggers while preserving exact duplicate and
  const duplicate=add(db,'duplicate',{url:'https://jobs.ashbyhq.com/acme/old'});
  assert.equal(companyApplicationPolicy(db,'a',duplicate).duplicate,true);
  assert.throws(()=>db.prepare("UPDATE jobs SET status='queued' WHERE id='duplicate'").run(),/Exact requisition/);
- db.prepare('INSERT INTO employer_limits VALUES(?,?,?,?,?,?,?,?,?,?)').run('u','a','ashby:ashby','Ashby',recent(),recent(60*86400000),3,60,'Employer application limit reached','Employer page');
+ db.prepare('INSERT INTO employer_limits(user_id,applicant_id,employer_key,company,observed_at,hold_until,limit_count,window_days,message,source) VALUES(?,?,?,?,?,?,?,?,?,?)').run('u','a','ashby:ashby','Ashby',recent(),recent(60*86400000),3,60,'Employer application limit reached','Employer page');
+ db.exec('UPDATE employer_limits SET reached_at=observed_at,reported_until=hold_until');
  add(db,'blocked',{company:'Ashby',url:'https://jobs.ashbyhq.com/ashby/blocked'});
  assert.throws(()=>db.prepare("UPDATE jobs SET status='queued' WHERE id='blocked'").run(),/Employer application limit/);
  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM company_application_activity').get().n,2);
@@ -68,7 +69,8 @@ test('pipeline restores all unaffected distinct jobs and holds only the reported
  db.exec("INSERT INTO applicants(id,user_id,consent,email,resume_path) VALUES('a','u',1,'person@example.test','resume.pdf')");
  installPipeline(db);installEmployerLimits(db);installCompanyApplicationPolicy(db);
  for(let n=1;n<=6;n++)add(db,String(n),{created:recent(-n*60000)});
- db.prepare('INSERT INTO employer_limits VALUES(?,?,?,?,?,?,?,?,?,?)').run('u','a','ashby:ashby','Ashby',recent(),recent(60*86400000),3,60,'Employer application limit reached','Employer page');
+ db.prepare('INSERT INTO employer_limits(user_id,applicant_id,employer_key,company,observed_at,hold_until,limit_count,window_days,message,source) VALUES(?,?,?,?,?,?,?,?,?,?)').run('u','a','ashby:ashby','Ashby',recent(),recent(60*86400000),3,60,'Employer application limit reached','Employer page');
+ db.exec('UPDATE employer_limits SET reached_at=observed_at,reported_until=hold_until');
  add(db,'blocked',{company:'Ashby',url:'https://jobs.ashbyhq.com/ashby/blocked'});
  const result=queueFoundApplications(db,'u');assert.equal(result.queued,6);assert.equal(result.held,1);
  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE status='queued'").get().n,6);

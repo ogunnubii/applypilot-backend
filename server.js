@@ -16,7 +16,7 @@ import {fillPendingFactQuestions} from './paused-fact-fill.js';
 import {prepareFormAnswer} from './form-answer.js';
 import {hasFactDraft} from './draft-provenance.js';
 import {installSavedRecovery,recoverSavedAnswers,savedRecoveryStatus} from './saved-answer-recovery.js';
-import {applicationLimit,employerHold,employerLimits,recordEmployerLimit} from './employer-limits.js';
+import {applicationLimit,applicationQuota,employerHold,employerLimits,employerQuotas,recordEmployerLimit} from './employer-limits.js';
 import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
 import {pipelineStatus,setPipeline,queueFoundApplications,queueEnabledPipelines} from './application-pipeline.js';
 import {priorApplication} from './application-dedup.js';
@@ -98,7 +98,7 @@ if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
 }
 if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.33.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-greenhouse-dropdowns',extensionVersion:'0.6.33',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,release:'2026-10-11-employer-rolling-limits',extensionVersion:'0.6.33',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -180,7 +180,7 @@ if(continuationRoute){
  if(req.method==='PUT'){const x=JSON.parse(await body(req));return send(res,200,settleContinuation(db,uid,continuationRoute[1],x.claimId,x.result));}
 }
 
-if(path==='/api/employer-limits'&&req.method==='GET')return send(res,200,{limits:employerLimits(db,uid)});
+if(path==='/api/employer-limits'&&req.method==='GET'){const quotas=employerQuotas(db,uid);return send(res,200,{limits:quotas.filter(q=>q.hold_until===null||q.hold_until>now()),quotas});}
 if(path==='/api/employer-limits'&&req.method==='POST'){const x=JSON.parse(await body(req));return send(res,200,recordEmployerLimit(db,uid,text(x.jobId,60),text(x.message,4000)));}
 const heldRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/(queue|continue|continuation|local\/(claim|packet|step|attempt|research-answer|answer)|handoff\/(open|click|drag|upload|text|key|resume))$/);
 if(heldRoute&&(req.method==='POST'||heldRoute[2]==='local/packet'&&req.method==='GET')){
@@ -347,7 +347,9 @@ if(localRoute){
  }
  if(action==='attempt'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
+  if(typeof x.before!=='string'||!sameApplication(x.url,j.url))return send(res,409,{error:'Application identity requires review before recording an employer limit or submission.'});
   if(applicationLimit(x.before)){recordEmployerLimit(db,uid,j.id,x.before,{source:'Employer page observed by browser helper'});return send(res,409,{error:'Employer application limit reached. Other employers can continue.'});}
+  if(applicationQuota(x.before)){recordEmployerLimit(db,uid,j.id,x.before,{source:'Employer policy observed before submission'});if(employerHold(db,j))return send(res,409,{error:'This employer’s recorded submission window is full. Other employers can continue.'});}
 
   const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
   if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});

@@ -959,8 +959,13 @@ function renderEmployerLimits(data,jobs=[]){
  const limits=data.limits||[];
  if(!limits.length)box.append(el('p','No employer application limits reported.'));
  for(const limit of limits){
-  box.append(el('h3',limit.company),el('p',limit.message),el('p',limit.hold_until?'Paused through '+new Date(limit.hold_until).toLocaleDateString()+'. This is a conservative hold from when the limit was reported; the employer’s exact reset date is not known.':'Paused until the employer’s application window can be confirmed.'));
+  box.append(el('h3',limit.company),el('p',limit.message),el('p',limit.hold_until?'Review after '+new Date(limit.hold_until).toLocaleString()+(limit.basis==='recorded-receipts'?'. Calculated from distinct receipt dates in the rolling window; the employer decides when another application is accepted.':'. This is a conservative hold from when the limit was reported; the employer’s exact reset date is not known.'):'Paused until the employer’s application window can be confirmed.'));
  }
+ for(const quota of data.quotas||[]){
+  if(!Number.isInteger(quota.confirmed_in_window))continue;
+  box.append(el('p',quota.company+': '+quota.confirmed_in_window+' distinct receipts recorded in '+quota.window_days+' days · limit '+quota.limit_count+' · '+quota.remaining_from_records+' possible places remaining from records'+(quota.uncertain_attempts?' · '+quota.uncertain_attempts+' attempts still need a receipt':'')+'.'));
+ }
+ if(data.quotas?.length)box.append(el('small','Counts use receipt dates, not found jobs, queued forms, repeat clicks or interview updates. Unmatched external history can reduce the places remaining. Employers without a recorded policy are not assumed to have this limit.'));
  box.append(el('small','Limits apply to the employer and applicant, not every company using the same hiring software. Receipts and previous attempts are preserved; other employers can continue.'));
  const details=el('details');details.append(el('summary','Report an employer application limit'));
  const form=el('form'),label=el('label','Application that showed the employer limit'),select=el('select');select.required=true;select.setAttribute('aria-label','Application that showed the employer limit');
@@ -968,8 +973,8 @@ function renderEmployerLimits(data,jobs=[]){
  for(const job of jobs.filter(j=>!['submitted','interview','rejected','offer','duplicate','archived'].includes(j.status))){const option=el('option',job.company+' — '+job.title);option.value=job.id;select.append(option);}
  label.append(select);form.append(label);
  const messageLabel=el('label','Employer limit message'),message=el('textarea');message.required=true;message.maxLength=4000;message.setAttribute('aria-label','Employer limit message');messageLabel.append(message);form.append(messageLabel);
- const save=el('button','Pause this employer for its application limit');save.type='submit';const status=el('p');status.setAttribute('role','status');form.append(save,status);
- form.onsubmit=async event=>{event.preventDefault();save.disabled=true;try{const result=await api('/employer-limits','POST',{jobId:select.value,message:message.value});$('#notice').textContent=result.company+': application limit saved. '+result.held+' pending applications paused; other employers can continue.';document.activeElement?.blur();box.dataset.signature='';await refresh(true);}catch(error){status.textContent=error.message;}finally{save.disabled=false;}};
+ const save=el('button','Save employer limit and check available places');save.type='submit';const status=el('p');status.setAttribute('role','status');form.append(save,status);
+ form.onsubmit=async event=>{event.preventDefault();save.disabled=true;try{const result=await api('/employer-limits','POST',{jobId:select.value,message:message.value});$('#notice').textContent=result.company+': '+(result.policyOnly?'policy recorded and available places checked. ':'application limit saved. ')+result.held+' pending applications paused; other employers can continue.';document.activeElement?.blur();box.dataset.signature='';await refresh(true);}catch(error){status.textContent=error.message;}finally{save.disabled=false;}};
  details.append(form);box.append(details);
 }
 

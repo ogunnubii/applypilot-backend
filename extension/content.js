@@ -73,6 +73,7 @@ async function fillNative(e,value){
  return true;
 }
 function answer(e){
+ if(isCoverLetterField(e))return null;
  const allQuestions=descriptors(e);if(protectedField(e)||ambiguousHelp(e))return null;
  const visibleQuestions=descriptors(e,false).filter(q=>q!=='Required field');
  // Prefer the employer's actual question. Generic ids such as "name" must
@@ -216,6 +217,30 @@ function review(){
  const pending=[...(applicationRoot()?.querySelectorAll('form[aria-busy="true"],[role="form"][aria-busy="true"],input[aria-busy="true"],.application-question [aria-busy="true"],.field-wrapper [aria-busy="true"],.ashby-application-form-field-entry [aria-busy="true"],form [role="progressbar"],form progress')||[])].some(e=>visible(e)&&(e.tagName!=='PROGRESS'||!e.hasAttribute('value')||e.value<e.max));
  return {fields:missing,reason:ambiguous.length?'Question needs clarification: '+[...new Set(ambiguous.map(e=>label(e)+' — '+referencedText(e,'aria-describedby')))].join('; '):fieldErrors.length?'Could not fill: '+fieldErrors.join('; '):captcha?'CAPTCHA requires you':login?'Sign-in or MFA requires you':sensitive?'Sensitive, legal, or demographic response requires you':custom?'Required custom form control requires review':embedded?'Embedded form requires review':pending?'Employer form is still processing an answer or upload':missing.length?'Needs your input: '+missing.join('; '):errors.length?'Employer validation needs review':''};
 }
+function isCoverLetterField(e){return /\bcover[\s_-]*letter\b/i.test(label(e).replace(/([a-z])([A-Z])/g,'$1 $2'));}
+let letterTried=new WeakMap();
+async function fillCoverLetters(){
+ let count=0;
+ for(const e of controls().filter(isCoverLetterField)){
+  if(!isRequired(e)||attempted||protectedField(e)||ambiguousHelp(e)||controlComplete(e,controls())||/\b(?:resume|cv|curriculum)\b/i.test(label(e))||!e.matches('textarea,input[type="text"],input:not([type]),input[type="file"],[contenteditable="true"]'))continue;
+  const question=label(e),help=referencedText(e,'aria-describedby'),accept=e.accept||'',url=location.href,edit=fieldEdits.get(e),key=question+'|'+help+'|'+accept;
+  if(letterTried.get(e)===key)continue;letterTried.set(e,key);
+  try{
+   const result=await send('cover-letter',{question,required:true,format:e.type==='file'?'file':'text',accept,maxLength:e.maxLength>=0?e.maxLength:4000,fieldHelp:help.slice(0,2000)}),state=await send('state');
+   if(result.manualSubmit)packet.autonomousSubmit=false;
+   if(attempted||state.attempted||location.href!==url||!e.isConnected||!controlVisible(e)||!isRequired(e)||label(e)!==question||referencedText(e,'aria-describedby')!==help||(e.accept||'')!==accept||fieldEdits.get(e)!==edit||controlComplete(e,controls()))continue;
+   if(!result.answer){aiIssues.set(question,result.reason||'Save your professional background or provide your own cover letter.');continue;}
+   if(e.type==='file'){
+    const file=result.file;if(!file||!/^cover-letter\.(pdf|docx)$/i.test(file.name))throw Error('Cover-letter document is unavailable.');
+    if(accept&&!accept.split(',').some(t=>{t=t.trim().toLowerCase();return t==='*/*'||t==='application/*'||t===file.mimeType||t.startsWith('.')&&file.name.toLowerCase().endsWith(t);}))throw Error('The cover-letter format is not accepted by this employer.');
+    const dt=new DataTransfer();dt.items.add(new File([Uint8Array.from(atob(file.base64),c=>c.charCodeAt(0))],file.name,{type:file.mimeType}));e.files=dt.files;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));await pause(60);
+    if(!e.files?.length)throw Error('The employer did not retain the cover-letter attachment.');count++;
+   }else if(await fillNative(e,result.answer))count++;
+   packet.applicationOnlyQuestions=[...new Set([...(packet.applicationOnlyQuestions||[]),question])];aiIssues.delete(question);
+  }catch(error){aiIssues.set(question,error.message);}
+ }
+ return count;
+}
 async function fillPass(){
  if(!packet)packet=await send('packet');if(!bar)mount();let count=0;fieldErrors=[];if(siteIssue())return 0;const fields=controls();if(fields.length||document.querySelector('form'))await send('form-opened');
  for(const e of fields){
@@ -231,6 +256,7 @@ async function fillPass(){
  count+=await fillRoleRadios(fields);
  const files=[...(applicationRoot()?.querySelectorAll('input[type="file"]')||[])].filter(e=>controlVisible(e)&&!e.disabled&&!e.matches(':disabled')&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
  if(files.length===1&&!files[0].files.length&&packet.resume?.base64){const r=packet.resume,mime=/\.pdf$/i.test(r.name)?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document';if(files[0].accept&&!files[0].accept.split(',').some(type=>{type=type.trim().toLowerCase();return type.startsWith('.')?r.name.toLowerCase().endsWith(type):type===mime||type==='application/*'||type==='*/*';})){fieldErrors.push(label(files[0])+': saved resume format is not accepted.');return count;}const bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0)),dt=new DataTransfer();dt.items.add(new File([bytes],r.name,{type:mime}));files[0].files=dt.files;files[0].dispatchEvent(new Event('input',{bubbles:true}));files[0].dispatchEvent(new Event('change',{bubbles:true}));await pause(60);if(files[0].files?.length)count++;else fieldErrors.push(label(files[0])+': employer did not retain the resume attachment.');}
+ count+=await fillCoverLetters();
  if(count)note.textContent=count+' additional fields filled.';if(count)await send('progress',{fields:[],message:'Filled '+count+' fields on the employer form.',blocked:false,filled:count});return count;
 }
 // AI results are application-only and are never allowed to overwrite a user's edit.
@@ -239,6 +265,7 @@ async function prepareMissingAnswers(){
  let prepared=0;
  for(const e of controls()){
   const fields=controls(),q=label(e),key=norm(q);
+  if(isCoverLetterField(e))continue;
   if(prepared>=12)break;
   const dropdown=e.tagName==='SELECT'||controlRole(e)==='combobox';
   if(attempted||!visible(e)||e.maxLength===0||controlComplete(e,fields)||protectedField(e)||ambiguousHelp(e,fields)||!dropdown&&answer(e)!==null||e.multiple||isCustomMulti(e)||q==='Required field'||q.length<3||q.length>4000||['file','password','checkbox','hidden','submit'].includes(e.type)||e.type==='button'&&!dropdown||controlRole(e)==='checkbox')continue;
@@ -403,7 +430,7 @@ async function resumeFill(){
  if(busy)throw Error('Form preparation is already running. Wait for it to finish.');busy=true;clearInterval(timer);pageWaitAt=Date.now();
  try{packet=await send('packet');attempted=attempted||!!packet.job.attempted||!!(await send('state')).attempted;
   if(!started){initialReceipt=!!receipt()&&!attempted;started=true;}
-  stopped=false;attemptedCustom=new WeakMap();if(!attempted)await fill();await advance();if(!stopped)timer=setInterval(monitor,2500);
+  stopped=false;attemptedCustom=new WeakMap();letterTried=new WeakMap();if(!attempted)await fill();await advance();if(!stopped)timer=setInterval(monitor,2500);
  }finally{busy=false;}
 }
 async function begin(){try{await resumeFill();}catch(e){if(packet){if(!bar)mount();note.textContent=e.message;if(attempted){started=true;startReceiptMonitor();}else await send('progress',{fields:[],message:e.message,blocked:true}).catch(()=>{});}/* Unlinked tabs remain untouched and can be linked later. */}}

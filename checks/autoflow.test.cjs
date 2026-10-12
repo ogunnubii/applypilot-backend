@@ -215,7 +215,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.35",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.36",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -318,7 +318,7 @@ test('hosted worker stops an HTTP 503 before inspecting or submitting a form and
  const page={setDefaultTimeout(){},goto:async()=>{gotoCount++;return {status:()=>503};},waitForTimeout:async()=>{},locator(selector){if(selector==='body')return {innerText:async()=>'Error 503\nService Unavailable'};if(selector==='form,input:visible,textarea:visible,select:visible')return {count:async()=>0};throw Error('Must not inspect/fill an error page: '+selector);},isClosed:()=>false};
  const context={newPage:async()=>page,close:async()=>{closed=true;}};const browser={newContext:async()=>context};
  const code=sources['worker.js'].replace(/import\s+[^;]+;/g,'').replace(/main\(\)\.catch[\s\S]*$/,'');
- const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold','retainBlockedSession','employmentContext','currentSearchScope','automaticMember',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,ctx.ApplyPilotPolicy.employerPageIssue,()=>null,(await import('../hosted-submission.js')).retainBlockedSession,(await import('../employment-answers.js')).employmentContext,()=>null,()=>null);
+ const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','installCoverLetters','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold','retainBlockedSession','employmentContext','currentSearchScope','automaticMember',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,ctx.ApplyPilotPolicy.employerPageIssue,()=>null,(await import('../hosted-submission.js')).retainBlockedSession,(await import('../employment-answers.js')).employmentContext,()=>null,()=>null);
  await run({id:'j',user_id:'u',applicant_id:'p',url:'https://job-boards.greenhouse.io/example/jobs/42'},browser);
  assert.equal(gotoCount,1);assert.equal(status,'needs_review');assert.equal(challenge,'Employer site unavailable');assert(closed);
  assert(events.some(e=>e.message.includes('HTTP 503')));assert(!events.some(e=>['filled','submitted'].includes(e.type)));
@@ -527,7 +527,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.35'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.36'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{
@@ -727,7 +727,7 @@ test('hosted worker records an explicit employer application limit without filli
  const page={setDefaultTimeout(){},goto:async()=>({status:()=>200}),waitForTimeout:async()=>{},locator(selector){if(selector==='body')return {innerText:async()=>ashbyLimitMessage};if(selector==='form,input:visible,textarea:visible,select:visible')return {count:async()=>0};throw Error('Limit page must not be filled: '+selector);},isClosed:()=>false};
  const context={newPage:async()=>page,close:async()=>{closed=true;}},browser={newContext:async()=>context};
  const code=sources['worker.js'].replace(/import\s+[^;]+;/g,'').replace(/main\(\)\.catch[\s\S]*$/,'');
- const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold','applicationLimit','recordEmployerLimit','retainBlockedSession','employmentContext','currentSearchScope','automaticMember',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,()=>null,()=>null,m.applicationLimit,()=>{recorded++;},(await import('../hosted-submission.js')).retainBlockedSession,(await import('../employment-answers.js')).employmentContext,()=>null,()=>null);
+ const run=new Function('db','event','now','installLibrary','installDrafts','installResearch','installCoverLetters','reusableAnswers','researchConsentWithdrawn','hostAllowed','employerPageIssue','employerHold','applicationLimit','recordEmployerLimit','retainBlockedSession','employmentContext','currentSearchScope','automaticMember',code+';return run;')(db,(id,type,message)=>events.push({type,message}),()=>new Date().toISOString(),()=>{},()=>{},()=>{},()=>{},()=>({}),()=>false,()=>true,()=>null,()=>null,m.applicationLimit,()=>{recorded++;},(await import('../hosted-submission.js')).retainBlockedSession,(await import('../employment-answers.js')).employmentContext,()=>null,()=>null);
  await run({id:'j',user_id:'u',applicant_id:'p',url:'https://jobs.ashbyhq.com/ashby/j'},browser);
  assert.equal(recorded,1);assert.equal(status,'needs_review');assert.equal(challenge,'Employer application limit');assert(closed);assert(!events.some(e=>['filled','submitted','submission_started'].includes(e.type)));
 });

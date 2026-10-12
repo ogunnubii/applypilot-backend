@@ -9,6 +9,7 @@ import {employmentContext} from './employment-answers.js';
 import {currentSearchScope} from './search-scope.js';
 const parse=s=>{try{return JSON.parse(s||'{}')}catch{return {}}};
 export async function prepareFormAnswer(db,uid,id,question,{research=researchForJob,draft=draftForJob,check=()=>'',expectedOwner=null,choices=[],answerFormat='text',maxLength=4000,fieldHelp=''}={}){
+ if(/\bcover[\s_-]*letter\b/i.test(String(question)))return {answer:'',reason:'Cover letters use the dedicated required-field preparation path.'};
  if(typeof question!=='string'||question.length<3||question.length>4000)throw Error('A complete employer question is required.');
  if(!Array.isArray(choices)||choices.length>80||choices.some(v=>typeof v!=='string'||!v.trim()||v.length>200)||new Set(choices.map(v=>v.trim().toLowerCase())).size!==choices.length)throw Error('This dropdown needs review because its options are ambiguous or unsupported.');
  const choiceAnswer=value=>{if(typeof value!=='string'||!value.trim())return '';if(!choices.length)return value;const found=choices.filter(c=>c.trim().toLowerCase()===value.trim().toLowerCase());return found.length===1?found[0]:'';};

@@ -5,6 +5,7 @@ import {canResearchQuestion,hasResearchDraftForQuestion,researchDraftProvenance,
 import {normalize,savedAnswer} from './local-policy.js';
 
 export async function automaticTextAnswer({db,profile,job,question,answers,applicationAnswers={},fieldHelp='',maxLength=4000,answerFormat='text',research=researchForJob,draft=draftForJob}){
+ if(/\bcover[\s_-]*letter\b/i.test(String(question)))return {answer:null,source:'unresolved',reason:'Cover letters are prepared only for an active required field.'};
  let reason='';
  // A generic label is not a durable identity for a question whose meaning
  // lives in help text; do not borrow its old answer from another context.

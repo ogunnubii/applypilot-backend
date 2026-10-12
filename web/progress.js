@@ -147,7 +147,7 @@ async function refresh(force=false){
   if(job.metadata?.eligibility?.kind==='canada-employment-fallback')heading.append(el('strong','Employee / T4 fallback'));
   if(job.metadata?.manualReview){if(['saved','paused','needs_review'].includes(job.status)&&!job.evidence?.awaiting&&!job.local_attempt_at)badge.textContent=globalThis.ApplyPilotPolicy.supported(job.url)?'Ready for autofill':'Review & apply';if(job.notes)card.append(el('p',job.notes));}
   const updated=Date.parse(job.updated_at),stamp=el('p');stamp.className='last-updated';stamp.style.cssText='font-size:13px;color:#626c65;margin:8px 0';
-  if(Number.isFinite(updated)){const time=el('time',new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(updated)));time.dateTime=new Date(updated).toISOString();stamp.append(document.createTextNode('Last updated: '),time);}else stamp.textContent='Last updated: unavailable';card.append(stamp);renderCompanyCareers(card,job);
+  if(Number.isFinite(updated)){const time=el('time',new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(updated)));time.dateTime=new Date(updated).toISOString();stamp.append(document.createTextNode('Last updated: '),time);}else stamp.textContent='Last updated: unavailable';card.append(stamp);renderCompanyCareers(card,job);renderCoverLetter(card,job);
   if(!['running','queued','local_browser'].includes(job.status)&&!job.handoff_available){const remove=el('button','Delete application permanently');remove.onclick=async()=>{if(!window.confirm('Permanently delete the visible record and captured answers for '+job.title+' at '+job.company+'? This cannot be undone and does not withdraw an employer application. Minimal requisition and company activity is retained to prevent duplicate or excess applications.'))return;remove.disabled=true;try{await api('/jobs/'+job.id,'DELETE',{confirm:job.id});await refresh(true);}catch(e){$('#notice').textContent=e.message;remove.disabled=false;}};card.append(remove);}
   if(['submitted','interview','rejected','offer'].includes(job.status)){
    card.append(el('p',job.confirmation||'Employer outcome recorded.'));
@@ -472,7 +472,7 @@ function openLocalApplication(jobId){
   const requestId=crypto.randomUUID();
   const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);error?reject(Error(error)):resolve(data);};
   const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-open-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
-  const timer=setTimeout(()=>finish('Open this dashboard in Chrome or Edge with ApplyPilot Local 0.6.35 enabled, then refresh this page.'),25000);
+  const timer=setTimeout(()=>finish('Open this dashboard in Chrome or Edge with ApplyPilot Local 0.6.36 enabled, then refresh this page.'),25000);
   window.addEventListener('message',receive);window.postMessage({type:'applypilot-open-application',requestId,jobId},location.origin);
  });
 }
@@ -489,7 +489,7 @@ function focusLocalApplication(jobId){
 function renderLibraryLauncher(){
  if(document.querySelector('#answer-library'))return;
  const box=el('section');box.id='answer-library';box.style.cssText='padding:20px;margin:16px 0;border:1px solid #74ad91;border-radius:12px';
- box.append(el('h2','Answer library'),el('p','Answers you enter save automatically as you finish each question. Reusable facts fill matching future forms; company-specific answers stay with their application. Review or correct stored answers here. Extension 0.6.35 prepares supported forms and waits for your final Submit click.'));
+ box.append(el('h2','Answer library'),el('p','Answers you enter save automatically as you finish each question. Reusable facts fill matching future forms; company-specific answers stay with their application. Review or correct stored answers here. Extension 0.6.36 prepares supported forms and waits for your final Submit click.'));
  const load=el('button','Open / refresh answer library'),list=el('div');box.append(load,list);placeWorkspacePanel(box);
  load.onclick=async()=>{load.disabled=true;try{const {answers}=await api('/answer-library');list.replaceChildren();if(!answers.length)list.append(el('p','No captured answers yet. Save a filled form from its employer tab.'));
  for(const entry of answers){const form=el('form');form.style.cssText='padding:12px 0;border-top:1px solid #ddd';const input=field(form,entry.question);input.value=entry.answer;form.append(el('small',entry.company+' · '+(entry.confirmed?'Employer receipt recorded':'Captured draft — not proof of submission')));
@@ -542,7 +542,7 @@ function renderPreparationCampaign(c={}){
   api('/applicants').then(data=>{for(const p of data.applicants||[]){const option=el('option',p.name);option.value=p.id;select.append(option);}start.disabled=!select.value;}).catch(e=>$('#notice').textContent=e.message);
   start.onclick=async()=>{start.disabled=true;try{await api('/preparation-campaign','POST',{applicant_id:select.value,target:200,batch_size:20});await refresh(true);}catch(e){$('#notice').textContent=e.message;start.disabled=false;}};
  }
- const link=el('a','Download Chrome helper 0.6.35');link.href='/applypilot-local.zip';box.append(el('p','Keep Chrome and a signed-in ApplyPilot tab open. Preparation runs automatically every 30 seconds unless you paused the extension.'),link);
+ const link=el('a','Download Chrome helper 0.6.36');link.href='/applypilot-local.zip';box.append(el('p','Keep Chrome and a signed-in ApplyPilot tab open. Preparation runs automatically every 30 seconds unless you paused the extension.'),link);
  if(c.enabled){if($('#work-focus'))$('#work-focus').hidden=true;if($('#application-batch'))$('#application-batch').hidden=true;}
 }
 function renderBatchControl(batch={}){
@@ -759,14 +759,14 @@ function renderBrowserReadiness(jobs){
  if(box){if(Date.now()-Number(box.dataset.checkedAt||0)>30000)box.querySelector('button').click();return;}
  box=el('section');box.id='browser-readiness';box.style.cssText='padding:16px;border:1px solid #74ad91;border-radius:12px;margin:16px 0';
  box.append(el('h2','Application preparation in your browser'));
- const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.35)');
+ const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.36)');
  setup.href='/local-browser.html';setup.style.marginLeft='12px';status.setAttribute('role','status');
  box.append(status,check,setup);placeWorkspacePanel(box);
  check.onclick=()=>{
   if(check.disabled)return;check.disabled=true;box.dataset.checkedAt=String(Date.now());const requestId=crypto.randomUUID();
   const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);check.disabled=false;
    browserHelperStatus=error?null:{...data,checkedAt:Date.now()};
-   status.textContent=error|| (data?.version!=='0.6.35'?'Browser helper '+data?.version+' is connected. Update to 0.6.35 for supported preparation and explicitly authorized automatic submission.':data?.enabled?'Browser helper 0.6.35 connected. New queued applications are prepared automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine preparation.')+(data?.error?' '+data.error:'');
+   status.textContent=error|| (data?.version!=='0.6.36'?'Browser helper '+data?.version+' is connected. Update to 0.6.36 for supported preparation and explicitly authorized automatic submission.':data?.enabled?'Browser helper 0.6.36 connected. New queued applications are prepared automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine preparation.')+(data?.error?' '+data.error:'');
   };
   const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-browser-status-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
   const timer=setTimeout(()=>finish('Browser helper not detected here. Open this dashboard in the Chrome or Edge profile with ApplyPilot Local enabled.'),3500);
@@ -886,7 +886,7 @@ function renderContinuationQueue(data){
 }
 async function drainContinuations(data){
  if(continuationBusy||busy||activeHandoff||Date.now()<nextContinuationCheck||!data?.requests?.some(r=>r.state==='queued'))return;
- if(!browserHelperStatus?.enabled||browserHelperStatus.version!=='0.6.35'||Date.now()-browserHelperStatus.checkedAt>45000)return;
+ if(!browserHelperStatus?.enabled||browserHelperStatus.version!=='0.6.36'||Date.now()-browserHelperStatus.checkedAt>45000)return;
  continuationBusy=true;nextContinuationCheck=Date.now()+20000;
  try{
   const {request}=await api('/continuations/claim','POST',{});if(!request)return;
@@ -965,6 +965,12 @@ function renderCooldownHistory(jobs=[]){
  box.append(el('small','Applications return to the active list for review when their hold expires. No application is submitted by this change.'));
 }
 
+function renderCoverLetter(card,job){
+ if(!job.has_cover_letter)return;
+ const details=el('details'),status=el('p'),preview=el('pre');details.className='cover-letter-review';details.append(el('summary','Review cover letter'),status,preview);preview.style.cssText='white-space:pre-wrap;font:inherit;max-width:70ch';
+ details.ontoggle=async()=>{if(!details.open)return;status.textContent='Loading cover letter…';try{const {coverLetter}=await api('/jobs/'+job.id+'/cover-letter');preview.textContent=coverLetter?.text||'';status.textContent=coverLetter?.stale?'Your profile or role details changed. This is the previous letter; prepare the form again before using it.':'Review this letter on the employer form before you click Submit. It stays with this application.';}catch(error){status.textContent=error.message;}};
+ card.append(details);
+}
 function renderCompanyCareers(card,job){
  if(!job.official_careers||job.employer_hold||['submitted','interview','rejected','offer'].includes(job.status))return;
  let url;try{url=new URL(job.official_careers.url);if(url.protocol!=='https:')return;}catch{return;}

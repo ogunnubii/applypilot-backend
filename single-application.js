@@ -124,6 +124,8 @@ export function receiptConfirmed(db,job){
  return !!job&&applicationEvidence({...job,receipt_event:db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('submitted','manual_confirmation') LIMIT 1").get(job.id)}).confirmed;
 }
 export function focusAllowsSubmit(db,job){
+ // A prepared cover letter always belongs to the applicant's final review.
+ if(job&&db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cover_letters'").get()&&db.prepare('SELECT 1 FROM cover_letters WHERE job_id=?').get(job.id))return false;
  if(job&&automaticCampaign(db,job.user_id))return automaticAllowsSubmit(db,job);
  if(job&&(preparationCampaign(db,job.user_id)?.enabled||preparationMember(db,job)))return false;
  return !!job&&inActiveBatch(db,job)&&!!db.prepare('SELECT 1 FROM work_focus WHERE user_id=? AND enabled=1 AND auto_submit=1 AND job_id=?').get(job.user_id,job.id);

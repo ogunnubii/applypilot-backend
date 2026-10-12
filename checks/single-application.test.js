@@ -44,7 +44,7 @@ async function browserFixture({allow=true,fail=false,missing=false,captcha=false
  w.HTMLElement.prototype.getClientRects=function(){return [{}]};Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});let clicks=0,attempted=false;const messages=[],timers=[];
  w.setInterval=fn=>{timers.push(fn);return timers.length};w.clearInterval=()=>{};w.document.querySelector('button').onclick=()=>clicks++;
  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='attempt'){attempted=true;if(fail)return {ok:false,error:'Connection lost'};return {ok:true,data:{permitted:true}};}return {ok:true,data:m.action==='packet'?{job:{id:'a',title:'Platform Engineer',attempted},autonomousSubmit:allow,profile:{email:'test@example.test'},answers:{}}:m.action==='state'?{attempted,automatic:true,autonomousSubmit:allow,autofillOnly:!allow}:{}};}}};
- w.eval(readFileSync('extension/policy.js','utf8'));w.eval(readFileSync('extension/content.js','utf8'));await new Promise(r=>setTimeout(r,600));return {w,messages,timers,clicks:()=>clicks};
+ w.eval(readFileSync('extension/policy.js','utf8'));w.eval(readFileSync('extension/content.js','utf8'));for(let i=0;i<120&&!messages.some(m=>m.action==='attempt'||m.action==='progress'&&m.blocked);i++)await new Promise(r=>setTimeout(r,25));return {w,messages,timers,clicks:()=>clicks};
 }
 test('extension submits exactly once after authorization, then watches for an employer receipt',async()=>{
  const f=await browserFixture();assert.equal(f.clicks(),1,JSON.stringify(f.messages));assert.equal(f.messages.filter(m=>m.action==='attempt').length,1);

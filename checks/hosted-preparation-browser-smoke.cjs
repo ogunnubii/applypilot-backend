@@ -24,10 +24,10 @@ const path=require('node:path');
   const jobUrl='https://boards.greenhouse.io/fixture/jobs/12345',frameUrl='https://boards.greenhouse.io/embed/job_app?for=fixture&token=12345';
   const html=`<form><fieldset><legend>Your name</legend><label for="first">First name</label><input id="first" required><label for="last">Last name</label><input id="last" required></fieldset>
    <label id="prefix" for="tools">Which tools</label><span id="suffix">have you used?</span><select id="tools" aria-labelledby="prefix suffix" multiple required><option value="git">Git</option><option value="sql">SQL</option></select>
-   <label>Location<input id="city" role="combobox" aria-controls="cities" aria-expanded="false" required></label><div id="cities" role="listbox"></div>
+   <label>Location<input id="location" role="combobox" aria-controls="cities" aria-expanded="false" aria-required="true"></label><div id="cities" role="listbox"></div>
    <label>Resume<input id="resume" type="file" required></label><div id="conditional"></div><button id="submit" type="button">Submit application</button></form>
    <script>window.submits=0;window.uploads=0;document.querySelector('#submit').onclick=()=>window.submits++;
-    const first=document.querySelector('#first'),city=document.querySelector('#city'),list=document.querySelector('#cities');
+    const first=document.querySelector('#first'),city=document.querySelector('#location'),list=document.querySelector('#cities');
     first.onchange=()=>{if(document.querySelector('#website'))return;setTimeout(()=>document.querySelector('#conditional').innerHTML='<label>Website<input id="website" type="url" required></label>',600);};
     const render=()=>{city.setAttribute('aria-expanded','true');clearTimeout(window.timer);window.timer=setTimeout(()=>{list.innerHTML='<div role="option">Toronto, Ontario, Canada</div>';list.firstChild.onclick=()=>{city.value='';city.setAttribute('aria-valuetext','Toronto, Ontario, Canada');city.setAttribute('aria-expanded','false');list.innerHTML='';};},500);};city.onclick=render;city.oninput=render;
     document.querySelector('#resume').onchange=()=>{uploads++;const progress=document.createElement('div');progress.setAttribute('role','progressbar');progress.textContent='Uploading';document.querySelector('form').append(progress);setTimeout(()=>progress.remove(),900);};
@@ -48,6 +48,23 @@ const path=require('node:path');
   // Outer-page challenges continue to block a correctly identified iframe.
   await page.locator('body').evaluate(e=>{const captcha=document.createElement('div');captcha.className='g-recaptcha';captcha.textContent='Synthetic human verification';e.prepend(captcha);});
   const blocked=await prepare(frame,profile,{id:'fixture',url:jobUrl},ms=>page.waitForTimeout(ms));assert.equal(blocked.check.captcha,true);assert.equal(await frame.evaluate(()=>submits),0);
+  // Lever commits a plain-text location only through its suggestion handler.
+  // Its delayed search and destructive blur behavior must be handled with
+  // trusted input/mousedown events; typing a city alone is never completion.
+  const leverUrl='https://jobs.lever.co/fixture/12345/apply';
+  await context.route(leverUrl,route=>route.fulfill({contentType:'text/html',body:`<form><label for="location-input">Current location</label><div class="application-field"><input class="location-input" id="location-input" name="location" required><input type="hidden" name="selectedLocation"><div class="dropdown-container" style="display:none"><div class="dropdown-results"></div></div></div><button type="button" id="submit">Submit application</button></form><script>
+   window.submits=0;window.trustedSelection=false;document.querySelector('#submit').onclick=()=>window.submits++;
+   const input=document.querySelector('#location-input'),hidden=document.querySelector('[name=selectedLocation]'),menu=document.querySelector('.dropdown-container'),results=document.querySelector('.dropdown-results');let timer;
+   input.oninput=()=>{menu.style.display='block';clearTimeout(timer);timer=setTimeout(()=>{results.innerHTML='<div class="dropdown-location">Toronto, Ohio, United States</div><div class="dropdown-location">Toronto, Ontario, Canada</div>';},500);};
+   input.onblur=()=>{if(menu.style.display!=='none'){input.value='';hidden.value='';results.innerHTML='';menu.style.display='none';}};
+   results.onmousedown=event=>{if(!event.target.matches('.dropdown-location'))return;window.trustedSelection=event.isTrusted;menu.style.display='none';input.value=event.target.textContent;hidden.value=JSON.stringify({name:event.target.textContent});results.innerHTML='';};
+  </script>`}));
+  const lever=await context.newPage();await lever.goto(leverUrl);
+  const leverResult=await prepare(lever,profile,{id:'lever-fixture',url:leverUrl,answers_json:'{}'},ms=>lever.waitForTimeout(ms));
+  assert.equal(await lever.locator('#location-input').inputValue(),profile.location);
+  assert.equal(JSON.parse(await lever.locator('[name=selectedLocation]').inputValue()).name,profile.location);
+  assert.equal(await lever.evaluate(()=>trustedSelection),true);assert.equal(await lever.evaluate(()=>submits),0);assert.deepEqual(leverResult.check.missing,[]);
   console.log('PASS: hosted iframe preparation, complete labels, multiselect, deferred location, conditional fields, upload completion and no-submit guards');
+  console.log('PASS: Lever delayed location selection, trusted employer commit, readback and no-submit guard');
  }finally{await browser.close();fs.rmSync(directory,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

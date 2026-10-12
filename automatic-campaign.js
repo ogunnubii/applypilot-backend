@@ -8,7 +8,8 @@ import {operationSnapshot} from './operation-evidence.js';
 export function installAutomaticCampaign(db){
  db.exec(`CREATE TABLE IF NOT EXISTS automatic_campaigns(user_id TEXT PRIMARY KEY,id TEXT NOT NULL UNIQUE,applicant_id TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,batch_size INTEGER NOT NULL DEFAULT 20,current_batch INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS automatic_batches(campaign_id TEXT NOT NULL,number INTEGER NOT NULL,opened_at TEXT NOT NULL,closed_at TEXT,PRIMARY KEY(campaign_id,number));
- CREATE TABLE IF NOT EXISTS automatic_members(job_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,campaign_id TEXT NOT NULL,batch_number INTEGER NOT NULL,position INTEGER NOT NULL,title_group TEXT NOT NULL,outcome TEXT NOT NULL DEFAULT 'pending',reason TEXT,selected_at TEXT NOT NULL,settled_at TEXT);`);
+CREATE TABLE IF NOT EXISTS automatic_members(job_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,campaign_id TEXT NOT NULL,batch_number INTEGER NOT NULL,position INTEGER NOT NULL,title_group TEXT NOT NULL,outcome TEXT NOT NULL DEFAULT 'pending',reason TEXT,selected_at TEXT NOT NULL,settled_at TEXT);
+CREATE TABLE IF NOT EXISTS automatic_preparation_recovery(job_id TEXT PRIMARY KEY,retries INTEGER NOT NULL DEFAULT 0,next_at TEXT,last_failure INTEGER NOT NULL);`);
 }
 const now=()=>new Date().toISOString();
 function installed(db){return !!db.prepare("SELECT 1 FROM sqlite_master WHERE name='automatic_campaigns' AND type='table'").get();}
@@ -70,6 +71,62 @@ export function recoverAutomaticPreparation(db,uid,jobId){
  }catch(error){db.exec('ROLLBACK');throw error;}
 }
 
+export function transientPreparationFailure(message){
+ const text=String(message||'');
+ if(/^Worker stopped: (?:[A-Za-z][\w.]*: )?Target crashed(?:\r?\n|$)/.test(text))return 'Employer browser crashed before submission';
+ if(/^Worker stopped: page\.goto: (?:net::ERR_(?:CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_TIMED_OUT|TIMED_OUT|NAME_NOT_RESOLVED)\b|Timeout \d+ms exceeded\.)/.test(text))return 'Temporary employer-page navigation failure';
+ if(text==='Worker stopped: browser process restarted before submission.')return 'Worker restarted before submission';
+ return '';
+}
+
+function recoverTransientPreparation(db,c,j,m,date){
+ if(m.batch_number!==c.current_batch||!['pending','blocked'].includes(m.outcome)||j.status!=='needs_review'||j.challenge!=='Worker error')return null;
+ if(j.local_owner||j.handoff_available||j.confirmation||submissionStarted(db,j)||memberProblem(db,j))return null;
+ if(db.prepare('SELECT execution_mode FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,j.user_id)?.execution_mode!=='cloud')return null;
+ const failure=db.prepare("SELECT rowid AS failure_id,message FROM events WHERE job_id=? AND type='needs_review' ORDER BY rowid DESC LIMIT 1").get(j.id);
+ const cause=transientPreparationFailure(failure?.message);if(!cause)return null;
+ // The worker has to close the failed context before another one can be opened.
+ if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND rowid>? AND type='handoff_closed' LIMIT 1").get(j.id,failure.failure_id))return null;
+ let recovery=db.prepare('SELECT * FROM automatic_preparation_recovery WHERE job_id=?').get(j.id);
+ if((recovery?.retries||0)>=2){
+  if(recovery.last_failure!==failure.failure_id){
+   db.prepare('UPDATE automatic_preparation_recovery SET next_at=NULL,last_failure=? WHERE job_id=?').run(failure.failure_id,j.id);
+   db.prepare("INSERT INTO events(job_id,at,type,message) VALUES(?,?,'automatic_recovery_exhausted','Two automatic preparation recoveries were used. This form is deferred; other eligible jobs continue.')").run(j.id,date);
+  }
+  return null;
+ }
+ if(!recovery||recovery.last_failure!==failure.failure_id){
+  const next=new Date(Date.parse(date)+((recovery?.retries||0)?120000:30000)).toISOString();
+  db.prepare('INSERT INTO automatic_preparation_recovery(job_id,retries,next_at,last_failure) VALUES(?,0,?,?) ON CONFLICT(job_id) DO UPDATE SET next_at=excluded.next_at,last_failure=excluded.last_failure').run(j.id,next,failure.failure_id);
+  db.prepare("INSERT INTO events(job_id,at,type,message) VALUES(?,?,'automatic_recovery_scheduled',?)").run(j.id,date,cause+'. A bounded preparation recovery is scheduled for '+next+'. No submission retry is permitted.');
+  recovery=db.prepare('SELECT * FROM automatic_preparation_recovery WHERE job_id=?').get(j.id);
+ }
+ if(!recovery.next_at)return null;
+ if(recovery.next_at>date)return {reason:cause+'. Automatic preparation recovery scheduled for '+recovery.next_at};
+ db.prepare('UPDATE automatic_preparation_recovery SET retries=retries+1,next_at=NULL WHERE job_id=?').run(j.id);
+ db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=?").run(date,j.id);
+ db.prepare("INSERT INTO events(job_id,at,type,message) VALUES(?,?,'automatic_preparation_recovery',?)").run(j.id,date,cause+'. Requeued the same unsubmitted application ('+(recovery.retries+1)+'/2).');
+ return {reason:'Automatic preparation recovery queued; submission protections remain active.'};
+}
+
+function recoverDiscoveryEligibility(db,c,date){
+ // A discovery-only false negative can resolve after fresh metadata arrives.
+ // This is never a reset of an opened form, selected member or attempted job.
+ const rows=db.prepare(`SELECT * FROM jobs j WHERE user_id=? AND applicant_id=?
+ AND status='needs_review' AND challenge='Pipeline needs attention' AND attempts=0
+ AND local_owner IS NULL AND local_attempt_at IS NULL AND COALESCE(local_phase,'')=''
+ AND handoff_available=0 AND COALESCE(confirmation,'')=''
+ AND NOT EXISTS(SELECT 1 FROM automatic_members m WHERE m.job_id=j.id)
+ AND EXISTS(SELECT 1 FROM events e WHERE e.job_id=j.id AND e.type='discovered')
+ AND NOT EXISTS(SELECT 1 FROM events e WHERE e.job_id=j.id AND e.type IN ('running','prepared','completion_tracking','human_assistance','local_browser'))`).all(c.user_id,c.applicant_id);
+ for(const j of rows){
+  const last=db.prepare("SELECT message FROM events WHERE job_id=? AND type='needs_review' ORDER BY rowid DESC LIMIT 1").get(j.id);
+  if(last?.message!=='This job does not meet the saved work eligibility requirements.'||metadataFor(j).eligibility?.eligible!==true||memberProblem(db,j))continue;
+  db.prepare("UPDATE jobs SET status='saved',challenge=NULL,updated_at=? WHERE id=?").run(date,j.id);
+  db.prepare("INSERT INTO events(job_id,at,type,message) VALUES(?,?,'discovery_eligibility_recovered','Fresh employer metadata now passes the approved scope. No form was previously opened or attempted; discovery history is retained.')").run(j.id,date);
+ }
+}
+
 // Batch boundaries and each terminal disposition are persisted independently of
 // the browser. An unresolved receipt settles scheduling, never duplicate safety.
 export function populateAutomaticCampaign(db,uid){
@@ -87,7 +144,9 @@ export function populateAutomaticCampaign(db,uid){
     else if(['paused','needs_review','local_browser'].includes(j.status)){outcome='blocked';reason=j.challenge||'The employer form needs review.';}
     else{reason=memberProblem(db,j);if(reason)outcome='deferred';}
    }
-   if(outcome!==m.outcome)db.prepare('UPDATE automatic_members SET outcome=?,reason=?,settled_at=? WHERE job_id=?').run(outcome,reason,now(),j.id);
+   const recovery=!evidence.get(j.id)?.confirmed&&recoverTransientPreparation(db,c,j,m,now());
+   if(recovery){outcome='pending';reason=recovery.reason;}
+   if(outcome!==m.outcome||reason!==m.reason)db.prepare('UPDATE automatic_members SET outcome=?,reason=?,settled_at=? WHERE job_id=?').run(outcome,reason,outcome==='pending'?null:now(),j.id);
   }
   let batch=db.prepare('SELECT * FROM automatic_members WHERE campaign_id=? AND batch_number=? ORDER BY position').all(c.id,c.current_batch);
   if(batch.length===20&&batch.every(m=>m.outcome!=='pending')){
@@ -96,6 +155,7 @@ export function populateAutomaticCampaign(db,uid){
   }
   db.prepare('INSERT OR IGNORE INTO automatic_batches VALUES(?,?,?,NULL)').run(c.id,c.current_batch,now());
   if(batch.length<20){
+   recoverDiscoveryEligibility(db,c,now());
    const scope=currentSearchScope(db,{user_id:uid,applicant_id:c.applicant_id});
    if(scope){
     const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status IN ('saved','queued') AND NOT EXISTS(SELECT 1 FROM automatic_members m WHERE m.job_id=jobs.id)").all(uid,c.applicant_id).filter(j=>!preparationCandidateProblem(db,j)&&!memberProblem(db,j));

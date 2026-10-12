@@ -395,7 +395,7 @@ async function main(){recoverWorkerJobs();let browser=await chromium.launch({hea
   onRejection:(job,text)=>recordEmployerRejection(db,job.user_id,job.id,text,{source:'Employer response in retained browser'}),
   onClose:(job,message)=>{db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id);event(job.id,'handoff_closed',message)},
   onPossibleSubmit:job=>{if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('manual_submission','submission_started') LIMIT 1").get(job.id)){event(job.id,'manual_submission','Applicant clicked the employer submit control.');event(job.id,'submission_started','Submission intent saved before the employer action.');}db.prepare("UPDATE jobs SET challenge='Unconfirmed submission',updated_at=? WHERE id=?").run(now(),job.id)},
-  onSubmitted:(job,receiptText)=>{confirmLibrary(db,job);set(job,'submitted','Employer confirmed receipt during human handoff',null,receiptText);db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id)},
+  onSubmitted:(job,receiptText,observed)=>{if(db.prepare("SELECT 1 FROM autonomous_attempts WHERE job_id=? AND owner='hosted-worker'").get(job.id))syncHostedReceipt(db,job.id,job.user_id,{...observed,receipt:receiptText});else set(job,'submitted','Employer confirmed receipt during human handoff',null,receiptText);confirmLibrary(db,job);db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id)},
   onResume:async(job,session)=>{
    const current=db.prepare('SELECT * FROM jobs WHERE id=?').get(job.id);
    if(!['paused','needs_review'].includes(current?.status)||['Unconfirmed submission','Submission in progress'].includes(current.challenge))throw Error('Check the employer receipt before resuming. A submission may already have occurred.');
@@ -403,7 +403,10 @@ async function main(){recoverWorkerJobs();let browser=await chromium.launch({hea
    db.prepare("UPDATE jobs SET status='running',handoff_available=0,challenge=NULL,updated_at=? WHERE id=?").run(now(),job.id);
    event(job.id,'resumed','Applicant returned the same browser to the worker');resumeQueue.push({job:current,session});
   }
- });serveHandoffs(handoffs,8081,token=>readToken(token,db));const heartbeat=()=>db.prepare('INSERT INTO worker_status VALUES(1,?) ON CONFLICT(id) DO UPDATE SET heartbeat=excluded.heartbeat').run(now());heartbeat();setInterval(heartbeat,10000);let discoveryBusy=false;async function discoveryTick(){if(discoveryBusy)return;discoveryBusy=true;try{await runDueSearches()}catch(e){console.error('Discovery:',e)}finally{discoveryBusy=false}}setInterval(discoveryTick,60000);discoveryTick();process.on('SIGTERM',async()=>{await browser.close();process.exit(0)});for(;;){await handoffs.expire();await releaseSkippedHandoffs(handoffs,job=>{
+ });
+ let receiptBusy=false;const receiptTick=async()=>{if(receiptBusy)return;receiptBusy=true;try{await handoffs.observeReceipts()}finally{receiptBusy=false;}};
+ setInterval(()=>receiptTick().catch(()=>{}),5000);
+ serveHandoffs(handoffs,8081,token=>readToken(token,db));const heartbeat=()=>db.prepare('INSERT INTO worker_status VALUES(1,?) ON CONFLICT(id) DO UPDATE SET heartbeat=excluded.heartbeat').run(now());heartbeat();setInterval(heartbeat,10000);let discoveryBusy=false;async function discoveryTick(){if(discoveryBusy)return;discoveryBusy=true;try{await runDueSearches()}catch(e){console.error('Discovery:',e)}finally{discoveryBusy=false}}setInterval(discoveryTick,60000);discoveryTick();process.on('SIGTERM',async()=>{await browser.close();process.exit(0)});for(;;){await handoffs.expire();await releaseSkippedHandoffs(handoffs,job=>{
  const focus=automaticMember(db,job)?{skip_blocked:true}:db.prepare('SELECT skip_blocked FROM work_focus WHERE user_id=? AND enabled=1 AND auto_submit=1').get(job.user_id);
  if(!focus?.skip_blocked)return false;
  const state=db.prepare('SELECT * FROM jobs WHERE id=?').get(job.id);

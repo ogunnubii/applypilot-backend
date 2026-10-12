@@ -141,8 +141,8 @@ async function refresh(force=false){
  for(const r of externalInterviews){const card=interviewCard(r);card.id='external-'+r.id;$('#jobs').append(card);}
  for(const job of current){
   if(job.status==='interview'){const r=interviews.find(r=>interviewIdentity(r)===interviewIdentity(job));const card=interviewCard(r);card.id='job-'+job.id;card.dataset.completion=job.evidence?.completion||'';card.dataset.confirmed=String(!!job.evidence?.confirmed);card.dataset.worked=String(!!job.evidence?.worked);$('#jobs').append(card);continue;}
-  const card=el('article');card.id='job-'+job.id;card.className='job';card.dataset.preparation=preparationStage(job)||'';card.dataset.autonomous=String(automaticSubmissionFor(job));card.dataset.pending=String(pendingSubmission(job));card.dataset.actionable=String(pendingSubmission(job)&&!['running','queued'].includes(job.status));card.dataset.completion=job.evidence?.completion||'';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');for(const key of ['active','blocked','stalled','worked','confirmed'])card.dataset[key]=String(!!job.evidence?.[key]);card.dataset.state=job.evidence?.awaiting||job.local_attempt_at&&!job.evidence?.confirmed&&job.status==='local_browser'?'awaiting':job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');if(attentionPositions.has(job.id)){const counter=el('span',attentionPositions.get(job.id)+'/'+attention.length+' · Needs your input');counter.className='attention-position';counter.style.cssText='display:inline-block;font-size:14px;font-weight:750;color:#245a3c;background:#e9f4ec;border-radius:8px;padding:4px 9px;margin-bottom:7px';counter.setAttribute('aria-label','Application '+attentionPositions.get(job.id)+' of '+attention.length+' needing your input');names.append(counter);}names.append(el('h2',job.title),paySummary(job),el('small',job.company));if(job.metadata?.supportCareer?.demands?.length)names.append(el('small',job.metadata.supportCareer.demands.join('; ')));if(job.metadata?.checkedAt){names.append(el('small',(job.match_score||0)+'/100 role and eligibility score · '+(job.metadata.location||'Location not listed')+(job.metadata.eligibility?.eligible?'':' · Eligibility needs confirmation')));}const badge=el('span',({saved:'Found',running:'Preparing',queued:'Preparing · queued',paused:'Blocked',needs_review:job.challenge==='Ready to submit'?'Ready to submit':'Blocked',local_browser:job.evidence?.stalled?'Browser check needed':job.local_phase==='blocked'?(/^Ready (?:for your review|to submit)/.test(job.last_message||'')?'Ready to submit':'Needs your input'):job.local_attempt_at?'Awaiting receipt':'Preparing · local',submitted:job.evidence?.confirmed?'Receipt recorded':'Submission needs evidence',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);if(job.employer_hold&&!job.evidence?.confirmed)badge.textContent='Employer application limit';heading.append(mark,names,badge);card.append(heading);if(job.manual_submit_clicks)card.append(el('small',job.manual_submit_clicks+' manual Submit clicks recorded · application counted once · confirmation requires an employer receipt'));if(job.employer_hold&&!job.evidence?.confirmed)card.append(el('p',job.employer_hold.message+' Applications to this employer are paused. Other employers can continue.'));
-  if(preparationStage(job)==='awaiting'||job.evidence?.awaiting)badge.textContent='Awaiting employer receipt';
+  const card=el('article');card.id='job-'+job.id;card.className='job';card.dataset.preparation=preparationStage(job)||'';card.dataset.autonomous=String(automaticSubmissionFor(job));card.dataset.pending=String(pendingSubmission(job));card.dataset.actionable=String(pendingSubmission(job)&&!['running','queued'].includes(job.status));card.dataset.completion=job.evidence?.completion||'';card.dataset.search=(job.title+' '+job.company).toLowerCase();card.dataset.local=String(job.status==='local_browser');for(const key of ['active','blocked','stalled','worked','confirmed'])card.dataset[key]=String(!!job.evidence?.[key]);card.dataset.state=job.evidence?.awaiting||job.local_attempt_at&&!job.evidence?.confirmed&&job.status==='local_browser'?'awaiting':job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status;const heading=el('div');heading.className='job-heading';const mark=el('span',(job.company||'A').slice(0,1).toUpperCase());mark.className='company-mark';const names=el('div');if(attentionPositions.has(job.id)){const counter=el('span',attentionPositions.get(job.id)+'/'+attention.length+' · Needs your input');counter.className='attention-position';counter.style.cssText='display:inline-block;font-size:14px;font-weight:750;color:#245a3c;background:#e9f4ec;border-radius:8px;padding:4px 9px;margin-bottom:7px';counter.setAttribute('aria-label','Application '+attentionPositions.get(job.id)+' of '+attention.length+' needing your input');names.append(counter);}names.append(el('h2',job.title),paySummary(job),el('small',job.company));if(job.metadata?.supportCareer?.demands?.length)names.append(el('small',job.metadata.supportCareer.demands.join('; ')));if(job.metadata?.checkedAt){names.append(el('small',(job.match_score||0)+'/100 role and eligibility score · '+(job.metadata.location||'Location not listed')+(job.metadata.eligibility?.eligible?'':' · Eligibility needs confirmation')));}const badge=el('span',({saved:'Found',running:'Preparing',queued:'Preparing · queued',paused:'Blocked',needs_review:job.challenge==='Ready to submit'?'Ready to submit':'Blocked',local_browser:job.evidence?.stalled?'Browser check needed':job.local_phase==='blocked'?(/^Ready (?:for your review|to submit)/.test(job.last_message||'')?'Ready to submit':'Needs your input'):job.local_attempt_at?'Awaiting receipt':'Preparing · local',submitted:job.evidence?.confirmed?'Receipt recorded':'Submission needs evidence',interview:'Interview',rejected:'Rejected',offer:'Offer'})[job.status]);badge.className='badge '+(job.status==='local_browser'&&job.local_phase==='blocked'?'needs_review':job.status);if(job.employer_hold&&!job.evidence?.confirmed)badge.textContent=job.employer_hold.kind==='security'?'Employer security hold':'Employer application limit';heading.append(mark,names,badge);card.append(heading);if(job.manual_submit_clicks)card.append(el('small',job.manual_submit_clicks+' manual Submit clicks recorded · application counted once · confirmation requires an employer receipt'));if(job.employer_hold&&!job.evidence?.confirmed)card.append(el('p',job.employer_hold.message+' Applications to this employer are paused. Other employers can continue.'));
+  if((preparationStage(job)==='awaiting'||job.evidence?.awaiting)&&job.employer_hold?.kind!=='security')badge.textContent='Awaiting employer receipt';
   if(job.evidence?.stalled)card.append(el('p','No recent browser activity has been received. Check the helper and employer tab; this form is not counted as actively filling.'));
   if(job.metadata?.eligibility?.kind==='canada-employment-fallback')heading.append(el('strong','Employee / T4 fallback'));
   if(job.metadata?.manualReview){if(['saved','paused','needs_review'].includes(job.status)&&!job.evidence?.awaiting&&!job.local_attempt_at)badge.textContent=globalThis.ApplyPilotPolicy.supported(job.url)?'Ready for autofill':'Review & apply';if(job.notes)card.append(el('p',job.notes));}
@@ -293,7 +293,7 @@ function renderMissingAnswers(jobs){
  }}).catch(()=>{});
  // Saved-answer recovery and the browser helper resume preparation automatically.
  if(!groups.size){section.hidden=true;return;}
- 
+
  section.append(form);
 }
 async function updateDiscovery(force=false){
@@ -483,7 +483,7 @@ function openLocalApplication(jobId){
   const requestId=crypto.randomUUID();
   const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);error?reject(Error(error)):resolve(data);};
   const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-open-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
-  const timer=setTimeout(()=>finish('Open this dashboard in Chrome or Edge with ApplyPilot Local 0.6.36 enabled, then refresh this page.'),25000);
+  const timer=setTimeout(()=>finish('Open this dashboard in Chrome or Edge with ApplyPilot Local 0.6.37 enabled, then refresh this page.'),25000);
   window.addEventListener('message',receive);window.postMessage({type:'applypilot-open-application',requestId,jobId},location.origin);
  });
 }
@@ -500,7 +500,7 @@ function focusLocalApplication(jobId){
 function renderLibraryLauncher(){
  if(document.querySelector('#answer-library'))return;
  const box=el('section');box.id='answer-library';box.style.cssText='padding:20px;margin:16px 0;border:1px solid #74ad91;border-radius:12px';
- box.append(el('h2','Answer library'),el('p','Answers you enter save automatically as you finish each question. Reusable facts fill matching future forms; company-specific answers stay with their application. Review or correct stored answers here. Extension 0.6.36 prepares supported forms and waits for your final Submit click.'));
+ box.append(el('h2','Answer library'),el('p','Answers you enter save automatically as you finish each question. Reusable facts fill matching future forms; company-specific answers stay with their application. Review or correct stored answers here. Extension 0.6.37 prepares supported forms and waits for your final Submit click.'));
  const load=el('button','Open / refresh answer library'),list=el('div');box.append(load,list);placeWorkspacePanel(box);
  load.onclick=async()=>{load.disabled=true;try{const {answers}=await api('/answer-library');list.replaceChildren();if(!answers.length)list.append(el('p','No captured answers yet. Save a filled form from its employer tab.'));
  for(const entry of answers){const form=el('form');form.style.cssText='padding:12px 0;border-top:1px solid #ddd';const input=field(form,entry.question);input.value=entry.answer;form.append(el('small',entry.company+' · '+(entry.confirmed?'Employer receipt recorded':'Captured draft — not proof of submission')));
@@ -553,7 +553,7 @@ function renderPreparationCampaign(c={}){
   api('/applicants').then(data=>{for(const p of data.applicants||[]){const option=el('option',p.name);option.value=p.id;select.append(option);}start.disabled=!select.value;}).catch(e=>$('#notice').textContent=e.message);
   start.onclick=async()=>{start.disabled=true;try{await api('/preparation-campaign','POST',{applicant_id:select.value,target:200,batch_size:20});await refresh(true);}catch(e){$('#notice').textContent=e.message;start.disabled=false;}};
  }
- const link=el('a','Download Chrome helper 0.6.36');link.href='/applypilot-local.zip';box.append(el('p','Keep Chrome and a signed-in ApplyPilot tab open. Preparation runs automatically every 30 seconds unless you paused the extension.'),link);
+ const link=el('a','Download Chrome helper 0.6.37');link.href='/applypilot-local.zip';box.append(el('p','Keep Chrome and a signed-in ApplyPilot tab open. Preparation runs automatically every 30 seconds unless you paused the extension.'),link);
  if(c.enabled){if($('#work-focus'))$('#work-focus').hidden=true;if($('#application-batch'))$('#application-batch').hidden=true;}
 }
 function renderBatchControl(batch={}){
@@ -770,14 +770,14 @@ function renderBrowserReadiness(jobs){
  if(box){if(Date.now()-Number(box.dataset.checkedAt||0)>30000)box.querySelector('button').click();return;}
  box=el('section');box.id='browser-readiness';box.style.cssText='padding:16px;border:1px solid #74ad91;border-radius:12px;margin:16px 0';
  box.append(el('h2','Application preparation in your browser'));
- const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.36)');
+ const status=el('p','Checking your browser helper…'),check=el('button','Check browser connection'),setup=el('a','Update browser helper (0.6.37)');
  setup.href='/local-browser.html';setup.style.marginLeft='12px';status.setAttribute('role','status');
  box.append(status,check,setup);placeWorkspacePanel(box);
  check.onclick=()=>{
   if(check.disabled)return;check.disabled=true;box.dataset.checkedAt=String(Date.now());const requestId=crypto.randomUUID();
   const finish=(error,data)=>{clearTimeout(timer);window.removeEventListener('message',receive);check.disabled=false;
    browserHelperStatus=error?null:{...data,checkedAt:Date.now()};
-   status.textContent=error|| (data?.version!=='0.6.36'?'Browser helper '+data?.version+' is connected. Update to 0.6.36 for supported preparation and explicitly authorized automatic submission.':data?.enabled?'Browser helper 0.6.36 connected. New queued applications are prepared automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine preparation.')+(data?.error?' '+data.error:'');
+   status.textContent=error|| (data?.version!=='0.6.37'?'Browser helper '+data?.version+' is connected. Update to 0.6.37 for supported preparation and explicitly authorized automatic submission.':data?.enabled?'Browser helper 0.6.37 connected. New queued applications are prepared automatically; keep this browser and dashboard open.':'Browser helper connected but paused. Open its popup and start routine preparation.')+(data?.error?' '+data.error:'');
   };
   const receive=e=>{if(e.source===window&&e.origin===location.origin&&e.data?.type==='applypilot-browser-status-result'&&e.data.requestId===requestId)finish(e.data.error,e.data.data);};
   const timer=setTimeout(()=>finish('Browser helper not detected here. Open this dashboard in the Chrome or Edge profile with ApplyPilot Local enabled.'),3500);
@@ -897,7 +897,7 @@ function renderContinuationQueue(data){
 }
 async function drainContinuations(data){
  if(continuationBusy||busy||activeHandoff||Date.now()<nextContinuationCheck||!data?.requests?.some(r=>r.state==='queued'))return;
- if(!browserHelperStatus?.enabled||browserHelperStatus.version!=='0.6.36'||Date.now()-browserHelperStatus.checkedAt>45000)return;
+ if(!browserHelperStatus?.enabled||browserHelperStatus.version!=='0.6.37'||Date.now()-browserHelperStatus.checkedAt>45000)return;
  continuationBusy=true;nextContinuationCheck=Date.now()+20000;
  try{
   const {request}=await api('/continuations/claim','POST',{});if(!request)return;
@@ -994,12 +994,12 @@ function renderEmployerLimits(data,jobs=[]){
  if(!box){box=el('section');box.id='employer-limits';box.className='operations';placeWorkspacePanel(box);}
  if(box.contains(document.activeElement))return;
  const signature=JSON.stringify([data,jobs.map(j=>[j.id,j.company,j.title,j.status])]);if(box.dataset.signature===signature)return;box.dataset.signature=signature;
- box.replaceChildren(el('h2','Employer application limits'));
+ box.replaceChildren(el('h2','Employer limits and security holds'));
  if(!data){box.append(el('p','Employer limit status could not be refreshed.'));return;}
  const limits=data.limits||[];
  if(!limits.length)box.append(el('p','No employer application limits reported.'));
  for(const limit of limits){
-  box.append(el('h3',limit.company),el('p',limit.message),el('p',limit.hold_until?'Review after '+new Date(limit.hold_until).toLocaleString()+(limit.basis==='recorded-receipts'?'. Calculated from distinct receipt dates in the rolling window; the employer decides when another application is accepted.':'. This is a conservative hold from when the limit was reported; the employer’s exact reset date is not known.'):'Paused until the employer’s application window can be confirmed.'));
+  box.append(el('h3',limit.company),el('p',limit.message),el('p',limit.hold_until?'Review after '+new Date(limit.hold_until).toLocaleString()+(limit.basis==='recorded-receipts'?'. Calculated from distinct receipt dates in the rolling window; the employer decides when another application is accepted.':'. This is a conservative hold from when the limit was reported; the employer’s exact reset date is not known.'):limit.kind==='security'?'Paused for employer security review. No automatic retry or expiry.':'Paused until the employer’s application window can be confirmed.'));
  }
  for(const quota of data.quotas||[]){
   if(!Number.isInteger(quota.confirmed_in_window))continue;
@@ -1007,14 +1007,14 @@ function renderEmployerLimits(data,jobs=[]){
  }
  if(data.quotas?.length)box.append(el('small','Counts use receipt dates, not found jobs, queued forms, repeat clicks or interview updates. Unmatched external history can reduce the places remaining. Employers without a recorded policy are not assumed to have this limit.'));
  box.append(el('small','Limits apply to the employer and applicant, not every company using the same hiring software. Receipts and previous attempts are preserved; other employers can continue.'));
- const details=el('details');details.append(el('summary','Report an employer application limit'));
- const form=el('form'),label=el('label','Application that showed the employer limit'),select=el('select');select.required=true;select.setAttribute('aria-label','Application that showed the employer limit');
+ const details=el('details');details.append(el('summary','Report an employer limit or security rejection'));
+ const form=el('form'),label=el('label','Application that showed the employer message'),select=el('select');select.required=true;select.setAttribute('aria-label','Application that showed the employer message');
  const placeholder=el('option','Choose an application');placeholder.value='';select.append(placeholder);
  for(const job of jobs.filter(j=>!['submitted','interview','rejected','offer','duplicate','archived'].includes(j.status))){const option=el('option',job.company+' — '+job.title);option.value=job.id;select.append(option);}
  label.append(select);form.append(label);
- const messageLabel=el('label','Employer limit message'),message=el('textarea');message.required=true;message.maxLength=4000;message.setAttribute('aria-label','Employer limit message');messageLabel.append(message);form.append(messageLabel);
- const save=el('button','Save employer limit and check available places');save.type='submit';const status=el('p');status.setAttribute('role','status');form.append(save,status);
- form.onsubmit=async event=>{event.preventDefault();save.disabled=true;try{const result=await api('/employer-limits','POST',{jobId:select.value,message:message.value});$('#notice').textContent=result.company+': '+(result.policyOnly?'policy recorded and available places checked. ':'application limit saved. ')+result.held+' pending applications paused; other employers can continue.';document.activeElement?.blur();box.dataset.signature='';await refresh(true);}catch(error){status.textContent=error.message;}finally{save.disabled=false;}};
+ const messageLabel=el('label','Employer limit or security rejection message'),message=el('textarea');message.required=true;message.maxLength=4000;message.setAttribute('aria-label','Employer limit or security rejection message');messageLabel.append(message);form.append(messageLabel);
+ const save=el('button','Save employer restriction');save.type='submit';const status=el('p');status.setAttribute('role','status');form.append(save,status);
+ form.onsubmit=async event=>{event.preventDefault();save.disabled=true;try{const result=await api('/employer-limits','POST',{jobId:select.value,message:message.value});$('#notice').textContent=result.company+': '+(result.security?'security rejection saved; attempts remain protected. ':result.policyOnly?'policy recorded and available places checked. ':'application limit saved. ')+result.held+' pending applications paused; other employers can continue.';document.activeElement?.blur();box.dataset.signature='';await refresh(true);}catch(error){status.textContent=error.message;}finally{save.disabled=false;}};
  details.append(form);box.append(details);
 }
 

@@ -23,6 +23,16 @@ test('long multipart questions preserve professional context and reject actual a
  for(const q of ['Are you authorized to work in the UK?','What salary do you expect?','Solve this coding assessment','Do you agree to our declaration?'])assert(!canDraftProfessional(q));
  assert(!canDraftProfessional('Describe '+ 'x'.repeat(4000)));
 });
+
+test('interest and excitement wording reaches grounded Gemini drafting while protected topics remain excluded',async()=>{
+ const fact='I maintain cloud infrastructure and automate deployment workflows.';
+ for(const question of ['What interests you about Example?','What excites you about the prospect of working for Example?✱']){
+  assert(canDraftProfessional(question),question);let calls=0;
+  const result=await geminiFactAnswer({question,profile:{gemini_facts_consent:1},job:{title:'Platform Engineer',company:'Example'},jobContext:{description:'Build deployment automation.',status:'public_posting'},answers:{'Professional background':fact},env:{GEMINI_API_KEY:'test'},fetchImpl:async()=>{calls++;return output({answer:'The deployment automation work connects with my experience maintaining cloud infrastructure.',reason:'',evidence:[{id:'1',quote:fact}]});}});
+  assert.equal(calls,1);assert(result.answer);assert.equal(result.provider,'gemini');
+ }
+ for(const question of ['What interests you about this salary?','What excites you about relocating?','What interests you about this visa?','What excites you about this assessment?'])assert(!canDraftProfessional(question),question);
+});
 test('Gemini receives separate job context, exact evidence and field limits; oversize and unsupported answers stay blank',async()=>{
  const fact='I correlated Loki logs and rolled back an ingress configuration. Service recovered.',question='Describe an incident in no more than 80 words.';let sent;
  const options={question,profile:{gemini_facts_consent:1},job:{title:'SRE',company:'Example'},jobContext:{description:'Build reliable Kubernetes platforms.',sourceUrl:'https://jobs.lever.co/example/id',status:'public_posting'},answers:{},experience:[approved('Ingress incident',fact)],maxLength:200,env:{GEMINI_API_KEY:'test'},fetchImpl:async(_url,request)=>{sent=JSON.parse(request.body);return output({answer:fact,reason:'',evidence:[{id:'1',quote:fact}]});}};

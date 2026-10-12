@@ -9,6 +9,47 @@ const visa='Will you now or in the future require sponsorship for employment vis
 function profile(location='Toronto, Ontario, Canada',saved=facts,application={}){const p={answers_json:JSON.stringify(saved)},j={job_metadata_json:JSON.stringify({location}),answers_json:JSON.stringify(application)};return {...p,employment_context:employmentContext(p,j)};}
 const options=[{label:'Yes',value:'yes'},{label:'No',value:'no'}];
 
+test('Canadian residence and unrestricted authorization jointly answer the observed any-employer question',()=>{
+ const label='Are you physically located in Canada and legally authorized to work in Canada for any employer?';
+ const saved={...facts,Country:'Canada',[K.canadaRestrictions]:'No restrictions'};
+ assert.equal(hostedOptionChoice({label},options,profile('Toronto, Canada',saved))?.value,'yes');
+ assert.equal(approvedHostedRadioIndex(options.map(o=>({...o,question:label})),{},profile('Toronto, Canada',saved)),0);
+ for(const missing of ['Country',K.canadaRestrictions,K.canadaAuthorization]){const partial={...saved};delete partial[missing];assert.equal(hostedOptionChoice({label},options,profile('Toronto, Canada',partial)),null,missing);}
+ for(const change of [{Country:'United States'},{[K.canadaRestrictions]:'Restrictions apply'},{[K.canadaAuthorization]:'No'}])assert.equal(hostedOptionChoice({label},options,profile('Toronto, Canada',{...saved,...change})),null);
+ assert.equal(hostedOptionChoice({label:label.replace('Canada for any employer','Canada and willing to relocate')},options,profile('Toronto, Canada',saved)),null);
+ assert.equal(hostedOptionChoice({label,description:'I accept the terms'},options,profile('Toronto, Canada',saved)),null);
+});
+
+test('qualified Canadian authorization requires an explicit restrictions fact or exact application answer',()=>{
+ const label='Are you legally eligible to work in Canada?',choices=[{label:'Yes, with no restrictions'},{label:'Yes, with restrictions (details to be provided later)'},{label:'No'}];
+ assert.equal(hostedOptionChoice({label},choices,profile()),null);
+ const p=profile('Canada',{...facts,[K.canadaRestrictions]:'No restrictions'});
+ assert.equal(hostedOptionChoice({label},choices,p)?.label,choices[0].label);
+ assert.equal(hostedOptionChoice({label},options,p)?.value,'yes');
+ assert.equal(hostedOptionChoice({label},choices,profile('United States',{...facts,[K.canadaRestrictions]:'No restrictions'})),null);
+ assert.equal(hostedOptionChoice({label},choices,profile('Canada',facts,{[label]:choices[1].label}))?.label,choices[1].label);
+ assert.equal(hostedOptionChoice({label},[...choices,{label:'Yes'}],p),null,'two supported answers are ambiguous');
+});
+
+test('startup answers use an explicit approved fact and salary text uses only a saved CAD annual floor',()=>{
+ const startup='Do you have experience working in a start-up environment?';
+ assert.equal(hostedFieldAnswer({label:startup},profile()),null);
+ assert.equal(hostedFieldAnswer({label:startup},profile('Canada',{[K.startup]:'No'}))?.answer,'No');
+ const label='What are your salary expectations?',p={answers_json:'{}'},job={job_metadata_json:JSON.stringify({location:'Canada'}),answers_json:'{}'};
+ const withTarget={...p,employment_context:employmentContext(p,job,null,{annualSalaryTargetCAD:120000})};
+ assert.equal(hostedFieldAnswer({label,type:'text'},withTarget)?.answer,'At least CAD 120,000 per year, depending on the role and total compensation.');
+ for(const type of ['number','select','combobox','radio'])assert.equal(hostedFieldAnswer({label,type},withTarget),null);
+ assert.equal(hostedFieldAnswer({label},profile()),null);
+ for(const label of ['What is your current salary?','What are your hourly rate expectations?','Expected salary in USD','I agree to a salary of CAD 120000'])assert.equal(hostedFieldAnswer({label},withTarget),null);
+});
+
+test('observed alternative professional links and residence wording use saved profile facts',()=>{
+ const p={location:'Toronto, Ontario, Canada',answers_json:'{}'},answers={LinkedIn:'https://www.linkedin.com/in/example'};
+ for(const label of ['LinkedIn Profile or Website','LinkedIn, Portfolio, Personal Website, Github'])assert.equal(hostedFieldAnswer({label},p,answers)?.answer,answers.LinkedIn);
+ assert.equal(hostedFieldAnswer({label:'Where do you live?'},p)?.answer,p.location);
+ assert.equal(hostedFieldAnswer({label:'Your manager LinkedIn Profile or Website'},p,answers),null);
+});
+
 test('current employer and title use explicit current facts, never old employer captures or desired roles',()=>{
  const saved={[K.currentEmployer]:'Fixture Company',[K.currentTitle]:'Senior Cloud Engineer'};
  for(const label of ['Current employer','Current/Most Recent Company Name','Your current or most recent employer'])assert.equal(hostedFieldAnswer({label},profile('Canada',saved))?.answer,saved[K.currentEmployer],label);

@@ -192,6 +192,15 @@ function leverFixture(labels=['Toronto, Ontario, Canada'],commit=true){
  return {...f,input,hidden,l};
 }
 
+test('Lever descriptions retain the real question separately from radio answers and search hints',async()=>{
+ const f=fixture('<li class="application-question custom-question"><div><div class="application-label"><div class="text">Do you have experience working in a start-up environment?<span>✱</span></div></div><div class="application-field"><label><input type="radio" name="cards[x][field0]" value="Yes" required>Yes</label><label><input type="radio" name="cards[x][field0]" value="No" required>No</label></div></div></li><li class="application-question"><div class="application-label">Why this company?✱</div><div class="application-field"><textarea name="cards[y][field0]" required></textarea></div></li>');
+ try{
+  const radios=[...f.w.document.querySelectorAll('input')];
+  for(const e of radios){const d=await f.locator(e).evaluate(hostedFormState);assert.equal(d.label,'Do you have experience working in a start-up environment?✱');assert.equal(d.optionLabel,e.value);assert.equal(d.ambiguous,false);}
+  assert.deepEqual([...(await f.review()).missing],['Do you have experience working in a start-up environment?✱','Why this company?✱']);
+ }finally{f.dom.window.close();}
+});
+
 test('Lever location selects an exact scoped option and reads the employer payload after blur',async()=>{
  const f=leverFixture(['Toronto, Ohio, United States','Toronto, Ontario, Canada']);
  try{

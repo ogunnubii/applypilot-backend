@@ -2,13 +2,16 @@ import {scopedWorkEligibility} from './search-scope.js';
 // Employer eligibility questions use explicit applicant answers, never model
 // inference, search preferences, nationality or an inferred immigration status.
 const clean=value=>String(value??'').normalize('NFKC').replace(/[\u2013\u2014]/g,'-').replace(/[?*✱\s]+$/g,'').replace(/\s+/g,' ').trim().toLowerCase();
-export const EMPLOYMENT_KEYS={availability:'Available to start',canadaAuthorization:'Work authorization - Canada',canadaSponsorship:'Visa sponsorship now or in future - Canada',over18:'Over 18 - applicant confirmed',currentEmployer:'Current employer',currentTitle:'Current job title'};
+export const EMPLOYMENT_KEYS={availability:'Available to start',canadaAuthorization:'Work authorization - Canada',canadaRestrictions:'Work authorization restrictions - Canada',canadaSponsorship:'Visa sponsorship now or in future - Canada',startup:'Start-up environment experience',over18:'Over 18 - applicant confirmed',currentEmployer:'Current employer',currentTitle:'Current job title'};
 const yesNo=value=>/^(yes|no)$/i.test(String(value||'').trim())?String(value).trim().toLowerCase()==='yes'?'Yes':'No':null;
 function questionKind(value){
  const q=clean(value);
  if(/^(?:your )?current(?:\s*\/\s*most recent| or most recent)? (?:company(?: name)?|employer(?: name)?)$/.test(q))return 'currentEmployer';
  if(/^(?:your )?current(?:\s*\/\s*most recent| or most recent)? (?:job )?title$/.test(q))return 'currentTitle';
  if(/^are you (?:over (?:the age of )?(?:18|eighteen)(?: years old| years of age)?|at least (?:18|eighteen)(?: years old| years of age)?)$/.test(q))return 'adult';
+ if(/^(?:what are your salary expectations|(?:your )?(?:expected|desired) (?:annual )?salary)(?: in cad| \(cad\))?$/.test(q))return 'salary';
+ if(/^do you have experience working in a start-up environment$/.test(q))return 'startup';
+ if(/^are you physically located in canada and legally authorized to work in canada for any employer$/.test(q))return 'canadaAnyEmployer';
  if(/^(?:when (?:can|could) you start(?: a new role| work| employment)?|(?:what is your )?(?:earliest start date|availability to start|available to start|notice period))$/.test(q))return 'availability';
  const where='(?:canada|the country you are applying for|the (?:country|location) (?:where|in which) (?:the|this) (?:job|role|position) is (?:located|based)|this country)';
  if(new RegExp('^are you (?:legally )?(?:authori[sz]ed|eligible|permitted) to work in '+where+'$').test(q))return 'authorization';
@@ -32,9 +35,9 @@ function selectedCanadianRemoteJob(job,scope){
  const posting={...metadata,title:job.title};
  return scopedWorkEligibility(posting,scope).eligible===true;
 }
-export function employmentContext(profile,job,scope=null){
+export function employmentContext(profile,job,scope=null,{annualSalaryTargetCAD}={}){
  let saved={},application={};try{saved=JSON.parse(profile?.answers_json||'{}');application=JSON.parse(job?.answers_json||'{}');}catch{}
- return {canada:canadaJob(job)||selectedCanadianRemoteJob(job,scope),facts:Object.fromEntries(Object.values(EMPLOYMENT_KEYS).filter(k=>typeof saved[k]==='string').map(k=>[k,saved[k]])),application};
+ return {canada:canadaJob(job)||selectedCanadianRemoteJob(job,scope),locatedInCanada:clean(saved.Country)==='canada',annualSalaryTargetCAD:Number.isSafeInteger(annualSalaryTargetCAD)&&annualSalaryTargetCAD>0?annualSalaryTargetCAD:null,facts:Object.fromEntries(Object.values(EMPLOYMENT_KEYS).filter(k=>typeof saved[k]==='string').map(k=>[k,saved[k]])),application};
 }
 export function approvedEmploymentAnswer(field,profile){
  const context=profile?.employment_context;if(!context)return null;
@@ -45,6 +48,19 @@ export function approvedEmploymentAnswer(field,profile){
  const entries=Object.entries(context.application||{}).filter(([q])=>clean(q)===clean(question));
  if(new Set(entries.map(([,a])=>clean(a))).size>1)return null;
  const exact=entries.length?String(entries[0][1]).trim():null;
+ if(kind==='canadaAnyEmployer'){
+  if(!context.canada)return null;
+  if(exact)return yesNo(exact)?{kind:'employment',answer:yesNo(exact)}:null;
+  return context.locatedInCanada&&yesNo(context.facts[EMPLOYMENT_KEYS.canadaAuthorization])==='Yes'&&clean(context.facts[EMPLOYMENT_KEYS.canadaRestrictions])==='no restrictions'?{kind:'employment',answer:'Yes'}:null;
+ }
+ if(kind==='startup'){const answer=yesNo(exact??context.facts[EMPLOYMENT_KEYS.startup]);return answer?{kind:'employment',answer}:null;}
+ if(kind==='salary'){
+  if(exact)return {kind:'employment',answer:exact};
+  if(!context.canada||!context.annualSalaryTargetCAD||['number','select','combobox','radio'].includes(field.type))return null;
+  // A saved minimum is a floor, not current pay, a currency conversion or an
+  // hourly rate. State its currency, period and meaning in a plain text answer.
+  return {kind:'employment',answer:'At least CAD '+context.annualSalaryTargetCAD.toLocaleString('en-CA')+' per year, depending on the role and total compensation.'};
+ }
  if(kind==='currentEmployer'||kind==='currentTitle'){
   const saved=context.facts[EMPLOYMENT_KEYS[kind]],value=exact??saved;
   // Historical employment is not automatically current employment. Only the
@@ -70,7 +86,8 @@ export function approvedEmploymentAnswer(field,profile){
  // Even exact application answers require a clear country, so identical
  // wording copied from an old job cannot assert authorization elsewhere.
  if(!context.canada)return null;
+ if(kind==='authorization'&&exact&&/^yes, with (?:no restrictions|restrictions \(details to be provided later\))$/i.test(exact))return {kind:'employment',answer:exact};
  const key=kind==='authorization'?EMPLOYMENT_KEYS.canadaAuthorization:EMPLOYMENT_KEYS.canadaSponsorship;
  const answer=yesNo(exact??context.facts[key]);
- return answer?{kind:'employment',answer}:null;
+ return answer?{kind:'employment',answer,...(kind==='authorization'&&answer==='Yes'&&clean(context.facts[EMPLOYMENT_KEYS.canadaRestrictions])==='no restrictions'?{qualifiedAnswers:['Yes, with no restrictions']}: {})}:null;
 }

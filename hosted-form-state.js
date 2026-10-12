@@ -8,8 +8,8 @@ export function hostedFormState(target) {
  // Text-message consent is a separate optional question nested inside Ashby's
  // required Phone field. It must not inherit the phone label or required mark.
  // Native/ARIA requirements on the consent controls still count normally.
- const wrapperFor=e=>e.parentElement?.closest('.ashby-application-form-texting-consent-description,.ashby-application-form-field-entry,.ashby-application-form-input-radio-group,[data-field-entry-id],[data-automation-id*="formField" i],.application-question,fieldset,[role="group"],[role="radiogroup"],[class*="field" i]');
- const titleFor=e=>wrapperFor(e)?.querySelector(':scope > .ashby-application-form-question-title,:scope > legend,:scope > label');
+ const wrapperFor=e=>{const lever=e.closest('.application-question');return lever?.querySelector('.application-label')?lever:e.parentElement?.closest('.ashby-application-form-texting-consent-description,.ashby-application-form-field-entry,.ashby-application-form-input-radio-group,[data-field-entry-id],[data-automation-id*="formField" i],.application-question,fieldset,[role="group"],[role="radiogroup"],[class*="field" i]');};
+ const titleFor=e=>{const wrapper=wrapperFor(e);return wrapper?.matches('.application-question')?wrapper.querySelector('.application-label'):wrapper?.querySelector(':scope > .ashby-application-form-question-title,:scope > legend,:scope > label');};
  const ids=value=>clean(value).split(/\s+/).map(id=>labelText(document.getElementById(id))).filter(Boolean).join(' ');
  // React Select (including Greenhouse) clears its search input after choosing
  // an option. Only the selected-value node is a committed answer; data-value

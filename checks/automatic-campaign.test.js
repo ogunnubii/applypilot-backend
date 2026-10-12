@@ -16,7 +16,7 @@ import {jobIntelligence} from '../job-intelligence.js';
 const roles=['AI Support Engineer','Platform Engineer','DevOps Engineer'];
 function fixture(path=':memory:'){
  const db=new DatabaseSync(path);
- db.exec(`CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id,applicant_id,company,title,url,normalized_url,status,local_owner,local_attempt_at,local_phase,challenge,confirmation,attempts DEFAULT 0,handoff_available DEFAULT 0,match_score DEFAULT 90,created_at,updated_at,job_metadata_json DEFAULT '{}');
+ db.exec(`CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id,applicant_id,company,title,url,normalized_url,status,local_owner,local_attempt_at,local_phase TEXT NOT NULL DEFAULT 'ready',challenge,confirmation,attempts DEFAULT 0,handoff_available DEFAULT 0,match_score DEFAULT 90,created_at,updated_at,job_metadata_json DEFAULT '{}');
  CREATE TABLE applicants(id,user_id,consent,email,resume_path,execution_mode,focus);
  CREATE TABLE events(job_id,at,type,message);CREATE TABLE answer_history(job_id);
  CREATE TABLE external_application_history(id,user_id,company,title,status,company_key,title_key);

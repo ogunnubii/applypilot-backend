@@ -405,14 +405,26 @@ test('discovery updates existing pay without resetting attempts and queues every
  const old=posting('1','Cloud Engineer already attempted',now()),best=posting('2','Cloud Engineer best',now()),lower=posting('3','Cloud Engineer older','2020-01-01'),excluded={...posting('4','Cloud Engineer Canada',now()),location:'Toronto, Canada',descriptionPlain:'Permanent employment.'};
  db.prepare('INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at,attempts,local_attempt_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run('old','u','p',old.title,'example',old.jobUrl,old.jobUrl,'local_browser','Do not overwrite',now(),now(),2,'2026-01-01');
  const matchAssessment=()=>({score:95,strong:true,matched:true}),workEligibility=new Function(sources['work-eligibility.js'].replace('export function','function')+';return workEligibility;')();
- const intelligence=pureModule('job-intelligence.js',{matchAssessment,workEligibility});
+ const scopeModule=await import('../search-scope.js');
+ const intelligence=pureModule('job-intelligence.js',{matchAssessment,workEligibility,...scopeModule});
  const fetch=async url=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify(String(url).includes('/job-board/example')?{jobs:[old,best,lower,excluded]}:String(url).includes('arbeitnow')?{data:[],links:{}}:{jobs:[]})});
  const {priorApplication}=pureModule('application-dedup.js',{companyKey:key});
- const discovery=pureModule('discovery.js',{db,event:()=>{},now,normalizeURL:v=>v,randomUUID,companyKey:key,historyKey:key,matchAssessment,locationPriority:()=>5,workEligibility,...intelligence,priorApplication,pipelineEnabled:()=>false,fetch,ashbyPosting:(await import('../ashby-posting.js')).ashbyPosting});
+ const discovery=pureModule('discovery.js',{db,event:()=>{},now,normalizeURL:v=>v,randomUUID,companyKey:key,historyKey:key,matchAssessment,locationPriority:()=>5,workEligibility,...intelligence,...scopeModule,priorApplication,pipelineEnabled:()=>false,fetch,ashbyPosting:(await import('../ashby-posting.js')).ashbyPosting});
  const [one,two]=await Promise.all([discovery.runSearch('s','u'),discovery.runSearch('s','u')]);assert.equal(one,two);assert.equal(one.added,2);assert.equal(one.queued,2);
  const previous=db.prepare("SELECT * FROM jobs WHERE id='old'").get();assert.equal(previous.status,'local_browser');assert.equal(previous.attempts,2);assert.equal(previous.local_attempt_at,'2026-01-01');assert.equal(previous.notes,'Do not overwrite');assert(JSON.parse(previous.job_metadata_json).pay.length);
  const rows=db.prepare("SELECT title,status FROM jobs WHERE id!='old' ORDER BY title").all();assert.deepEqual(rows.map(r=>[r.title,r.status]),[[best.title,'queued'],[lower.title,'queued']]);
- assert(!db.prepare('SELECT 1 FROM jobs WHERE title=?').get(excluded.title));assert.equal(db.prepare("SELECT source_cursor FROM searches WHERE id='s'").get().source_cursor,4);db.close();
+ assert(!db.prepare('SELECT 1 FROM jobs WHERE title=?').get(excluded.title));assert.equal(db.prepare("SELECT source_cursor FROM searches WHERE id='s'").get().source_cursor,4);
+ // The same native supplemental feed must inherit an enabled structured scope,
+ // persist its signature and queue the previously ineligible Canadian T4 role.
+ db.exec('ALTER TABLE searches ADD COLUMN scope_json TEXT');
+ const scope=scopeModule.normalizeSearchScope({roles:['Cloud Engineer'],localPlaces:[],remotePlaces:['Canada'],remoteWorldwide:true,remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:true,preferBusinessContract:true});
+ db.prepare('INSERT INTO searches(id,user_id,applicant_id,instruction,boards_json,enabled,created_at,scope_json) VALUES(?,?,?,?,?,?,?,?)').run('structured','u','p','Approved Canada scope','[]',1,now(),JSON.stringify(scope));
+ db.prepare("UPDATE searches SET source_cursor=0 WHERE id='s'").run();
+ const scoped=await discovery.runSearch('s','u');assert.equal(scoped.added,1);assert.equal(scoped.queued,1);
+ const canadian=db.prepare('SELECT * FROM jobs WHERE title=?').get(excluded.title),metadata=JSON.parse(canadian.job_metadata_json);
+ assert.equal(canadian.status,'queued');assert.equal(metadata.eligibility.eligible,true);assert.equal(metadata.searchScopeSignature,scopeModule.searchScopeSignature(scope));
+ const protectedRow=db.prepare("SELECT * FROM jobs WHERE id='old'").get();assert.equal(protectedRow.status,'local_browser');assert.equal(protectedRow.attempts,2);assert.equal(protectedRow.local_attempt_at,'2026-01-01');
+ assert.equal(JSON.parse(protectedRow.job_metadata_json).searchScopeSignature,scopeModule.searchScopeSignature(scope));db.close();
 });
 
 test('Gemini browser handoff uses public questions only, preserves user answers and never bypasses continuation checks',async()=>{

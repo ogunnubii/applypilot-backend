@@ -130,7 +130,7 @@ async function refresh(force=false){
  const decided=outcomes.size,positive=[...outcomes.values()].filter(s=>s==='interview'||s==='offer').length;
  const success=$('#success-rate');if(success)success.textContent=decided?Math.round(positive*100/decided)+'%':'—';
  $('#worker-state').textContent=health.workerOnline?'● Worker connected · Progress updates automatically':'○ Worker offline · Saved information is retained';
- const signature=JSON.stringify([current,externalRecords,focus.enabled,focus.auto_submit,focus.skip_blocked,focus.job_id,focus.search_queue_only,activeBatch.enabled,activeBatch.job_ids,preparation]);
+ const signature=JSON.stringify([current,externalRecords,focus.enabled,focus.auto_submit,focus.skip_blocked,focus.job_id,focus.search_queue_only,activeBatch.enabled,activeBatch.job_ids,preparation,automatic]);
  if(!force&&(signature===lastSignature||$('#jobs').contains(document.activeElement)||$('#jobs').querySelector('[data-dirty="true"],details[open]')))return;
  lastSignature=signature;$('#jobs').replaceChildren();
  const attention=globalThis.ApplyPilotPolicy.attentionOrder(current.filter(needsMyAttention)),attentionPositions=new Map(attention.map((j,i)=>[j.id,i+1]));
@@ -187,11 +187,15 @@ async function refresh(force=false){
    }}catch(e){msg.textContent=e.message;$('#notice').textContent=e.message;}finally{takeover.disabled=false;takeover.textContent=job.handoff_available?(job.challenge==='Ready to submit'?'Review filled form and submit':'Take over filled application'):'Prepare live application';}
   };
   if(job.metadata?.manualReview&&globalThis.ApplyPilotPolicy.supported(job.url)&&job.status!=='local_browser'&&!job.local_attempt_at&&!job.employer_hold){
+   const restriction=localAutofillProblem(job);
+   if(restriction){const note=el('p',restriction);note.className='local-autofill-unavailable';card.insertBefore(note,actions);}
+   else{
    const open=el('button','Open & autofill');open.className='primary manual-autofill';
    open.onclick=async()=>{open.disabled=true;actions.open=true;msg.textContent='Opening the form and filling saved answers.';try{await openLocalApplication(job.id);await refresh(true);}catch(error){msg.textContent=error.message;}finally{open.disabled=false;}};
    card.insertBefore(open,actions);
+   }
   }
-  if(job.status!=='local_browser'&&!job.metadata?.manualReview){
+  if(job.status!=='local_browser'&&(!job.metadata?.manualReview||job.handoff_available)){
    if(!job.handoff_available&&['Unconfirmed submission','Submission in progress'].includes(job.challenge))actions.append(el('p','Live restart is unavailable because a submission may already have occurred. Check the employer receipt using the employer link below.'));
    else card.insertBefore(takeover,actions);
   }
@@ -467,6 +471,13 @@ async function openHandoff(job){
  document.body.append(panel);resize();focus();await pump(true);
 }
 
+function localAutofillProblem(job){
+ // Local autofill claims execution ownership. Historical automatic members
+ // remain hosted even when absent from the limited campaign snapshot.
+ if(job.automatic_member||(activeAutomatic.members||[]).some(m=>m.job_id===job.id))return 'This application belongs to the hosted worker. Local autofill is unavailable. Use the existing hosted form if one is available.';
+ if(activeAutomatic.id&&!activePreparation.enabled)return activeAutomatic.enabled?'This job is outside the current automatic batch. Local autofill is unavailable while this campaign is active.':'Automatic campaign is stopped. Local autofill is unavailable in this queue.';
+ return '';
+}
 function openLocalApplication(jobId){
  return new Promise((resolve,reject)=>{
   const requestId=crypto.randomUUID();

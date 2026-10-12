@@ -1,4 +1,4 @@
-import {normalizeSearchScope,scopeIntent,searchPriority} from './search-scope.js';
+import {normalizeSearchScope,scopeIntent,searchPriority,currentSearchScope} from './search-scope.js';
 import {ashbyPosting} from './ashby-posting.js';
 import {supportIntent,remoteCanadaIntent,t4FallbackIntent,refreshSalaryRates} from './support-career.js';
 import {batchPreferences} from './application-batches.js';
@@ -105,8 +105,11 @@ export function mergeProfileRoles(intent,focus=''){
  return {...intent,roles:[...new Set([...intent.roles,...profile])]};
 }
 
-export function searchIntentForApplicant(search,applicant){
- if(search.scope_json){const scope=normalizeSearchScope(JSON.parse(search.scope_json));return {instruction:search.instruction,intent:scope.includeRelatedRoles?mergeProfileRoles(scopeIntent(scope),applicant?.focus):scopeIntent(scope)};}
+export function searchIntentForApplicant(search,applicant,fallbackScope=null){
+ // Supplemental boards use the same explicit applicant scope as the campaign.
+ // Legacy text must not overwrite eligibility or its scope signature on refresh.
+ const explicitScope=search.scope_json?JSON.parse(search.scope_json):fallbackScope;
+ if(explicitScope){const scope=normalizeSearchScope(explicitScope);return {instruction:search.instruction,intent:scope.includeRelatedRoles?mergeProfileRoles(scopeIntent(scope),applicant?.focus):scopeIntent(scope)};}
  const stored=parseIntent(search.instruction);
  const instruction=search.auto_generated?profileSearchInstruction(applicant,stored.roles):search.instruction;
  return {instruction,intent:mergeProfileRoles(parseIntent(instruction),applicant?.focus)};
@@ -236,7 +239,7 @@ async function executeSearch(id,userId){
  if(!search)throw Error('Search not found');
  const applicant=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(search.applicant_id,userId);
  if(!applicant)throw Error('Applicant not found');
- const resolved=searchIntentForApplicant(search,applicant),intent=resolved.intent,requestedBoards=[...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')],boards=[...new Set([...requestedBoards,...(intent.broadTech||intent.supportCareer?[...curatedBoards(intent,applicant.focus),...defaultBoards]:[...defaultBoards,...curatedBoards(intent,applicant.focus)])].map(board=>board.replace('job-boards.greenhouse.io','boards.greenhouse.io')))];
+ const resolved=searchIntentForApplicant(search,applicant,currentSearchScope(db,{user_id:userId,applicant_id:applicant.id})),intent=resolved.intent,requestedBoards=[...JSON.parse(search.boards_json),...parseBoards(process.env.DISCOVERY_BOARDS||'')],boards=[...new Set([...requestedBoards,...(intent.broadTech||intent.supportCareer?[...curatedBoards(intent,applicant.focus),...defaultBoards]:[...defaultBoards,...curatedBoards(intent,applicant.focus)])].map(board=>board.replace('job-boards.greenhouse.io','boards.greenhouse.io')))];
  const batch=sourceBatch(spreadDiscoveryBoards(boards),search.source_cursor);
  if(search.auto_generated&&resolved.instruction!==search.instruction)db.prepare('UPDATE searches SET instruction=? WHERE id=?').run(resolved.instruction,id);
  db.prepare('UPDATE searches SET last_run=?,last_error=NULL,source_cursor=? WHERE id=?').run(now(),batch.next,id);

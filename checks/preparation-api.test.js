@@ -68,5 +68,23 @@ test('real campaign API gives Chrome manual preparation packets, prevents other 
   db.prepare("UPDATE preparation_members SET excluded_at='2026',exclusion_reason='Fixture exclusion' WHERE job_id=?").run(job.id);
   assert.equal((await api('/jobs/'+job.id+'/local/packet')).data.prepareSteps,false);
   assert.equal((await api('/jobs/'+job.id+'/local/step','POST',{})).status,409,'excluded member cannot keep advancing');
+  // Transition authorization is separate from the historical manual campaign.
+  assert.equal((await api('/automatic-campaign','POST',{applicant_id:'p',auto_submit:true})).status,409);
+  const automatic=await api('/automatic-campaign','POST',{applicant_id:'p',mode:'automatic',auto_submit:true,batch_size:20});assert.equal(automatic.status,200,JSON.stringify(automatic));assert.equal(automatic.data.selected,20);
+  assert(!automatic.data.members.some(m=>m.job_id===job.id),'existing local form retains its owner and manual submission policy');
+  assert.equal((await api('/automatic-campaign','GET',undefined,'other')).data.mode,'manual');
+  const autoId=automatic.data.members[0].job_id;
+  assert.equal((await api('/jobs/'+autoId+'/local/claim','POST',{})).status,409,'Chrome cannot compete with the hosted campaign');
+  assert.equal((await api('/preparation-campaign','POST',{applicant_id:'p'})).status,409,'explicit Stop required before switching modes');
+  assert.equal((await api('/automatic-campaign','PUT',{enabled:false})).data.enabled,false);
+  const {reserveAutonomousAttempt}=await import('../single-application.js');assert.throws(()=>reserveAutonomousAttempt(db,autoId,'u','hosted-worker'));
+  assert.equal((await api('/automatic-campaign','POST',{applicant_id:'p',mode:'automatic',auto_submit:true,batch_size:20})).status,200);
+  // Actual worker restart recovery, using durable intent even if challenge text
+  // was interrupted or overwritten before the process ended.
+  db.prepare("UPDATE jobs SET status='running',challenge=NULL WHERE id=?").run(autoId);reserveAutonomousAttempt(db,autoId,'u','hosted-worker');
+  db.prepare('UPDATE jobs SET challenge=NULL WHERE id=?').run(autoId);
+  const {recoverWorkerJobs}=await import('../local-state.js');recoverWorkerJobs();
+  assert.equal(db.prepare('SELECT challenge FROM jobs WHERE id=?').get(autoId).challenge,'Unconfirmed submission');
+  assert.equal((await api('/automatic-campaign')).data.totals.unresolved,1);assert.throws(()=>reserveAutonomousAttempt(db,autoId,'u','hosted-worker'));
  }finally{child.kill();await exited;db.close();}
 });

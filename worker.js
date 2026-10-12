@@ -1,4 +1,6 @@
 import {hostedFormState} from './hosted-form-state.js';
+import {syncHostedReceipt} from './receipt-sync.js';
+import {automaticCampaign,automaticMember,populateAutomaticCampaign} from './automatic-campaign.js';
 import {employmentContext} from './employment-answers.js';
 import {currentSearchScope} from './search-scope.js';
 import {fillHostedButtonGroups} from './hosted-buttons.js';
@@ -27,13 +29,14 @@ installDrafts(db);
 installResearch(db);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function set(job,status,message,challenge=null,confirmation=null){if(db.prepare('SELECT status FROM jobs WHERE id=?').get(job.id)?.status==='archived')return;db.prepare('UPDATE jobs SET status=?,challenge=?,confirmation=?,updated_at=? WHERE id=?').run(status,challenge,confirmation,now(),job.id);event(job.id,status,message)}
-function claim(){if(handoffs?.full())return null;
+function claim(){
+ for(const c of db.prepare('SELECT user_id FROM automatic_campaigns WHERE enabled=1').all())populateAutomaticCampaign(db,c.user_id);
  for(const f of db.prepare('SELECT user_id FROM work_focus WHERE enabled=1').all())ensureFocusedJob(db,f.user_id);
  db.exec('BEGIN IMMEDIATE');
  try{
   const candidates=db.prepare("SELECT * FROM jobs WHERE status='queued' AND COALESCE(json_extract(job_metadata_json,'$.available'),1)!=0 AND applicant_id IN (SELECT id FROM applicants WHERE execution_mode='cloud') AND local_owner IS NULL AND (NOT EXISTS(SELECT 1 FROM application_batch_preferences b WHERE b.user_id=jobs.user_id AND b.enabled=1) OR EXISTS(SELECT 1 FROM application_batch_members m JOIN application_batch_preferences b ON b.current_batch=m.batch_id AND b.enabled=1 WHERE m.job_id=jobs.id AND m.user_id=jobs.user_id)) AND (NOT EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1) OR id=(SELECT job_id FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1)) ORDER BY match_score DESC,discovery_priority,created_at").all();let j;
   for(const userId of new Set(candidates.map(job=>job.user_id))){
-   j=prioritizeApplications(db,userId,candidates.filter(job=>job.user_id===userId)).find(job=>job.metadata?.eligibility?.eligible!==false&&!savedSearchClaimProblem(db,job));
+   j=prioritizeApplications(db,userId,candidates.filter(job=>job.user_id===userId)).find(job=>(!handoffs?.full()||automaticMember(db,job))&&job.metadata?.eligibility?.eligible!==false&&!savedSearchClaimProblem(db,job));
    if(j)break;
   }
   if(j){db.prepare("UPDATE jobs SET status='running',attempts=attempts+1,lease_at=?,updated_at=? WHERE id=?").run(now(),now(),j.id);event(j.id,'running','Opening employer application')}
@@ -302,6 +305,7 @@ if(scopes.length>1)return set(job,'needs_review','Several application forms were
 if(scopes.length===1){page=scopes[0];if(page!==browserPage.mainFrame())event(job.id,'form','Located embedded employer application');}
 check=await review(page);db.prepare('UPDATE jobs SET required_fields_json=? WHERE id=?').run(JSON.stringify(check.missing),job.id);if(check.captcha)return await humanPause(job,page,p);if(check.signIn)return set(job,'paused','Sign-in required','Sign-in');
 for(let step=0;step<15;step++){
+if(automaticMember(db,job)&&!automaticCampaign(db,job.user_id)?.enabled)return set(job,'needs_review','Automatic campaign stopped before submission.','Campaign stopped');
 if(!inActiveBatch(db,job)||db.prepare('SELECT status FROM jobs WHERE id=?').get(job.id)?.status==='archived')return;
 const focusedNow=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(job.user_id);if(focusedNow&&focusedNow.job_id!==job.id)return set(job,'needs_review','Parked while the selected application completes.','Parked');
 const heldNow=employerHold(db,job);if(heldNow)return set(job,'needs_review',heldNow.message,'Employer application limit');
@@ -318,6 +322,7 @@ if(preparation.uploadIssue)return set(job,'needs_review',preparation.uploadIssue
 event(job.id,'filled',`Filled ${preparation.filled} standard fields`);
 let unknown=preparation.unknown;check=preparation.check;const requiredMissing=[...new Set([...check.missing,...unknown])];await recordFormProgress(page,job);db.prepare('UPDATE jobs SET required_fields_json=? WHERE id=?').run(JSON.stringify(requiredMissing),job.id);if(check.captcha)return await humanPause(job,page,p);if(check.signIn)return set(job,'paused','Sign-in required','Sign-in');if(check.pending)return set(job,'needs_review','The employer form is still validating. Review it before continuing.','Form validation');if(requiredMissing.length){const protectedMissing=requiredMissing.filter(protectedHostedQuestion);return set(job,'needs_review',`${protectedMissing.length?'Protected questions need you':'Missing required fields'}: ${requiredMissing.slice(0,8).join('; ')}`,protectedMissing.length?'Sensitive action':'Missing answers');}const radioState=await page.locator('input[type=radio]:visible').evaluateAll(radios=>radios.map(r=>({form:[...document.forms].indexOf(r.form),name:r.name||'',question:r.closest('fieldset')?.querySelector('legend')?.innerText||'',required:r.required||r.getAttribute('aria-required')==='true'||r.closest('fieldset')?.getAttribute('aria-required')==='true',checked:r.checked}))),unanswered=requiredUnansweredRadioGroups(radioState);if(unanswered.length)return set(job,'needs_review',`Unanswered selection questions: ${unanswered.slice(0,8).join('; ')}`,'Missing answers');let submit=page.getByRole('button',{name:/^(submit application|submit|send application|complete application)$/i});const next=page.getByRole('button',{name:/^(next|next step|continue|continue application|save (?:and|&) continue|review|review application|proceed)$/i});
 if(await next.count()===1&&await submit.count()===0){
+ if(automaticMember(db,job)&&!automaticCampaign(db,job.user_id)?.enabled)return set(job,'needs_review','Automatic campaign stopped before the next step.','Campaign stopped');
  if(researchConsentWithdrawn(db,job.id,p.id))return set(job,'needs_review','Google public job-page drafting consent was withdrawn','Research consent withdrawn');
  await rememberForm(page,job);const before=await page.locator('body').innerText();await next.click();let advanced=false;for(let settle=0;settle<8;settle++){await browserPage.waitForTimeout(300);if(await page.locator('body').innerText()!==before){advanced=true;break;}}
  if(!advanced)return set(job,'needs_review','Application did not advance; check validation','Form validation');
@@ -326,10 +331,14 @@ if(await next.count()===1&&await submit.count()===0){
 if(await submit.count()!==1||await next.count()>0)return set(job,'needs_review',`Submit button not recognized${unknown.length?`; required questions: ${unknown.slice(0,4).join('; ')}`:''}`,'Unfamiliar form');if(!await submit.isEnabled()&&!focusAllowsSubmit(db,job))return set(job,'needs_review','The employer has not enabled Submit. Review the form validation before continuing.','Form validation');if(researchConsentWithdrawn(db,job.id,p.id))return set(job,'needs_review','Google public job-page drafting consent was withdrawn','Research consent withdrawn');const current=db.prepare('SELECT consent FROM applicants WHERE id=?').get(p.id);if(!current?.consent)return set(job,'needs_review','Consent was withdrawn');await rememberForm(page,job);const finalHold=employerHold(db,job);if(finalHold)return set(job,'needs_review',finalHold.message,'Employer application limit');if(focusAllowsSubmit(db,job)){
  const result=await submitHostedApplication({page,job,submit,review,
   reserve:()=>reserveAutonomousAttempt(db,job.id,job.user_id,'hosted-worker'),
+  prepared:()=>{if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='prepared'").get(job.id))event(job.id,'prepared','All required fields and the final employer action passed validation.');},
   wait:ms=>browserPage.waitForTimeout(ms),
   recordLimit:text=>recordEmployerLimit(db,job.user_id,job.id,text,{source:'Employer response after automatic attempt'}),
   recordDiagnostic:message=>event(job.id,'submission_diagnostic',message)});
- if(result.status==='submitted')confirmLibrary(db,job);
+ if(result.status==='submitted'){
+  syncHostedReceipt(db,job.id,job.user_id,{url:page.url(),receipt:result.confirmation,observedAt:now()});
+  confirmLibrary(db,job);return;
+ }
  return set(job,result.status,result.message,result.challenge||null,result.confirmation||null);
 }
 event(job.id,'prepared','All supported fields are filled. The applicant must make the final submission.');return set(job,'needs_review','Ready to submit — review the filled application and click Submit.','Ready to submit');
@@ -337,7 +346,7 @@ event(job.id,'prepared','All supported fields are filled. The applicant must mak
 return set(job,'needs_review','Application exceeded the 15-step limit','Step limit');
 }catch(e){set(job,'needs_review',`Worker stopped: ${String(e.message).slice(0,350)}`,db.prepare('SELECT challenge FROM jobs WHERE id=?').get(job.id)?.challenge==='Submission in progress'?'Unconfirmed submission':e.code==='HOSTED_INPUT_NOT_RETAINED'?'Form validation':'Worker error')}finally{
  const state=db.prepare('SELECT * FROM jobs WHERE id=?').get(job.id);
- const focus=db.prepare('SELECT skip_blocked FROM work_focus WHERE user_id=? AND enabled=1 AND auto_submit=1').get(job.user_id);
+ const focus=automaticMember(db,job)?{skip_blocked:true}:db.prepare('SELECT skip_blocked FROM work_focus WHERE user_id=? AND enabled=1 AND auto_submit=1').get(job.user_id);
  const attempted=!!state?.local_attempt_at||!!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('submission_started','manual_submission','applicant_reported_submission') LIMIT 1").get(job.id);
  if(retainBlockedSession({...state,attempted,skipBlocked:!!focus?.skip_blocked})&&!browserPage.isClosed()){
   const held=await handoffs.hold({...job,...state},context,browserPage);db.prepare('UPDATE jobs SET handoff_available=? WHERE id=?').run(held===false?0:1,job.id);
@@ -362,7 +371,7 @@ async function main(){recoverWorkerJobs();let browser=await chromium.launch({hea
    event(job.id,'resumed','Applicant returned the same browser to the worker');resumeQueue.push({job:current,session});
   }
  });serveHandoffs(handoffs,8081,token=>readToken(token,db));const heartbeat=()=>db.prepare('INSERT INTO worker_status VALUES(1,?) ON CONFLICT(id) DO UPDATE SET heartbeat=excluded.heartbeat').run(now());heartbeat();setInterval(heartbeat,10000);let discoveryBusy=false;async function discoveryTick(){if(discoveryBusy)return;discoveryBusy=true;try{await runDueSearches()}catch(e){console.error('Discovery:',e)}finally{discoveryBusy=false}}setInterval(discoveryTick,60000);discoveryTick();process.on('SIGTERM',async()=>{await browser.close();process.exit(0)});for(;;){await handoffs.expire();await releaseSkippedHandoffs(handoffs,job=>{
- const focus=db.prepare('SELECT skip_blocked FROM work_focus WHERE user_id=? AND enabled=1 AND auto_submit=1').get(job.user_id);
+ const focus=automaticMember(db,job)?{skip_blocked:true}:db.prepare('SELECT skip_blocked FROM work_focus WHERE user_id=? AND enabled=1 AND auto_submit=1').get(job.user_id);
  if(!focus?.skip_blocked)return false;
  const state=db.prepare('SELECT * FROM jobs WHERE id=?').get(job.id);
  if(!state||!['paused','needs_review'].includes(state.status))return false;

@@ -43,7 +43,7 @@ function saveSession(value,remember){sessionStorage.setItem('applypilot-token',v
 function clearSession(){sessionStorage.removeItem('applypilot-token');localStorage.removeItem('applypilot-remembered-token');localStorage.setItem('applypilot-signout',String(Date.now()));}
 window.addEventListener('storage',e=>{if(e.key==='applypilot-signout'){sessionStorage.removeItem('applypilot-token');location.reload();}});
 function rememberOption(form){const label=document.createElement('label'),box=document.createElement('input');box.type='checkbox';box.name='remember';box.style.cssText='width:auto;display:inline;margin-right:8px';label.style.cssText='display:block;margin:12px 0';label.append(box,document.createTextNode('Keep me signed in on this computer for up to 30 days'));form.insertBefore(label,form.querySelector('button'));return box;}
-const $=s=>document.querySelector(s);let activePreparation={},activeBatch={},activeFocus={},token=restoreSession(),busy=false,lastSignature='',pendingHandoff=null,externalRecords=[],overviewSignature='',readyAutoOpened=new Set();
+const $=s=>document.querySelector(s);let activeAutomatic={},activePreparation={},activeBatch={},activeFocus={},token=restoreSession(),busy=false,lastSignature='',pendingHandoff=null,externalRecords=[],overviewSignature='',readyAutoOpened=new Set();
 const el=(tag,text)=>{const e=document.createElement(tag);if(text)e.textContent=text;return e};
 async function api(path,method='GET',data){
  const r=await fetch(((location.hostname.endsWith('.netlify.app')||location.hostname.endsWith('.pages.dev'))?'https://marvelous-vitality-production-c2d8.up.railway.app':'')+'/api'+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});
@@ -93,7 +93,7 @@ let refreshRevision=0,lastRevealedJobHash='';
 async function refresh(force=false){
  if(busy||activeHandoff)return;
  const revision=++refreshRevision;
- const [{jobs,deferred=[],focus={},batch={},preparation={}},health,history,operations,activity,continuations,pipeline,employerLimits]=await Promise.all([api('/jobs'),api('/status'),api('/application-history'),api('/operations').catch(()=>null),api('/activity').catch(()=>null),api('/continuations').catch(()=>null),api('/pipeline').catch(()=>null),api('/employer-limits').catch(()=>null)]);
+ const [{jobs,deferred=[],focus={},batch={},preparation={},automatic={}},health,history,operations,activity,continuations,pipeline,employerLimits]=await Promise.all([api('/jobs'),api('/status'),api('/application-history'),api('/operations').catch(()=>null),api('/activity').catch(()=>null),api('/continuations').catch(()=>null),api('/pipeline').catch(()=>null),api('/employer-limits').catch(()=>null)]);
  if(revision!==refreshRevision)return;
  const waiting=new Map((continuations?.requests||[]).map(r=>[r.job_id,r]));
  for(const job of jobs)job.continuation=waiting.get(job.id);
@@ -103,7 +103,7 @@ async function refresh(force=false){
  $('#login').hidden=true;$('#workspace').hidden=false;$('#logout').hidden=false;
  notificationSettings();
  refreshFunnel();updateDiscovery();updateAIStatus();
- activePreparation=preparation;activeBatch=batch||{};activeFocus=focus;document.body.dataset.singleApplication=String(!!focus.enabled);
+ activeAutomatic=automatic;activePreparation=preparation;activeBatch=batch||{};activeFocus=focus;document.body.dataset.singleApplication=String(!!focus.enabled);
  // Keep every returned record available to history filters; execution focus only scopes the working controls.
  const current=jobs.filter(j=>j.status!=='duplicate');
  const working=current.filter(j=>preparation.enabled?!!j.preparation&&!['submitted','interview','rejected','offer'].includes(j.status):!focus.enabled||j.id===focus.job_id||focus.skip_blocked&&needsMyAttention(j));
@@ -120,6 +120,7 @@ async function refresh(force=false){
  }
  renderBrowserReadiness(working);renderMissingAnswers(working);renderContinuationQueue(continuations);drainContinuations(continuations);renderLibraryLauncher();renderBatchControl(activeBatch);renderFocusControl(focus,jobs,health);renderPreparationCampaign(preparation);renderArchiveControl(working);if($('#career-overview'))placeWorkspacePanel($('#career-overview'));renderOperations(operations,activity,current);renderNextMatch(working);renderPipeline(pipeline);renderEmployerLimits(employerLimits,working);renderCooldownHistory(deferred);renderHomeSummary(operations,current,interviews);
  $('#status').textContent=current.length?`${current.length} tracked applications${health.workerOnline?'':' · Worker unavailable; saved answers are retained'}`:'No applications currently need completion.';
+ renderAutomaticCampaign(automatic,preparation);
  $('#needs-count').textContent=current.filter(j=>j.evidence?j.evidence.blocked||j.evidence.stalled:['paused','needs_review'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='blocked').length;
  $('#applying-count').textContent=current.filter(j=>j.evidence?j.evidence.active:!j.local_attempt_at&&(['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='ready')).length;
  $('#local-count').textContent=current.filter(j=>j.status==='local_browser').length;
@@ -373,12 +374,12 @@ function applyFilters(){
   const state=card.dataset.state;
   const focusAllowed=!defaultView||card.dataset.pending==='true'&&['ready','answers','employer','review'].includes(card.dataset.preparation);
   const match=currentFilter==='pending'&&card.dataset.pending==='true'||currentFilter==='active'&&!['submitted','interview','rejected','offer'].includes(state)||currentFilter==='all'||currentFilter===state||currentFilter==='needs'&&(card.dataset.blocked==='true'||card.dataset.stalled==='true'||['paused','needs_review'].includes(state))||currentFilter==='applying'&&card.dataset.active==='true'||currentFilter==='blocked'&&card.dataset.blocked==='true'||currentFilter==='stalled'&&card.dataset.stalled==='true'||currentFilter==='receipt'&&card.dataset.confirmed==='true'||currentFilter==='worked'&&card.dataset.worked==='true'||currentFilter==='local'&&card.dataset.local==='true'||currentFilter.startsWith('completion-')&&card.dataset.completion===currentFilter.slice(11)||currentFilter.startsWith('prep-')&&card.dataset.preparation===currentFilter.slice(5);
-  card.hidden=defaultView&&activePreparation.enabled?!(activePreparation.members||[]).some(m=>card.id==='job-'+m.job_id)||['submitted','interview','rejected','offer','archived','duplicate'].includes(state):defaultView&&activeFocus.enabled?!(card.id==='job-'+activeFocus.job_id||activeFocus.search_queue_only&&(state==='awaiting'||card.dataset.confirmed==='true')||activeFocus.skip_blocked&&card.dataset.actionable==='true'):defaultView&&activeBatch.enabled?!(activeBatch.job_ids||[]).includes(card.id.replace('job-',''))||['submitted','interview','rejected','offer','archived','duplicate'].includes(state):!(focusAllowed&&match&&card.dataset.search.includes(q));
+  card.hidden=defaultView&&activeAutomatic.enabled?!(activeAutomatic.members||[]).some(m=>card.id==='job-'+m.job_id&&m.batch_number===activeAutomatic.current_batch):defaultView&&activePreparation.enabled?!(activePreparation.members||[]).some(m=>card.id==='job-'+m.job_id)||['submitted','interview','rejected','offer','archived','duplicate'].includes(state):defaultView&&activeFocus.enabled?!(card.id==='job-'+activeFocus.job_id||activeFocus.search_queue_only&&(state==='awaiting'||card.dataset.confirmed==='true')||activeFocus.skip_blocked&&card.dataset.actionable==='true'):defaultView&&activeBatch.enabled?!(activeBatch.job_ids||[]).includes(card.id.replace('job-',''))||['submitted','interview','rejected','offer','archived','duplicate'].includes(state):!(focusAllowed&&match&&card.dataset.search.includes(q));
   if(!card.hidden)shown++;
  }
  $('#empty-state').hidden=shown>0;
  const count=$('#visible-job-count');if(count)count.textContent=shown+' shown';
- const title=$('#application-list-title');if(title)title.textContent=defaultView&&activePreparation.enabled?'Your current preparation batch':defaultView&&activeFocus.enabled?(activeFocus.skip_blocked?'Current application & forms needing you':'Current application'):defaultView&&activeBatch.enabled?'Current batch - up to 20 jobs':({pending:settings?'Jobs yet to be submitted':'Jobs needing your attention','prep-ready':'Ready for your Submit click',awaiting:'Attempted — check employer receipt',receipt:'Employer-confirmed submissions',interview:'Interviews',worked:'Forms filled or attempted',all:'All application records'})[currentFilter]||'Applications';
+ const title=$('#application-list-title');if(title)title.textContent=defaultView&&activeAutomatic.enabled?'Current automatic batch '+activeAutomatic.current_batch:defaultView&&activePreparation.enabled?'Your current preparation batch':defaultView&&activeFocus.enabled?(activeFocus.skip_blocked?'Current application & forms needing you':'Current application'):defaultView&&activeBatch.enabled?'Current batch - up to 20 jobs':({pending:settings?'Jobs yet to be submitted':'Jobs needing your attention','prep-ready':'Ready for your Submit click',awaiting:'Attempted — check employer receipt',receipt:'Employer-confirmed submissions',interview:'Interviews',worked:'Forms filled or attempted',all:'All application records'})[currentFilter]||'Applications';
  for(const button of document.querySelectorAll('[data-home-filter]'))button.setAttribute('aria-pressed',String(button.dataset.homeFilter===currentFilter));
 }
 $('#job-search').oninput=applyFilters;
@@ -499,6 +500,28 @@ function renderLibraryLauncher(){
  }}catch(e){list.textContent=e.message;}finally{load.disabled=false;}};
 }
 
+function renderAutomaticCampaign(c={},preparation={}){
+ let box=$('#automatic-campaign');if(!box){box=el('section');box.id='automatic-campaign';box.className='autonomy-control';$('#home-summary').after(box);}
+ box.hidden=!c.id&&!location.search.includes('view=settings');if(box.hidden)return;
+ if(c.id){if($('#work-focus'))$('#work-focus').hidden=true;if($('#application-batch'))$('#application-batch').hidden=true;}
+ if(c.enabled&&$('#preparation-campaign'))$('#preparation-campaign').hidden=true;
+ const signature=JSON.stringify([c,preparation.applicant_id]);if(box.dataset.signature===signature)return;box.dataset.signature=signature;
+ box.replaceChildren(el('h2','Automatic applications · batches of 20'));
+ box.append(el('p','The hosted worker selects fresh eligible jobs using your saved search, pay target and approved facts. It prepares and submits supported forms automatically. Employer receipts determine success. Unknown facts, verification and declarations remain blocked; previous attempts are never retried.'));
+ if(c.id){
+  box.append(el('p',(c.enabled?'Active':'Stopped')+' · Batch '+c.current_batch+' · '+c.selected+'/20 selected · '+c.settled+' settled.'));
+  const counts=el('div');counts.className='completion-grid';
+  for(const [key,label]of [['prepared','Prepared'],['attempted','Attempted'],['confirmed','Employer-confirmed'],['automatic','Fully automatic'],['assisted','Assisted'],['unknown','Method unknown'],['blocked','Blocked'],['deferred','Deferred'],['unresolved','Awaiting receipt']]){const cell=el('div');cell.append(el('strong',String(c.totals?.[key]||0)),el('span',' '+label));counts.append(cell);}box.append(counts);
+  if(c.supply_needed)box.append(el('p',c.supply_needed+' more fresh eligible jobs are needed to fill this batch. Discovery continues; eligibility is not relaxed to fill spaces.'));
+  const history=el('details');history.append(el('summary','Batch outcomes and receipt evidence'));const list=el('ol');
+  for(const m of c.members||[]){const item=el('li'),link=el('a',m.company+' — '+m.title);link.href=m.url;link.target='_blank';link.rel='noopener';item.append(link,el('span',' · Batch '+m.batch_number+' · '+m.outcome+(m.evidence?.completion?' · '+m.evidence.completion:'')+(m.receipt_at?' · '+new Date(m.receipt_at).toLocaleString():'')));if(m.confirmation)item.append(el('p',m.confirmation));else if(m.reason)item.append(el('p',m.reason));list.append(item);}history.append(list);box.append(history);
+ }
+ const profile=el('select');profile.setAttribute('aria-label','Automatic campaign applicant profile');
+ const applicantId=c.applicant_id||preparation.applicant_id;
+ if(!applicantId){box.append(profile);api('/applicants').then(data=>{for(const p of data.applicants||[]){const option=el('option',p.name);option.value=p.id;profile.append(option);}}).catch(e=>$('#notice').textContent=e.message);}
+ const button=el('button',c.enabled?'Stop automatic applications':c.id?'Resume automatic batches of 20':'Start automatic batches of 20');button.type='button';
+ button.onclick=async()=>{button.disabled=true;try{await api('/automatic-campaign',c.enabled?'PUT':'POST',c.enabled?{enabled:false}:{mode:'automatic',auto_submit:true,batch_size:20,applicant_id:applicantId||profile.value});box.dataset.signature='';await refresh(true);}catch(error){$('#notice').textContent=error.message;button.disabled=false;}};box.append(button);
+}
 function renderPreparationCampaign(c={}){
  let box=$('#preparation-campaign');if(!box){box=el('section');box.id='preparation-campaign';box.className='autonomy-control';$('#home-summary').after(box);}
  box.hidden=!c.id&&!location.search.includes('view=settings');if(box.hidden)return;
@@ -578,8 +601,8 @@ function renderBatchControl(batch={}){
  api('/applicants').then(data=>{for(const p of data.applicants||[]){const o=el('option',p.name);o.value=p.id;select.append(o);}}).catch(e=>message.textContent=e.message);
  form.onsubmit=async e=>{e.preventDefault();reset.disabled=true;try{const result=await api('/application-batch','POST',{action:'reset',applicant_id:select.value,minimum_cad:Number(minimum.value),degree:degree.value});$('#notice').textContent=result.archived+' old pending jobs archived. Application history preserved. New support-career batch started.';await refresh(true);}catch(e){message.textContent=e.message;reset.disabled=false;}};
 }
-function automaticSubmissionEnabled(){return !!(activeFocus.enabled&&activeFocus.auto_submit);}
-function automaticSubmissionFor(job){return automaticSubmissionEnabled()&&job?.id===activeFocus.job_id&&!job.metadata?.manualReview&&!globalThis.ApplyPilotPolicy.customApplication?.(job.url||'');}
+function automaticSubmissionEnabled(){return !!activeAutomatic.enabled||!!(activeFocus.enabled&&activeFocus.auto_submit);}
+function automaticSubmissionFor(job){return automaticSubmissionEnabled()&&(activeAutomatic.enabled?(activeAutomatic.members||[]).some(m=>m.job_id===job?.id&&m.batch_number===activeAutomatic.current_batch&&m.outcome==='pending'):job?.id===activeFocus.job_id)&&!job.metadata?.manualReview&&!globalThis.ApplyPilotPolicy.customApplication?.(job.url||'');}
 let focusUpdating=false,focusSkipDraft=null;
 function renderFocusControl(f={},jobs=[],health={}){
  let box=$('#work-focus');if(!box){box=el('section');box.id='work-focus';box.className='autonomy-control';$('#home-summary').after(box);}
@@ -1006,7 +1029,7 @@ function renderHomeSummary(snapshot,jobs,interviews){
   ['Preparing',unique.filter(j=>!j.local_attempt_at&&(['queued','running'].includes(j.status)||j.status==='local_browser'&&j.local_phase==='ready')).length,'preparing','Queued or currently preparing in the browser'],
   ['Interviews',interviews.length,'interview','Includes interviews from other sources']
  ];
- const signature=JSON.stringify([rows,activeFocus.enabled,activeFocus.auto_submit,activeFocus.skip_blocked]);if(box.dataset.signature!==signature){
+ const signature=JSON.stringify([rows,activeAutomatic.enabled,activeFocus.enabled,activeFocus.auto_submit,activeFocus.skip_blocked]);if(box.dataset.signature!==signature){
   box.dataset.signature=signature;box.replaceChildren();const metrics=el('div');metrics.className='home-metrics';
   for(const [label,value,filter,detail]of rows){
    const button=el(['pending','prep-ready'].includes(filter)?'button':'div');if(button.tagName==='BUTTON')button.type='button';button.className='home-metric';button.dataset.homeFilter=filter;button.title=detail;button.setAttribute('aria-pressed',String(filter===currentFilter));button.append(el('span',label),el('strong',String(value)));
@@ -1029,7 +1052,7 @@ function compactJobCards(){
    if(child===heading||child.classList.contains('job-actions'))continue;
    if(child.tagName==='P'||child.tagName==='LABEL'||child.tagName==='BUTTON'&&child.textContent==='Delete application permanently')detail.append(child);
   }
-  const autonomous=automaticSubmissionEnabled()&&card.id==='job-'+activeFocus.job_id&&card.dataset.autonomous==='true';
+  const autonomous=automaticSubmissionEnabled()&&card.dataset.autonomous==='true';
   const notes={ready:autonomous?'Filled form paused before submission. Check the application below; no employer receipt is recorded yet.':'Filled — review the employer form and click Submit.',answers:'Your answer is needed above.',employer:'Verification or an employer declaration needs your attention.',held:'Paused by the employer application limit.',awaiting:'Submission attempted. Check for a receipt before retrying.',review:'Open the saved form to check the next step.',preparing:autonomous?'Preparing this application for automatic submission. Success requires an employer receipt.':activePreparation.enabled&&['saved','queued'].includes(card.dataset.state)?'Waiting for Chrome preparation — final Submit stays with you.':'Autofill in progress - final Submit stays with you.'};
   const note=card.querySelector('.manual-autofill')?'Autofill can prepare this form. Review pay and eligibility before you click Submit.':card.dataset.local!=='true'&&card.querySelector('.manual-application-link')?'Review the posting and apply on its website. Pay and eligibility still need checking.':notes[card.dataset.preparation];if(note){const p=el('p',note);p.className='job-next-step';heading.after(p);}
   if(detail.children.length>1)card.append(detail);
@@ -1041,7 +1064,7 @@ function compactAIStatus(box){
  if(box.querySelector(':scope > .ai-details'))return;
  const details=el('details');details.className='ai-details';details.append(el('summary','AI details, recovery & errors'));
  for(const child of [...box.children])if(child.tagName!=='H2'&&!child.classList.contains('ai-test'))details.append(child);
- const brief=el('p',box.dataset.configured==='true'?(box.dataset.facts==='true'?'Gemini active · Saved professional facts + public job answers · You click Submit':'Gemini key configured · Public company and job-page answers'):box.dataset.configured==='unknown'?'AI status unavailable · Saved-answer autofill remains available':'Gemini not configured · Saved-answer autofill remains available');brief.className='ai-brief';
+ const brief=el('p',box.dataset.configured==='true'?(box.dataset.facts==='true'?'Gemini active · Saved professional facts + public job answers · '+(automaticSubmissionEnabled()?'Automatic mode':'You click Submit'):'Gemini key configured · Public company and job-page answers'):box.dataset.configured==='unknown'?'AI status unavailable · Saved-answer autofill remains available':'Gemini not configured · Saved-answer autofill remains available');brief.className='ai-brief';
  box.querySelector('h2')?.after(brief);box.append(details);
 }
 

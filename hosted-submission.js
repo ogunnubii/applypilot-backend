@@ -4,7 +4,7 @@ import {watchSubmission} from './submission-diagnostics.js';
 
 // Reservation is durable before the only possible click. Errors after reservation
 // must remain uncertain; neither timeouts nor an unrelated receipt allow a replay.
-export async function submitHostedApplication({page,job,submit,review,reserve,wait,recordLimit,recordDiagnostic=()=>{}}){
+export async function submitHostedApplication({page,job,submit,review,reserve,wait,recordLimit,recordDiagnostic=()=>{},prepared=()=>{}}){
  const blocked=(message,challenge)=>({status:'needs_review',message,challenge});
  if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');
  const before=await page.locator('body').innerText();
@@ -39,7 +39,7 @@ export async function submitHostedApplication({page,job,submit,review,reserve,wa
  // The final review is asynchronous. Recheck the destination immediately before
  // reservation; reserve rechecks current authorization and applicant consent.
  if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');
- reserve();
+ prepared();reserve();
  const diagnostic=watchSubmission(page);diagnostic.start();
  try{
   await submit.click({timeout:10000});

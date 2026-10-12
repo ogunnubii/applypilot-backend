@@ -94,4 +94,8 @@ if(!db.prepare('PRAGMA table_info(searches)').all().some(c=>c.name==='scope_json
 
 import {installPreparationCampaign} from './preparation-campaign.js';
 installPreparationCampaign(db);
+import {installAutomaticCampaign} from './automatic-campaign.js';
+installAutomaticCampaign(db);
+import {installReceiptSync} from './receipt-sync.js';
+installReceiptSync(db);
 

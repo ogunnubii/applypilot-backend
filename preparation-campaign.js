@@ -42,12 +42,15 @@ export function preparationCandidateProblem(db,job,{fresh=true}={}){
  if(!supported(job.url)||meta.available!==true||!Number.isFinite(Date.parse(meta.checkedAt))||Date.now()-Date.parse(meta.checkedAt)>=86400000)return 'A fresh, available employer posting is required.';
  if(meta.searchScopeSignature!==searchScopeSignature(scope))return 'Refresh this posting against your current search.';
  if(!matchAssessment({...meta,title:job.title},scopeIntent(scope),p.focus).strong||currentScopeAssessment(db,job)?.eligibility?.eligible!==true)return 'Role or work-location eligibility needs review.';
- const minimum=db.prepare('SELECT minimum_cad FROM application_batch_preferences WHERE user_id=?').get(job.user_id)?.minimum_cad||120000;
- if(salaryTarget(meta.pay||[],minimum).reason==='Published range is below target')return 'Published pay is below your CAD '+minimum.toLocaleString()+' target.';
  if(excludesFrench(db,job.user_id)&&frenchApplication(job))return 'French application excluded.';
  if(employerHold(db,job))return employerHold(db,job).message;
  if(researchConsentWithdrawn(db,job.id,p.id))return 'Drafting consent needs review.';
  if(priorApplication(db,job.user_id,job)||db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(job.user_id,companyKey(job.company),historyKey(job.title)))return 'Previous application found.';
+ return preparationPreferenceProblem(db,job);
+}
+export function preparationPreferenceProblem(db,job){
+ const minimum=db.prepare('SELECT minimum_cad FROM application_batch_preferences WHERE user_id=?').get(job.user_id)?.minimum_cad||120000;
+ if(salaryTarget(metadataFor(job).pay||[],minimum).reason==='Published range is below target')return 'Published pay is below your CAD '+minimum.toLocaleString()+' target.';
  // Interview variants (for example a weekend annotation) are held for review,
  // rather than treating another requisition URL as permission to reapply.
  const core=value=>applicationRoleKey(String(value).replace(/\([^)]*\)/g,''));

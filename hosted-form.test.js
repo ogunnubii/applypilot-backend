@@ -100,7 +100,7 @@ test('hosted worker preserves manual default and gates automatic submission behi
  assert.doesNotMatch(source,/event\([^\n]+['"]automatic_submission['"]/);
  assert.doesNotMatch(source,/requiresHumanReview\(await page\.locator\(['"]body['"]\)/);
  assert.match(source,/if\(requiredMissing\.length\)/);
- assert.match(source,/function claim\(\)\{if\(handoffs\?\.full\(\)\)return null/);
+ assert.match(source,/!handoffs\?\.full\(\)\|\|automaticMember\(db,job\)/);
 });
 
 test('equivalent LinkedIn profile URLs agree without accepting different accounts',()=>{

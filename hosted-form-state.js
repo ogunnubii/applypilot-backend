@@ -20,6 +20,10 @@ export function hostedFormState(target) {
   const value=clean(text(selected)||e.getAttribute('aria-valuetext')||e.getAttribute('data-value')||(!e.matches('input')?text(e):control?'':e.dataset.applypilotCommittedValue&&e.value===e.dataset.applypilotCommittedValue?e.value:''));
   return /^(?:select|choose)(?:\b|\.{3}|…)/i.test(value)?'':value;
  }
+ function leverLocation(e){return e.matches('input.location-input[name="location"]')&&!!e.parentElement?.querySelector('input[type="hidden"][name="selectedLocation"]')&&!!e.parentElement?.querySelector('.dropdown-results');}
+ function leverLocationValue(e){
+  try{const chosen=JSON.parse(e.parentElement.querySelector('input[name="selectedLocation"]').value),value=clean(e.value);return typeof chosen?.name==='string'&&clean(chosen.name)===value?value:'';}catch{return '';}
+ }
  function describe(e){
   const wrapper=wrapperFor(e),title=titleFor(e),explicit=[...e.labels||[]].map(labelText).join(' '),labelled=ids(e.getAttribute('aria-labelledby')),aria=clean(e.getAttribute('aria-label'));
   const choice=e.type==='radio'||e.type==='checkbox'||['radio','checkbox'].includes(e.getAttribute('role'));
@@ -69,6 +73,7 @@ export function hostedFormState(target) {
   else if(e.type==='checkbox')filled=e.checked;
   else if(role==='checkbox'||role==='radio')filled=e.getAttribute('aria-checked')==='true';
   else if(role==='radiogroup')filled=!!e.querySelector('[role="radio"][aria-checked="true"]');
+  else if(leverLocation(e))filled=e.dataset.applypilotUncommittedSearch!=='true'&&!!leverLocationValue(e);
   else if(role==='combobox')filled=descriptor.populated;
   else filled=!!clean(e.value||((role==='textbox')?e.textContent:''));
   filled=filled&&!invalid;

@@ -39,7 +39,7 @@ function fixture(html){
   return {
    isEditable:async()=>!e.disabled&&!e.readOnly,
    inputValue:async()=>e.value,
-   evaluate:async fn=>w.eval(`(${fn.toString()})`)(e),
+   evaluate:async (fn,arg)=>w.eval(`(${fn.toString()})`)(e,arg),
    click:async()=>{calls.push('click');e.focus();e.click();},
    pressSequentially:async value=>{calls.push(['type',value]);for(const character of value){
     e.dispatchEvent(new w.KeyboardEvent('keydown',{key:character,bubbles:true}));
@@ -177,4 +177,55 @@ test('an unchanged worker-owned location query can resume without typing twice o
   input.value='Toronto, Ontario, Canada';delete input.dataset.applypilotUncommittedSearch;
   assert.equal(await typeHostedSearch(locator,'Toronto, Ontario, Canada'),false);
  }finally{f.dom.window.close();}
+});
+
+function leverFixture(labels=['Toronto, Ontario, Canada'],commit=true){
+ const f=fixture('<form><label for="location">Current location</label><div class="application-field"><input class="location-input" id="location" name="location" required><input type="hidden" name="selectedLocation"><div class="dropdown-results"></div></div></form><div class="dropdown-results"><div class="dropdown-location">Toronto, Ontario, Canada</div></div>');
+ const input=f.w.document.querySelector('input'),hidden=input.nextElementSibling,results=hidden.nextElementSibling,l=f.locator(input);
+ let open=false;
+ input.addEventListener('input',()=>{open=true;results.replaceChildren(...labels.map(label=>{const div=f.w.document.createElement('div');div.className='dropdown-location';div.textContent=label;return div;}));});
+ input.addEventListener('blur',()=>{if(open){input.value='';hidden.value='';results.replaceChildren();}});
+ l.locator=selector=>{assert.equal(selector,'..');return {locator:selector=>{assert.equal(selector,'.dropdown-results .dropdown-location:visible');return {
+  allTextContents:async()=>[...results.children].map(e=>e.textContent),
+  nth:index=>({click:async()=>{const option=results.children[index];assert(option);f.calls.push('option');if(commit){open=false;input.value=option.textContent;hidden.value=JSON.stringify({name:option.textContent});results.replaceChildren();}}})
+ };}};};
+ return {...f,input,hidden,l};
+}
+
+test('Lever location selects an exact scoped option and reads the employer payload after blur',async()=>{
+ const f=leverFixture(['Toronto, Ohio, United States','Toronto, Ontario, Canada']);
+ try{
+  assert.equal(await fillHostedText(f.l,'Toronto, Ontario, Canada',{kind:'location'}),true);
+  assert.equal(f.input.value,'Toronto, Ontario, Canada');assert.equal(JSON.parse(f.hidden.value).name,f.input.value);
+  assert.deepEqual([...(await f.review()).missing],[]);assert.equal(f.calls.filter(x=>x==='option').length,1);
+  assert.equal(await fillHostedText(f.l,'Vancouver, British Columbia, Canada',{kind:'location'}),false);
+  assert(!f.calls.some(x=>Array.isArray(x)&&x[0]==='press'),'no Enter or submit is used to choose the location');
+ }finally{f.dom.window.close();}
+});
+
+test('Lever queries, mismatched payloads and ambiguous or missing options never count as completed',async()=>{
+ for(const labels of [[],['Toronto, Ohio, United States'],['Toronto, Ontario, Canada','Toronto, Ontario, Canada']]){
+  const f=leverFixture(labels);
+  try{
+   assert.equal(await fillHostedText(f.l,'Toronto, Ontario, Canada',{kind:'location'}),false);
+   assert.equal(f.hidden.value,'');assert.deepEqual([...(await f.review()).missing],['Current location']);assert(!f.calls.includes('option'));
+   delete f.input.dataset.applypilotUncommittedSearch;
+   for(const payload of ['',JSON.stringify({name:'Toronto, Ohio, United States'}),'invalid']){f.hidden.value=payload;assert.deepEqual([...(await f.review()).missing],['Current location']);}
+  }finally{f.dom.window.close();}
+ }
+ const f=leverFixture(undefined,false);
+ try{await assert.rejects(fillHostedText(f.l,'Toronto, Ontario, Canada',{kind:'location'}),{code:'HOSTED_INPUT_NOT_RETAINED'});assert.deepEqual([...(await f.review()).missing],['Current location']);}finally{f.dom.window.close();}
+});
+
+test('Lever location preserves existing edits and accepts only trusted current-location facts',async()=>{
+ for(const state of ['edit','hidden','untrusted','focus']){
+  const f=leverFixture();
+  try{
+   if(state==='edit')f.input.value='Applicant edit';
+   if(state==='hidden')f.hidden.value=JSON.stringify({name:'Existing selection'});
+   if(state==='focus')f.input.addEventListener('focus',()=>{f.input.value='Employer autofill';});
+   assert.equal(await fillHostedText(f.l,'Toronto, Ontario, Canada',{kind:state==='untrusted'?undefined:'location'}),false);
+   assert(!f.calls.some(x=>Array.isArray(x)&&x[0]==='type'));assert(!f.calls.includes('option'));
+  }finally{f.dom.window.close();}
+ }
 });

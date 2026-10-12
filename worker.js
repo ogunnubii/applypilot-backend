@@ -73,7 +73,7 @@ async function custom(page,p,j){
    else if(descriptor.required)unresolved.push(q);
    continue;
   }
-  const selected=await automaticTextAnswer({db,profile:p,job:j,question:q,answers,applicationAnswers}),applicationOnly=['public_page','application_only','approved_facts'].includes(selected.source);
+  const selected=await automaticTextAnswer({db,profile:p,job:j,question:q,answers,applicationAnswers,fieldHelp:descriptor.description,maxLength:await l.evaluate(e=>e.maxLength>0?e.maxLength:4000)}),applicationOnly=['public_page','application_only','approved_facts'].includes(selected.source);
   if(selected.answer===null&&selected.reason)event(j.id,'answer_blocked',q+': '+selected.reason);
   if(applicationOnly)await l.evaluate(e=>e.dataset.applypilotApplicationOnly='true');if(selected.source==='public_page')event(j.id,'public_page_draft',`Google filled a cited public-page draft for: ${q}`);if(selected.source==='application_only')event(j.id,'application_only_answer',`Filled an edited application-only answer for: ${q}`);if(selected.source==='approved_facts')event(j.id,'ai_draft',`AI filled a fact-grounded draft for: ${q}`);
   if(selected.answer!==null){if(applicationOnly&&!authorizeResearchFill(j,p,q))return {unresolved,withdrawn:true};if(await fillHostedText(l,selected.answer))event(j.id,'answer',`Answered: ${q}`)}else if(descriptor.required)unresolved.push(q);
@@ -120,7 +120,11 @@ async function customControls(page,p,j){
  const combos=page.locator('[role="combobox"]:not(select):visible');
  for(let i=0;i<await combos.count();i++){
   const control=combos.nth(i),descriptor=await fieldDescriptor(control),question=descriptor.label||descriptor.ariaLabel||descriptor.description||descriptor.name||descriptor.id;
-  const populated=await control.evaluate(e=>{const text=String(e.textContent||'').trim();return !!(e.value&&e.dataset.applypilotUncommittedSearch!=='true'||e.getAttribute('aria-valuetext')||e.getAttribute('data-value')||(!e.matches('input')&&text&&!/^(?:select|choose)(?:\b|\.{3})/i.test(text)));}).catch(()=>false);if(populated)continue;
+  if(descriptor.populated)continue;
+  // A user's unfinished menu search is still their edit, even though it is
+  // not a committed option. Resume only a query this worker owns.
+  const userSearch=await control.evaluate(e=>e.matches('input')&&!!e.value&&e.dataset.applypilotUncommittedSearch!=='true');
+  if(userSearch){if(descriptor.required)unresolved.push(question);continue;}
   if(!question||protectedHostedQuestion(question)&&!hostedFieldAnswer(descriptor,p,answers)){if(descriptor.required)unresolved.push(question||'Required selection');continue;}
   let scopeIds=await control.evaluate(e=>[...new Set(`${e.getAttribute('aria-controls')||''} ${e.getAttribute('aria-owns')||''}`.trim().split(/\s+/).filter(Boolean))]);
   const marker=`combo-${i}-${Date.now()}`,optionLocator=page.locator('[role="option"]:visible');
@@ -136,10 +140,19 @@ async function customControls(page,p,j){
   const choice=await prepareHostedDropdown(db,j,p,descriptor,options.map(o=>({...o,value:o.value||undefined})),answers);
   const currentOptions=await optionLocator.evaluateAll(xs=>xs.map((x,index)=>({index,label:(x.innerText||x.textContent||'').trim(),disabled:x.getAttribute('aria-disabled')==='true'})));
   const optionsChanged=options.some(o=>!currentOptions.some(c=>c.index===o.index&&c.label===o.label&&c.disabled===o.disabled));
-  const nowPopulated=await control.evaluate((e,query)=>!!(e.getAttribute('aria-valuetext')||e.getAttribute('data-value')||e.matches('input')&&e.value&&e.value!==query||!e.matches('input')&&e.textContent?.trim()&&!/^(?:select|choose)\b/i.test(e.textContent.trim())),query);
+  const currentDescriptor=await fieldDescriptor(control),nowPopulated=currentDescriptor.populated||!!(currentDescriptor.selectedValue&&currentDescriptor.selectedValue!==query);
+  const searchChanged=await control.evaluate((e,query)=>e.matches('input')&&!!e.value&&e.value!==query,query);
   await page.locator('[data-applypilot-visible-before-combobox]').evaluateAll(xs=>xs.forEach(x=>x.removeAttribute('data-applypilot-visible-before-combobox'))).catch(()=>{});
-  if(choice&&!optionsChanged&&!nowPopulated){if(!authorizeResearchFill(j,p,question))return {unresolved,withdrawn:true};await optionLocator.nth(choice.index).click();
-   if(query)await control.evaluate((e,label)=>{if(e.value?.trim()===label.trim()&&e.getAttribute('aria-expanded')!=='true')delete e.dataset.applypilotUncommittedSearch;},choice.label);
+  if(choice&&!optionsChanged&&!nowPopulated&&!searchChanged){if(!authorizeResearchFill(j,p,question))return {unresolved,withdrawn:true};await optionLocator.nth(choice.index).click();
+   // Verify the committed label, not the text typed into a search input.
+   // A failed/ignored click must remain an exact required-question blocker.
+   let committed=false;for(let retry=0;retry<10;retry++){
+    const selected=await fieldDescriptor(control);
+    if(selected.selectedValue===String(choice.label).replace(/\s+/g,' ').trim()&&await control.getAttribute('aria-expanded')!=='true'){committed=true;break;}
+    await page.waitForTimeout(75);
+   }
+   if(committed){await control.evaluate(e=>delete e.dataset.applypilotUncommittedSearch);}
+   else if(descriptor.required)unresolved.push(question);
    if(choice.aiPrepared)await control.evaluate(e=>e.dataset.applypilotApplicationOnly='true');}
   else {await control.press('Escape').catch(()=>{});if(descriptor.required)unresolved.push(question);}
  }

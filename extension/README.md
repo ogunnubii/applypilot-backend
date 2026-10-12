@@ -1,3 +1,5 @@
+Version 0.6.33 fixes Greenhouse React Select dropdown opening and committed-choice detection. Required questions retain exact labels, hidden validation inputs do not appear as extra questions, and explicit saved timezone answers match supported dropdown labels. Existing choices and unfinished user searches are preserved. Unknown experience remains unanswered until supported by approved facts or your answer. Final Submit remains under the existing user-authorized controls.
+
 Version 0.6.32 uses the server-approved profile facts before AI, recognizes observed LinkedIn/location wording and Lever radio question labels, and recovers saved answers for paused Local browser forms. Employment eligibility stays scoped to explicit saved country facts. Final Submit and unknown facts remain under user control.
 
 Version 0.6.31 keeps preparation alive during long AI requests and recovers interrupted unattempted campaign forms once in their exact existing tab. No page reload, lost-form reopening, or submission retry is performed. Stop and campaign pause remain enforced.

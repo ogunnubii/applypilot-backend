@@ -93,7 +93,7 @@ test('Blocked forms respect refresh permission and expose automatic saving witho
 });
 test('Actual Grafana labels resolve explicit location parts and Toronto time zone',async()=>{
  const f=await fixture('<form></form>',{automatic:false});
- try{const p={location:'Toronto, Ontario, Canada'};assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Location (City)',p,{}),'Toronto');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Country',p,{}),'Canada');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('What country and time zone are you based in?',p,{}),'Canada — Eastern Time (America/Toronto)');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Are you currently eligible to work in your country of residence?',p,{}),null);}finally{f.close();}
+ try{const p={location:'Toronto, Ontario, Canada'};assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Location (City)',p,{}),'Toronto');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Country',p,{}),'Canada');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('What country and time zone are you based in?',p,{}),null);assert.equal(f.w.ApplyPilotPolicy.knownAnswer('What country and time zone are you based in?',p,{'What country and time zone are you based in?':'Canada — Eastern Time (America/Toronto)'}),'Canada — Eastern Time (America/Toronto)');assert.equal(f.w.ApplyPilotPolicy.knownAnswer('Are you currently eligible to work in your country of residence?',p,{}),null);}finally{f.close();}
 });
 
 test('Country dial codes and fully qualified city options match without choosing another location',async()=>{

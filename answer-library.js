@@ -1,7 +1,7 @@
 import {hasFactDraft} from './draft-provenance.js';
 import {canonicalLinkedIn,canonicalGitHub} from './profile-links.js';
 import {randomUUID} from 'node:crypto';
-import {sensitive} from './local-policy.js';
+import {sensitive,optionMatches} from './local-policy.js';
 import {canResearchQuestion,hasResearchDraftForQuestion} from './google-research.js';
 const {normalize,fieldKind}=globalThis.ApplyPilotPolicy;
 export const canCapture=q=>typeof q==='string'&&q.trim().length>1&&q.length<=4000&&!sensitive(q)&&!/(password|one.?time|verification code|captcha|date of birth|birth date|ethnic|race|gender|disability|veteran|sexual orientation|religion|medical)/i.test(q);
@@ -51,7 +51,13 @@ export function reusableAnswers(db,p){
  for(const [kind,raw] of groups){
   const canonical=kind==='linkedin'?canonicalLinkedIn:kind==='github'?canonicalGitHub:null;
   const entries=canonical?raw.map(([q,a])=>[q,canonical(a)]).filter(([,a])=>a):raw;
-  if(new Set(entries.map(([,a])=>normalize(a))).size!==1)continue;
+  // A confirmed menu label may express the same explicit timezone as the
+  // profile's IANA identifier. Compare every pair: a broad display label must
+  // never bridge two conflicting exact zones (for example Toronto/New York).
+  const consistent=kind==='timezone'
+   ?entries.every(([,a],index)=>entries.slice(index+1).every(([,b])=>optionMatches('Time zone',a,b)))
+   :new Set(entries.map(([,a])=>normalize(a))).size===1;
+  if(!consistent)continue;
   for(const [q,a]of entries)result[q]=a;
  }
  return result;

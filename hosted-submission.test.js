@@ -47,6 +47,19 @@ test('uncertain click, timeout and other job receipt never confirm and never per
 test('destination changing during asynchronous final validation stops before any transmission',async()=>{
  const f=fixture({reviewRedirect:'https://jobs.lever.co/other/role-456'});assert.equal((await submitHostedApplication(f.input)).challenge,'Application identity changed');assert.equal(f.attempts,0);
 });
+
+test('verification appearing after Submit parks the uncertain attempt promptly and never repeats it',async()=>{
+ for(const key of ['captcha','signIn']){
+  const f=fixture({after:'Complete the employer verification to continue'});let receiptWaits=0;
+  const wait=f.input.wait;
+  f.input.wait=async ms=>{if(f.clicks)receiptWaits++;await wait(ms);};
+  f.input.review=async()=>({missing:[],[key]:f.clicks>0});
+  const result=await submitHostedApplication(f.input);
+  assert.equal(result.challenge,'Unconfirmed submission');assert.match(result.message,/appeared after the automatic Submit click/);
+  assert.equal(receiptWaits,1);assert.equal(f.clicks,1);assert.equal(f.attempts,1);
+  await submitHostedApplication(f.input).catch(()=>{});assert.equal(f.clicks,1);
+ }
+});
 test('best-effort mode releases pre-submit blocked browsers without discarding uncertain sessions',async()=>{
  const {retainBlockedSession}=await import('./hosted-submission.js');
  assert.equal(retainBlockedSession({status:'needs_review',challenge:'Missing answers',skipBlocked:true}),false);

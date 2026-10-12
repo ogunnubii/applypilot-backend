@@ -78,6 +78,8 @@ export async function submitHostedApplication({page,job,submit,review,reserve,wa
    }
    const confirmation=receipt(after);
    if(confirmation)return {status:'submitted',message:'Employer confirmed the autonomous application',confirmation};
+   const current=await review(page);
+   if(current.captcha||current.signIn)return blocked('Employer '+(current.captcha?'verification':'sign-in')+' appeared after the automatic Submit click. The outcome is unverified and protected from retries. The existing browser remains available for review; other eligible jobs can continue.','Unconfirmed submission');
   }
  }catch{
   return blocked('Submission was started, but its result could not be verified. Check the employer receipt before retrying.','Unconfirmed submission');

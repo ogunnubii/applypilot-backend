@@ -64,7 +64,48 @@ export class Handoffs {
   this.sessions.set(job.id,session);
   session.diagnostic=watchSubmission(page);
  }
- async expire(){for(const [id,s] of this.sessions){const expired=s.ready?this.clock()-s.created>12*60*60*1000:(this.clock()-s.touched>15*60*1000||this.clock()-s.created>45*60*1000);if(!s.busy&&expired){this.sessions.delete(id);await s.context.close().catch(()=>{});this.onClose(s.job,s.ready?'Ready-to-submit browser expired after 12 hours. Reopen the application to prepare it again.':'Live browser expired. Saved answers remain; reopen to restart the form.')}}}
+ // Receipt observation needs no live-view request, input or new submission.
+ // Keep a session until persistence succeeds so a temporary failure can retry.
+ async observeReceipt(id,s,p){
+  if(!s.attempted||s.initialReceipt||!sameApplication(p.url(),s.job.url))return false;
+  let content='';for(const frame of p.frames())if(sameApplication(frame.url(),s.job.url)){
+   const text=await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
+   if(sameApplication(frame.url(),s.job.url))content+='\n'+text;
+  }
+  if(!sameApplication(p.url(),s.job.url))return false;
+  const rejection=employerSecurityRejection(content,p.url());
+  if(rejection&&!s.rejectionRecorded){await this.onRejection(s.job,content);s.rejectionRecorded=true;}
+  const confirmation=!rejection&&receipt(content);
+  if(!confirmation)return false;
+  await this.onSubmitted(s.job,confirmation,{url:p.url(),observedAt:new Date(this.clock()).toISOString()});
+  this.sessions.delete(id);s.diagnostic.stop();await s.context.close().catch(()=>{});return true;
+ }
+ async observeReceipts(){
+  for(const [id,s] of this.sessions){
+   if(s.busy||!s.attempted||s.initialReceipt)continue;
+   s.busy=true;
+   try{
+    const p=s.context.pages().filter(page=>!page.isClosed()).at(-1);
+    if(p)await this.observeReceipt(id,s,p);
+   }catch{
+    // Do not turn a lost database response into a submission retry or prevent
+    // another retained application from recording its receipt.
+   }finally{s.busy=false;}
+  }
+ }
+ async expire(){for(const [id,s] of this.sessions){
+  const expired=s.ready?this.clock()-s.created>12*60*60*1000:(this.clock()-s.touched>15*60*1000||this.clock()-s.created>45*60*1000);
+  if(s.busy||!expired)continue;
+  s.busy=true;
+  try{
+   const p=s.context.pages().filter(page=>!page.isClosed()).at(-1);
+   if(p&&await this.observeReceipt(id,s,p))continue;
+   this.sessions.delete(id);s.diagnostic.stop();await s.context.close().catch(()=>{});
+   this.onClose(s.job,s.attempted?'Receipt monitoring ended without a verified employer receipt. The existing attempt stays protected; do not submit it again.':s.ready?'Ready-to-submit browser expired after 12 hours. Reopen the application to prepare it again.':'Live browser expired. Saved answers remain; reopen to restart the form.');
+  }catch{
+   // Retain an observed receipt if its persistence failed at the expiry edge.
+  }finally{s.busy=false;}
+ }}
  async command(uid,id,action,data={}){
   await this.expire();const s=this.sessions.get(id);
   if(!s||s.job.user_id!==uid){const e=Error('No live browser for this application');e.status=404;throw e}
@@ -110,10 +151,7 @@ export class Handoffs {
    // Input acknowledgements do not wait for image capture. The next view checks receipts.
    if(data.render===false&&['click','drag','text','key','scroll'].includes(action))return {accepted:true};
    if(s.attempted){const note=await s.diagnostic.describe();if(note&&note!==s.lastDiagnostic){s.lastDiagnostic=note;this.onDiagnostic(s.job,note);}}
-   let content='';if(s.attempted&&!s.initialReceipt)for(const frame of p.frames())if(sameApplication(p.url(),s.job.url)&&sameApplication(frame.url(),s.job.url))content+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
-   const rejection=employerSecurityRejection(content,p.url());
-   if(rejection&&!s.rejectionRecorded){await this.onRejection(s.job,content);s.rejectionRecorded=true;}
-   if(!rejection&&s.attempted&&!s.initialReceipt&&receipt(content)){this.onSubmitted(s.job,receipt(content));this.sessions.delete(id);s.diagnostic.stop();await s.context.close();return {submitted:true}}
+   if(await this.observeReceipt(id,s,p))return {submitted:true};
    const image=await p.screenshot({type:'jpeg',quality:60,timeout:10000});
    const frameId=createHash('sha256').update(image).digest('hex');
    const url=new URL(p.url());return {image:data.frameId===frameId?undefined:image.toString('base64'),frameId,width:1100,height:800,host:url.hostname,uploadRequested:!!s.chooser,expiresAt:s.ready?s.created+12*60*60*1000:Math.min(s.touched+15*60*1000,s.created+45*60*1000)};

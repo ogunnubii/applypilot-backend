@@ -745,17 +745,17 @@ function mountExternalHistory(){
  const form=el('form'),label=el('label','Application history — one per line: Company | Job title | Status | Notes | Work mode | Country | Interview date/time');
  const input=el('textarea');input.setAttribute('aria-label','Application history to import');input.rows=10;input.style.width='100%';input.required=true;input.placeholder='Company | Job title | applied | Optional notes';label.append(input);
  const submit=el('button','Import previously applied jobs');submit.type='submit';
- const refresh=el('button','Refresh imported history');refresh.type='button';
+ const refreshHistory=el('button','Refresh imported history');refreshHistory.type='button';
  const status=el('p');status.setAttribute('role','status');const list=el('div');
- form.append(label,submit);section.append(form,refresh,status,list);placeWorkspacePanel(section);
- async function show(){const d=await api('/application-history');list.replaceChildren(el('p',d.records.length+' records stored in the background for duplicate protection'));
- externalRecords=d.records;overviewSignature='';await refresh(true);}
+ form.append(label,submit);section.append(form,refreshHistory,status,list);placeWorkspacePanel(section);
+ async function show(refreshDashboard=false){const d=await api('/application-history');list.replaceChildren(el('p',d.records.length+' records stored in the background for duplicate protection'));
+ externalRecords=d.records;overviewSignature='';if(refreshDashboard)await refresh(true);}
 
- refresh.onclick=()=>show().catch(e=>status.textContent=e.message);
+ refreshHistory.onclick=()=>show(true).catch(e=>status.textContent=e.message);
  form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{
  const lines=input.value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
  const rows=lines.filter(v=>!/^company\s*\|/i.test(v)&&!/^[-| :]+$/.test(v)).map(line=>{const [company,title,status='applied',notes='',work_mode='unknown',country='',interview_at='']=line.split('|').map(v=>v.trim());return {company,title,status:status.toLowerCase()||'applied',notes,work_mode,country,interview_at,source:'Tsenta / email history — applicant supplied'};});
- const r=await api('/application-history','POST',{rows});status.textContent=r.added+' added, '+r.updated+' existing records merged; '+r.total+' total. '+r.blocked+' pending duplicates blocked.'+(r.active.length?' '+r.active.length+' matching applications are already active and need review.':'');input.value='';await show();
+ const r=await api('/application-history','POST',{rows});status.textContent=r.added+' added, '+r.updated+' existing records merged; '+r.total+' total. '+r.blocked+' pending duplicates blocked.'+(r.active.length?' '+r.active.length+' matching applications are already active and need review.':'');input.value='';await show(true);
  }catch(e){status.textContent=e.message;}finally{submit.disabled=false;}};
  show().catch(e=>status.textContent=e.message);
 }

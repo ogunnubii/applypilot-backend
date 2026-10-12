@@ -1,6 +1,7 @@
 import {sameApplication,receipt,submissionDeclaration} from './local-policy.js';
 import {applicationLimit} from './employer-limits.js';
 import {watchSubmission} from './submission-diagnostics.js';
+import {employerSecurityRejection} from './employer-rejection.js';
 
 // The observed Lever cookie banner contains "By clicking Accept, you agree",
 // which is not an application declaration. Decline only that exact optional
@@ -21,12 +22,14 @@ export async function declineLeverCookies(page){
 
 // Reservation is durable before the only possible click. Errors after reservation
 // must remain uncertain; neither timeouts nor an unrelated receipt allow a replay.
-export async function submitHostedApplication({page,job,submit,review,reserve,wait,recordLimit,recordDiagnostic=()=>{},prepared=()=>{}}){
+export async function submitHostedApplication({page,job,submit,review,reserve,wait,recordLimit,recordRejection=()=>{},recordDiagnostic=()=>{},prepared=()=>{}}){
  const blocked=(message,challenge)=>({status:'needs_review',message,challenge});
  if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');
  await declineLeverCookies(page);
  if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');
  const before=await page.locator('body').innerText();
+ const existingRejection=employerSecurityRejection(before,page.url());
+ if(existingRejection){recordRejection(before);return blocked(existingRejection,'Unconfirmed submission');}
  if(submissionDeclaration(before))return blocked('The final Submit action includes an employer declaration. Review and submit this form yourself.','Employer declaration');
  if(receipt(before))return blocked('An existing employer receipt is visible. Verify it before any new attempt.','Existing receipt');
  // A rendered value/file is not proof that the employer's asynchronous upload
@@ -67,6 +70,8 @@ export async function submitHostedApplication({page,job,submit,review,reserve,wa
    await wait(1000);
    if(!sameApplication(page.url(),job.url))return blocked('Submit was clicked once, but the resulting page cannot be matched to this job. Verify the employer receipt.','Unconfirmed submission');
    const after=await page.locator('body').innerText();
+   const rejection=employerSecurityRejection(after,page.url());
+   if(rejection){recordRejection(after);return blocked(rejection,'Unconfirmed submission');}
    if(applicationLimit(after)){
     recordLimit(after);
     return blocked('Employer application limit reached; no receipt recorded.','Employer application limit');

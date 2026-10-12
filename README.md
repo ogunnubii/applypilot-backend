@@ -1,6 +1,6 @@
 # ApplyPilot
 
-## Required cover letters (helper 0.6.36)
+## Required cover letters (helper 0.6.37)
 
 When an active application requires a clearly identified cover letter, ApplyPilot
 prepares a short letter naming the saved role and company, using verbatim relevant

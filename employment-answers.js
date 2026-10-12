@@ -12,6 +12,8 @@ function questionKind(value){
  if(/^(?:what are your salary expectations|(?:your )?(?:expected|desired) (?:annual )?salary)(?: in cad| \(cad\))?$/.test(q))return 'salary';
  if(/^do you have experience working in a start-up environment$/.test(q))return 'startup';
  if(/^are you physically located in canada and legally authorized to work in canada for any employer$/.test(q))return 'canadaAnyEmployer';
+ if(/^are you (?:legally )?authori[sz]ed to work in canada without restrictions?$/.test(q))return 'canadaUnrestricted';
+ if(/^will you now or in the future require (?:visa )?sponsorship (?:to work (?:in|within) canada|in order to begin or continue employment in (?:the )?canada)$/.test(q))return 'sponsorship';
  if(/^(?:when (?:can|could) you start(?: a new role| work| employment)?|(?:what is your )?(?:earliest start date|availability to start|available to start|notice period))$/.test(q))return 'availability';
  const where='(?:canada|the country you are applying for|the (?:country|location) (?:where|in which) (?:the|this) (?:job|role|position) is (?:located|based)|this country)';
  if(new RegExp('^are you (?:legally )?(?:authori[sz]ed|eligible|permitted) to work in '+where+'$').test(q))return 'authorization';
@@ -48,10 +50,10 @@ export function approvedEmploymentAnswer(field,profile){
  const entries=Object.entries(context.application||{}).filter(([q])=>clean(q)===clean(question));
  if(new Set(entries.map(([,a])=>clean(a))).size>1)return null;
  const exact=entries.length?String(entries[0][1]).trim():null;
- if(kind==='canadaAnyEmployer'){
+ if(kind==='canadaAnyEmployer'||kind==='canadaUnrestricted'){
   if(!context.canada)return null;
   if(exact)return yesNo(exact)?{kind:'employment',answer:yesNo(exact)}:null;
-  return context.locatedInCanada&&yesNo(context.facts[EMPLOYMENT_KEYS.canadaAuthorization])==='Yes'&&clean(context.facts[EMPLOYMENT_KEYS.canadaRestrictions])==='no restrictions'?{kind:'employment',answer:'Yes'}:null;
+  return (kind==='canadaUnrestricted'||context.locatedInCanada)&&yesNo(context.facts[EMPLOYMENT_KEYS.canadaAuthorization])==='Yes'&&clean(context.facts[EMPLOYMENT_KEYS.canadaRestrictions])==='no restrictions'?{kind:'employment',answer:'Yes'}:null;
  }
  if(kind==='startup'){const answer=yesNo(exact??context.facts[EMPLOYMENT_KEYS.startup]);return answer?{kind:'employment',answer}:null;}
  if(kind==='salary'){

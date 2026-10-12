@@ -51,6 +51,7 @@
     // A polite thank-you must not mask an application failure on the next
     // sentence. Ignore unrelated footer instructions such as Do not reply.
     if(sentences.some((sentence,index)=>failed.test(sentence)&&(/\b(?:application|submission|delivery)\b/i.test(sentence)||/^\s*it\b/i.test(sentence)&&/\bapplication\b/i.test(sentences[index-1]||''))))return '';
+    if(sentences.some(sentence=>/^\s*your application submission was flagged as possible spam\b/i.test(sentence)))return '';
     for(const sentence of sentences){
       const line=sentence.trim().replace(/^(?:Applicant verified|Browser extension observed):\s*/i,'');
       const existing=line.match(/^(?:(?:your )?application (?:has been |was )?(?:successfully )?(?:submitted|received)\b|thank(?:s| you) for (?:applying|your application)\b)[^\r\n]*/i);

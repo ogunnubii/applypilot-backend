@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ApplyPilot Local",
-  "version": "0.6.36",
+  "version": "0.6.37",
   "description": "Prepare supported application fields and normal Next steps from your saved facts. You review and click Submit.",
   "minimum_chrome_version": "120",
   "permissions": [

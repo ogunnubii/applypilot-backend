@@ -9,7 +9,7 @@ import {fillHostedText,typeHostedSearch} from './hosted-input.js';
 import {submitHostedApplication,retainBlockedSession,releaseSkippedHandoffs} from './hosted-submission.js';
 import {inActiveBatch} from './application-batches.js';
 import {ensureFocusedJob,savedSearchClaimProblem,focusAllowsSubmit,reserveAutonomousAttempt,saveFormProgress} from './single-application.js';
-import {applicationLimit,employerHold,recordEmployerLimit} from './employer-limits.js';
+import {applicationLimit,employerHold,recordEmployerLimit,recordEmployerRejection} from './employer-limits.js';
 import {installLibrary,reusableAnswers,captureAnswers,confirmLibrary} from './answer-library.js';
 import {installDrafts} from './answer-drafts.js';
 import {installCoverLetters,prepareCoverLetter} from './cover-letter.js';
@@ -38,7 +38,7 @@ function claim(){
  try{
   const candidates=db.prepare("SELECT * FROM jobs WHERE status='queued' AND COALESCE(json_extract(job_metadata_json,'$.available'),1)!=0 AND applicant_id IN (SELECT id FROM applicants WHERE execution_mode='cloud') AND local_owner IS NULL AND (NOT EXISTS(SELECT 1 FROM application_batch_preferences b WHERE b.user_id=jobs.user_id AND b.enabled=1) OR EXISTS(SELECT 1 FROM application_batch_members m JOIN application_batch_preferences b ON b.current_batch=m.batch_id AND b.enabled=1 WHERE m.job_id=jobs.id AND m.user_id=jobs.user_id)) AND (NOT EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1) OR id=(SELECT job_id FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1)) ORDER BY match_score DESC,discovery_priority,created_at").all();let j;
   for(const userId of new Set(candidates.map(job=>job.user_id))){
-   j=prioritizeApplications(db,userId,candidates.filter(job=>job.user_id===userId)).find(job=>(!handoffs?.full()||automaticMember(db,job))&&job.metadata?.eligibility?.eligible!==false&&!savedSearchClaimProblem(db,job));
+   j=prioritizeApplications(db,userId,candidates.filter(job=>job.user_id===userId)).find(job=>(!handoffs?.full()||automaticMember(db,job))&&job.metadata?.eligibility?.eligible!==false&&!employerHold(db,job)&&!savedSearchClaimProblem(db,job));
    if(j)break;
   }
   if(j){db.prepare("UPDATE jobs SET status='running',attempts=attempts+1,lease_at=?,updated_at=? WHERE id=?").run(now(),now(),j.id);event(j.id,'running','Opening employer application')}
@@ -365,6 +365,7 @@ if(await submit.count()!==1||await next.count()>0)return set(job,'needs_review',
   prepared:()=>{if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='prepared'").get(job.id))event(job.id,'prepared','All required fields and the final employer action passed validation.');},
   wait:ms=>browserPage.waitForTimeout(ms),
   recordLimit:text=>recordEmployerLimit(db,job.user_id,job.id,text,{source:'Employer response after automatic attempt'}),
+  recordRejection:text=>recordEmployerRejection(db,job.user_id,job.id,text,{source:'Employer response after automatic attempt'}),
   recordDiagnostic:message=>event(job.id,'submission_diagnostic',message)});
  if(result.status==='submitted'){
   syncHostedReceipt(db,job.id,job.user_id,{url:page.url(),receipt:result.confirmation,observedAt:now()});
@@ -391,6 +392,7 @@ async function main(){recoverWorkerJobs();let browser=await chromium.launch({hea
  db.prepare('UPDATE jobs SET handoff_available=0').run();
  handoffs=new Handoffs({
   onDiagnostic:(job,message)=>event(job.id,'submission_diagnostic',message),
+  onRejection:(job,text)=>recordEmployerRejection(db,job.user_id,job.id,text,{source:'Employer response in retained browser'}),
   onClose:(job,message)=>{db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id);event(job.id,'handoff_closed',message)},
   onPossibleSubmit:job=>{if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('manual_submission','submission_started') LIMIT 1").get(job.id)){event(job.id,'manual_submission','Applicant clicked the employer submit control.');event(job.id,'submission_started','Submission intent saved before the employer action.');}db.prepare("UPDATE jobs SET challenge='Unconfirmed submission',updated_at=? WHERE id=?").run(now(),job.id)},
   onSubmitted:(job,receiptText)=>{confirmLibrary(db,job);set(job,'submitted','Employer confirmed receipt during human handoff',null,receiptText);db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id)},

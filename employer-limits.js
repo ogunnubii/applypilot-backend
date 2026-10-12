@@ -1,4 +1,5 @@
 import {receipt} from './local-policy.js';
+import {employerSecurityRejection} from './employer-rejection.js';
 
 export function employerKey(job){
  try{
@@ -30,16 +31,21 @@ export function applicationLimit(value){
  message:'Employer application limit reached'+(count&&days?': '+count+' applications per '+days+' days.':'.')+' This is not a submission confirmation.'};
 }
 export function installEmployerLimits(db){
+ db.exec('CREATE TABLE IF NOT EXISTS employer_security_holds(user_id TEXT NOT NULL,applicant_id TEXT NOT NULL,employer_key TEXT NOT NULL,company TEXT NOT NULL,job_id TEXT NOT NULL,observed_at TEXT NOT NULL,message TEXT NOT NULL,source TEXT NOT NULL,PRIMARY KEY(user_id,applicant_id,employer_key))');
  db.exec('CREATE TABLE IF NOT EXISTS employer_limits(user_id TEXT NOT NULL,applicant_id TEXT NOT NULL,employer_key TEXT NOT NULL,company TEXT NOT NULL,observed_at TEXT NOT NULL,hold_until TEXT,limit_count INTEGER,window_days INTEGER,message TEXT NOT NULL,source TEXT NOT NULL,PRIMARY KEY(user_id,applicant_id,employer_key))');
  const columns=db.prepare('PRAGMA table_info(employer_limits)').all().map(c=>c.name);
  if(!columns.includes('reached_at')){db.exec('ALTER TABLE employer_limits ADD COLUMN reached_at TEXT');db.exec('ALTER TABLE employer_limits ADD COLUMN reported_until TEXT');db.exec('UPDATE employer_limits SET reached_at=observed_at,reported_until=hold_until');}
  db.function('application_employer_key',{deterministic:true},(company,url)=>employerKey({company,url}));
+ const security="EXISTS(SELECT 1 FROM employer_security_holds h WHERE h.user_id=NEW.user_id AND h.applicant_id=NEW.applicant_id AND h.employer_key=application_employer_key(NEW.company,NEW.url))";
+ db.exec("CREATE TRIGGER IF NOT EXISTS employer_security_queue_insert BEFORE INSERT ON jobs WHEN NEW.status IN ('queued','running') AND "+security+" BEGIN SELECT RAISE(ABORT,'Employer security rejection: automatic applications are held for this employer'); END;");
+ db.exec("CREATE TRIGGER IF NOT EXISTS employer_security_queue_update BEFORE UPDATE OF status ON jobs WHEN NEW.status IN ('queued','running') AND OLD.status!=NEW.status AND "+security+" BEGIN SELECT RAISE(ABORT,'Employer security rejection: automatic applications are held for this employer'); END;");
  const match="EXISTS(SELECT 1 FROM employer_limits l WHERE l.user_id=NEW.user_id AND l.applicant_id=NEW.applicant_id AND l.employer_key=application_employer_key(NEW.company,NEW.url) AND (l.hold_until IS NULL OR l.hold_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')))";
  db.exec("CREATE TRIGGER IF NOT EXISTS employer_limit_queue_insert BEFORE INSERT ON jobs WHEN NEW.status IN ('queued','running') AND "+match+" BEGIN SELECT RAISE(ABORT,'Employer application limit: automatic applications are paused for this employer'); END;");
  db.exec("CREATE TRIGGER IF NOT EXISTS employer_limit_queue_update BEFORE UPDATE OF status ON jobs WHEN NEW.status IN ('queued','running') AND OLD.status!=NEW.status AND "+match+" BEGIN SELECT RAISE(ABORT,'Employer application limit: automatic applications are paused for this employer'); END;");
 }
 export function employerHold(db,job,at=new Date().toISOString()){
  if(!job?.user_id||!job.applicant_id)return null;
+ const security=securityHolds(db,job.user_id).find(row=>row.applicant_id===job.applicant_id&&row.employer_key===employerKey(job));if(security)return security;
  const row=db.prepare('SELECT * FROM employer_limits WHERE user_id=? AND applicant_id=? AND employer_key=?').get(job.user_id,job.applicant_id,employerKey(job));
  if(!row)return null;
  const state=quotaState(db,row,at);
@@ -49,7 +55,26 @@ export function employerLimits(db,userId){
  return employerQuotas(db,userId).filter(row=>row.hold_until===null||row.hold_until>new Date().toISOString());
 }
 export function employerQuotas(db,userId,at=new Date().toISOString()){
- return db.prepare('SELECT * FROM employer_limits WHERE user_id=? ORDER BY observed_at DESC').all(userId).map(row=>quotaState(db,row,at));
+ return [...db.prepare('SELECT * FROM employer_limits WHERE user_id=? ORDER BY observed_at DESC').all(userId).map(row=>quotaState(db,row,at)),...securityHolds(db,userId)];
+}
+
+function securityHolds(db,userId){
+ if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employer_security_holds'").get())return [];
+ return db.prepare('SELECT * FROM employer_security_holds WHERE user_id=?').all(userId).map(row=>({...row,kind:'security',hold_until:null}));
+}
+
+export function recordEmployerRejection(db,userId,jobId,value,{source='Applicant reported employer security rejection',at=new Date().toISOString()}={}){
+ const job=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,userId);
+ if(!job)throw Error('Application not found');
+ const message=employerSecurityRejection(value,job.url),key=employerKey(job);
+ if(!message||!key)throw Error('An explicit employer security rejection is required.');
+ db.exec('BEGIN IMMEDIATE');try{
+  db.prepare('INSERT OR IGNORE INTO employer_security_holds VALUES(?,?,?,?,?,?,?,?)').run(userId,job.applicant_id,key,job.company,jobId,at,message,source);
+  if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type='employer_submission_rejected'").get(jobId))db.prepare("INSERT INTO events(job_id,at,type,message) VALUES(?,?,'employer_submission_rejected',?)").run(jobId,at,message);
+  // Preserve every job's status, challenge, receipt, ownership and attempt.
+  const held=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status IN ('saved','queued')").all(userId,job.applicant_id).filter(row=>employerKey(row)===key).length;
+  db.exec('COMMIT');return {company:job.company,held,holdUntil:null,message,security:true};
+ }catch(error){db.exec('ROLLBACK');throw error;}
 }
 
 // Receipt dates are when evidence was recorded, not rejection/interview dates.
@@ -90,6 +115,7 @@ function quotaState(db,row,at){
 export function recordEmployerLimit(db,userId,jobId,value,{source='Applicant reported employer limit',at=new Date().toISOString()}={}){
  const job=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,userId);
  if(!job)throw Error('Application not found');
+ if(employerSecurityRejection(value,job.url))return recordEmployerRejection(db,userId,jobId,value,{source,at});
  const refusal=applicationLimit(value),parsed=refusal||applicationQuota(value),key=employerKey(job);
  if(!parsed||!key)throw Error('Paste the employer message saying your application limit was reached.');
  const existing=db.prepare('SELECT * FROM employer_limits WHERE user_id=? AND applicant_id=? AND employer_key=?').get(userId,job.applicant_id,key);
@@ -102,7 +128,9 @@ export function recordEmployerLimit(db,userId,jobId,value,{source='Applicant rep
  db.exec('BEGIN IMMEDIATE');
  try{
   db.prepare('INSERT INTO employer_limits(user_id,applicant_id,employer_key,company,observed_at,hold_until,limit_count,window_days,message,source,reached_at,reported_until) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,applicant_id,employer_key) DO UPDATE SET observed_at=excluded.observed_at,hold_until=excluded.hold_until,limit_count=COALESCE(excluded.limit_count,employer_limits.limit_count),window_days=COALESCE(excluded.window_days,employer_limits.window_days),message=excluded.message,source=excluded.source,reached_at=excluded.reached_at,reported_until=excluded.reported_until').run(userId,job.applicant_id,key,job.company,observed,reached?reportedUntil:'',parsed.count,parsed.days,message,source,reached,reportedUntil);
-  const hold=employerHold(db,job,at),until=hold?.hold_until;
+  // A separate security hold must not be relabelled as a quota refusal.
+  const quota=quotaState(db,db.prepare('SELECT * FROM employer_limits WHERE user_id=? AND applicant_id=? AND employer_key=?').get(userId,job.applicant_id,key),at);
+  const hold=quota.hold_until===null||quota.hold_until>at?quota:null,until=hold?.hold_until;
   const jobs=db.prepare("SELECT * FROM jobs WHERE user_id=? AND applicant_id=? AND status NOT IN ('archived','duplicate','submitted','interview','rejected','offer')").all(userId,job.applicant_id);
   let held=0;
   for(const row of jobs){

@@ -99,9 +99,9 @@ if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-typ
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
-if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.36.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
+if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.37.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,commit:process.env.RAILWAY_GIT_COMMIT_SHA||null,release:'2026-10-12-canadian-location-recovery',extensionVersion:'0.6.36',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,commit:process.env.RAILWAY_GIT_COMMIT_SHA||null,release:'2026-10-12-canadian-location-recovery',extensionVersion:'0.6.37',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -198,6 +198,9 @@ if(path==='/api/employer-limits'&&req.method==='POST'){const x=JSON.parse(await 
 const heldRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/(queue|continue|continuation|local\/(claim|packet|step|attempt|research-answer|answer|cover-letter)|handoff\/(open|click|drag|upload|text|key|resume))$/);
 if(heldRoute&&(req.method==='POST'||heldRoute[2]==='local/packet'&&req.method==='GET')){
  const heldJob=ownJob(uid,heldRoute[1]),held=heldJob&&employerHold(db,heldJob);
+ // Reopening the view of an already-retained browser is read-only. A hold
+ // still blocks creation, input, resume and submission; it does not hide evidence.
+ if(held&&heldRoute[2]==='handoff/open'&&heldJob.handoff_available)return send(res,200,{available:true,readOnly:true});
  if(heldJob&&excludesFrench(db,uid)&&frenchApplication(heldJob)&&['queue','continue','local/claim'].includes(heldRoute[2]))return send(res,409,{error:'French-language applications are excluded by your preference.'});
  if(held&&!(heldRoute[2]==='local/packet'&&heldJob.local_attempt_at))return send(res,409,{error:held.message+' Applications to this employer are paused; other employers can continue.'});
  if(heldJob&&['queue','continue','local/claim','handoff/open'].includes(heldRoute[2])){

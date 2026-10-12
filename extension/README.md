@@ -1,4 +1,4 @@
-Version 0.6.36 prepares required cover-letter text and accepted PDF/DOCX uploads from confirmed professional background. Existing letters and edits are preserved, optional letters are skipped, and prepared letters require your review and manual Submit click. Review the saved letter on its application card.
+Version 0.6.37 prepares required cover-letter text and accepted PDF/DOCX uploads from confirmed professional background. Existing letters and edits are preserved, optional letters are skipped, and prepared letters require your review and manual Submit click. Review the saved letter on its application card.
 
 Version 0.6.35 saves observed employer receipts in a durable browser outbox before synchronization. Transient connection and sign-in failures retry with capped backoff, including after a browser restart or employer tab closure. Receipt retries never refill, upload, navigate or submit again. Stop remains active; only previously observed evidence can synchronize while stopped. Identity or permission errors retain evidence for review. Update the same extension folder and reload the same installation.
 

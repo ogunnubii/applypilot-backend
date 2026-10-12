@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
+import {employerHold} from '../employer-limits.js';
 import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -107,7 +108,7 @@ test('Stop is checked before durable reservation; restart cannot grant another a
 test('hosted claim progresses with full retained handoffs but never opens two active campaign jobs',()=>{
  const f=fixture();f.db.exec('ALTER TABLE jobs ADD COLUMN discovery_priority DEFAULT 0;ALTER TABLE jobs ADD COLUMN lease_at');for(let n=0;n<21;n++)f.add('j'+n,roles[n%3]);f.start();
  const source=readFileSync('worker.js','utf8'),code=source.slice(source.indexOf('function claim(){'),source.indexOf('\nasync function pageIssue'));
- const claim=new Function('handoffs','db','ensureFocusedJob','prioritizeApplications','now','event','savedSearchClaimProblem','populateAutomaticCampaign','automaticMember',code+';return claim;')({full:()=>true},f.db,()=>{},prioritizeApplications,()=>new Date().toISOString(),()=>{},savedSearchClaimProblem,populateAutomaticCampaign,automaticMember);
+ const claim=new Function('handoffs','db','ensureFocusedJob','prioritizeApplications','now','event','savedSearchClaimProblem','populateAutomaticCampaign','automaticMember','employerHold',code+';return claim;')({full:()=>true},f.db,()=>{},prioritizeApplications,()=>new Date().toISOString(),()=>{},savedSearchClaimProblem,populateAutomaticCampaign,automaticMember,employerHold);
  const first=claim();assert(first);assert.equal(f.get(first.id).status,'running');assert.equal(claim(),undefined);
  f.db.prepare("UPDATE jobs SET status='needs_review',challenge='Missing personal fact' WHERE id=?").run(first.id);
  const second=claim();assert(second);assert.notEqual(second.id,first.id);assert.equal(f.get(first.id).status,'needs_review');

@@ -30,6 +30,7 @@ function profileKind(value){
  if(/^(?:linkedin profile or website|linkedin, portfolio, personal website, github)$/.test(q.replace(/\blinked in\b/g,'linkedin').replace(/\bgit hub\b/g,'github')))return 'linkedin';
  const direct=fieldKind(value)||fieldKind(spaced)||fieldKind(q);if(direct)return direct;
  if(/^(?:(?:please )?(?:enter|provide) )?(?:your )?(?:(?:full )?legal name|legal full name)$/.test(q))return 'name';
+ if(/^(?:your )?full name legal$/.test(q))return 'name';
  if(/^(?:your )?legal (?:first|given) name$/.test(q))return 'first';
  if(/^(?:your )?legal (?:last|family) name$/.test(q))return 'last';
  if(/^(?:where are you (?:currently )?(?:located|based)|where do you live|what is your current location|(?:please )?(?:enter|provide) your current location|your current location)$/.test(q))return 'location';

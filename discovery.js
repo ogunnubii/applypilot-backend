@@ -186,7 +186,8 @@ const defaultBoards=['braze','cloudflare','canonical','gitlab','datadog','grafan
 const infrastructureBoards=["https://jobs.lever.co/zopa","https://jobs.lever.co/spotify","https://jobs.lever.co/palantir","https://job-boards.greenhouse.io/anthropic","https://jobs.ashbyhq.com/openai","https://jobs.ashbyhq.com/cohere","https://jobs.ashbyhq.com/perplexity","https://jobs.ashbyhq.com/marble.ai","https://jobs.ashbyhq.com/acquird","https://jobs.ashbyhq.com/homebase","https://jobs.ashbyhq.com/ashby","https://jobs.ashbyhq.com/remarcable-inc","https://jobs.ashbyhq.com/top-hat","https://jobs.ashbyhq.com/lightspeedhq","https://jobs.ashbyhq.com/hopper","https://jobs.ashbyhq.com/baseten","https://jobs.ashbyhq.com/hiive","https://jobs.ashbyhq.com/n8n","https://jobs.ashbyhq.com/modal","https://jobs.ashbyhq.com/ramp","https://jobs.ashbyhq.com/linear","https://jobs.ashbyhq.com/vanta","https://jobs.ashbyhq.com/notion","https://jobs.ashbyhq.com/cursor","https://jobs.ashbyhq.com/supabase","https://job-boards.greenhouse.io/gitlab","https://job-boards.greenhouse.io/cloudflare","https://job-boards.greenhouse.io/grafanalabs","https://job-boards.greenhouse.io/canonical","https://job-boards.greenhouse.io/datadog","https://job-boards.greenhouse.io/mongodb","https://job-boards.greenhouse.io/elastic","https://job-boards.greenhouse.io/cockroachlabs","https://job-boards.greenhouse.io/databricks","https://job-boards.greenhouse.io/stripe","https://job-boards.greenhouse.io/reddit","https://job-boards.greenhouse.io/figma","https://job-boards.greenhouse.io/netlify","https://job-boards.greenhouse.io/vercel","https://job-boards.greenhouse.io/turing"];
 function curatedBoards(intent,focus=''){
  const text=[...intent.roles,focus].join(' ').toLowerCase();
- return /\b(devops|site reliability|sre|platform|cloud|infrastructure|systems?|sysadmin|network|noc|support|build|release|ci\/cd|production)\b/.test(text)?infrastructureBoards:[];
+ const additionalBoards=['https://jobs.lever.co/caseware','https://jobs.lever.co/Lillio','https://jobs.lever.co/smiledigitalhealth','https://jobs.ashbyhq.com/livekit','https://jobs.ashbyhq.com/Blackpoint%20Cyber','https://jobs.ashbyhq.com/lumos','https://jobs.ashbyhq.com/firecrawl','https://jobs.ashbyhq.com/Chromatic'];
+ return /\b(devops|site reliability|sre|platform|cloud|infrastructure|systems?|sysadmin|network|noc|support|build|release|ci\/cd|production)\b/.test(text)?[...additionalBoards,...infrastructureBoards]:[];
 }
 const activeSearches=new Map();
 export function runSearch(id,userId){
@@ -276,7 +277,7 @@ async function executeSearch(id,userId){
   const jobId=randomUUID(),date=now();
   const result=db.prepare("INSERT OR IGNORE INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'saved',?,?,?)")
    .run(jobId,userId,applicant.id,String(job.title).slice(0,200),String(job.company).slice(0,200),url,url,'Source: '+job.source+(job.location?' · '+String(job.location).slice(0,100):'')+' · '+metadata.reasons.join(' · '),date,date);
-  if(result.changes){saveMetadata(jobId,metadata);added++;event(jobId,'saved','Found by search: '+resolved.instruction);}
+  if(result.changes){saveMetadata(jobId,metadata);added++;event(jobId,'discovered',JSON.stringify({searchId:search.id,source:job.source,discoveredAt:date}));event(jobId,'saved','Found by search: '+resolved.instruction);}
  }
  const enrichment=await refreshTrackedJobs(userId,applicant,intent);archiveFrench(db,userId);errors.push(...enrichment.errors);
  // The account-wide pipeline includes every found role, regardless of ranking. Prior attempts remain protected.

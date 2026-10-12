@@ -39,7 +39,9 @@ function selectedCanadianRemoteJob(job,scope){
 }
 export function employmentContext(profile,job,scope=null,{annualSalaryTargetCAD}={}){
  let saved={},application={};try{saved=JSON.parse(profile?.answers_json||'{}');application=JSON.parse(job?.answers_json||'{}');}catch{}
- return {canada:canadaJob(job)||selectedCanadianRemoteJob(job,scope),locatedInCanada:clean(saved.Country)==='canada',annualSalaryTargetCAD:Number.isSafeInteger(annualSalaryTargetCAD)&&annualSalaryTargetCAD>0?annualSalaryTargetCAD:null,facts:Object.fromEntries(Object.values(EMPLOYMENT_KEYS).filter(k=>typeof saved[k]==='string').map(k=>[k,saved[k]])),application};
+ const storedTarget=saved['Minimum annual salary target (CAD)'];
+ const salaryTarget=storedTarget===undefined||storedTarget===''?annualSalaryTargetCAD:/^\d+$/.test(String(storedTarget))?Number(storedTarget):null;
+ return {canada:canadaJob(job)||selectedCanadianRemoteJob(job,scope),locatedInCanada:clean(saved.Country)==='canada',annualSalaryTargetCAD:Number.isSafeInteger(salaryTarget)&&salaryTarget>0&&salaryTarget<=10000000?salaryTarget:null,facts:Object.fromEntries(Object.values(EMPLOYMENT_KEYS).filter(k=>typeof saved[k]==='string').map(k=>[k,saved[k]])),application};
 }
 export function approvedEmploymentAnswer(field,profile){
  const context=profile?.employment_context;if(!context)return null;

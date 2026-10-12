@@ -50,3 +50,19 @@ test('explicit search scope and eligibility restrictions still take precedence',
  assert.equal(jobIntelligence(posting,resolve(search,applicant,{...scope,authorizedCountries:[]}).intent).eligibility.eligible,false);
  assert.equal(resolve(search,applicant).intent.scope,undefined);
 });
+
+test('metadata enrichment refreshes a mismatched scope before daily expiry without resetting attempts',async()=>{
+ const db=new DatabaseSync(':memory:');
+ db.exec('CREATE TABLE jobs(id,user_id,applicant_id,title,status,metadata_attempt_at,created_at,job_metadata_json,attempts,local_attempt_at)');
+ const fresh=new Date().toISOString(),old=new Date(Date.now()-20*60000).toISOString(),signature=searchScopeSignature(scope);
+ const add=(id,{user='u',status='needs_review',sig='old-scope',last=old,attempts=0,attempt=null}={})=>db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,user,'p',posting.title,status,last,old,JSON.stringify({available:true,checkedAt:fresh,searchScopeSignature:sig}),attempts,attempt);
+ add('mismatch');add('matching',{sig:signature});add('cooldown',{last:fresh});add('other',{user:'other'});add('archived',{status:'archived'});add('attempted',{attempts:3,attempt:'2026-01-01'});
+ const part=source.slice(source.indexOf('async function refreshTrackedJobs'),source.indexOf('async function executeSearch'));
+ const seen=[];
+ const refresh=new Function('db','searchScopeSignature','detailForJob','saveMetadata','jobIntelligence','now',part+';return refreshTrackedJobs;')(db,searchScopeSignature,async row=>{seen.push(row.id);return posting;},(id,m)=>db.prepare('UPDATE jobs SET job_metadata_json=? WHERE id=?').run(JSON.stringify(m),id),jobIntelligence,()=>new Date().toISOString());
+ const before=db.prepare("SELECT attempts,local_attempt_at,status FROM jobs WHERE id='attempted'").get();
+ const result=await refresh('u',applicant,scopeIntent(scope));assert.equal(result.refreshed,2);assert.deepEqual(seen.sort(),['attempted','mismatch']);
+ assert.equal(JSON.parse(db.prepare("SELECT job_metadata_json FROM jobs WHERE id='mismatch'").get().job_metadata_json).searchScopeSignature,signature);
+ assert.deepEqual(db.prepare("SELECT attempts,local_attempt_at,status FROM jobs WHERE id='attempted'").get(),before);
+ assert.equal((await refresh('u',applicant,scopeIntent(scope))).refreshed,0);db.close();
+});

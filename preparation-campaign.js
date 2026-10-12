@@ -49,8 +49,10 @@ export function preparationCandidateProblem(db,job,{fresh=true}={}){
  return preparationPreferenceProblem(db,job);
 }
 export function preparationPreferenceProblem(db,job){
- const minimum=db.prepare('SELECT minimum_cad FROM application_batch_preferences WHERE user_id=?').get(job.user_id)?.minimum_cad||120000;
- if(salaryTarget(metadataFor(job).pay||[],minimum).reason==='Published range is below target')return 'Published pay is below your CAD '+minimum.toLocaleString()+' target.';
+ // A legacy support-batch target is scoped to that active queue and applicant.
+ // Switching to a structured campaign must not invent or inherit a pay floor.
+ const minimum=db.prepare('SELECT minimum_cad FROM application_batch_preferences WHERE user_id=? AND applicant_id=? AND enabled=1').get(job.user_id,job.applicant_id)?.minimum_cad;
+ if(Number.isInteger(minimum)&&minimum>0&&salaryTarget(metadataFor(job).pay||[],minimum).reason==='Published range is below target')return 'Published pay is below your CAD '+minimum.toLocaleString()+' target.';
  // Interview variants (for example a weekend annotation) are held for review,
  // rather than treating another requisition URL as permission to reapply.
  const core=value=>applicationRoleKey(String(value).replace(/\([^)]*\)/g,''));

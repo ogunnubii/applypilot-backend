@@ -78,14 +78,14 @@ test('switching or resuming is blocked while a hosted form is executing without 
  const f=fixture();f.add('running');f.db.exec("UPDATE jobs SET status='running'");assert.throws(()=>f.start(),/hosted form/);assert.equal(preparationSnapshot(f.db,'u').enabled,false);f.db.close();
 });
 
-test('new location or salary evidence removes untouched selections without deleting their history and refills places',()=>{
+test('new location evidence removes untouched selections but a disabled legacy salary target does not',()=>{
  const f=fixture();for(let n=0;n<25;n++)f.add('j'+n,roles[n%3]);let c=f.start();const [low,foreign]=c.members;
  f.db.prepare("UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.pay',json(?)) WHERE id=?").run(JSON.stringify([{currency:'CAD',annualMin:85000,annualMax:110000}]),low.job_id);
  f.db.prepare("UPDATE jobs SET job_metadata_json=json_set(job_metadata_json,'$.location','DACH; Germany','$.description','Work from anywhere in the world') WHERE id=?").run(foreign.job_id);
- c=populatePreparationCampaign(f.db,'u');assert.equal(c.selected,20);assert(!c.members.some(m=>[low.job_id,foreign.job_id].includes(m.job_id)));
- assert.equal(f.db.prepare('SELECT COUNT(*) n FROM preparation_members WHERE excluded_at IS NOT NULL').get().n,2);
+ c=populatePreparationCampaign(f.db,'u');assert.equal(c.selected,20);assert(!c.members.some(m=>m.job_id===foreign.job_id));assert(c.members.some(m=>m.job_id===low.job_id));
+ assert.equal(f.db.prepare('SELECT COUNT(*) n FROM preparation_members WHERE excluded_at IS NOT NULL').get().n,1);
  assert.equal(f.get(low.job_id).status,'queued');assert.equal(f.get(foreign.job_id).local_attempt_at,null);
- assert.match(preparationClaimProblem(f.db,f.get(low.job_id)),/outside/);assert.deepEqual(c.members.map(m=>m.position),Array.from({length:20},(_,i)=>i+1));
+ assert.equal(preparationClaimProblem(f.db,f.get(low.job_id)),'');assert.deepEqual(c.members.map(m=>m.position),Array.from({length:20},(_,i)=>i+1));
  f.db.close();
 });
 

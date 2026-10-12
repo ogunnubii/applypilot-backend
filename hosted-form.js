@@ -34,6 +34,7 @@ function profileKind(value){
 }
 
 export function hostedFieldKind(field){
+ if(field?.ambiguous||field?.contextRequired)return null;
  const parts=textParts(field),context=policyText([...parts,field?.description||''].join(' '));if(protectedHostedQuestion(context)||THIRD_PARTY_CONTACT.test(context))return null;
  const kinds=parts.map(profileKind).filter(Boolean);
  const token=autocompleteKind(field);if(token)kinds.push(token);
@@ -70,6 +71,7 @@ function trustedAnswer(kind,profile,answers){
 }
 
 export function hostedFieldAnswer(field,profile,answers={}){
+ if(field?.ambiguous||field?.contextRequired)return null;
  const employment=approvedEmploymentAnswer(field,profile);if(employment)return employment;
  const kind=hostedFieldKind(field);if(!kind)return null;
  const answer=trustedAnswer(kind,profile,answers);return answer===null?null:{kind,answer:String(answer)};
@@ -78,6 +80,7 @@ export function hostedFieldAnswer(field,profile,answers={}){
 function questionFor(field){return textParts(field)[0]||'';}
 
 export function hostedOptionChoice(field,options,profile,answers={}){
+ if(field?.ambiguous||field?.contextRequired)return null;
  const question=questionFor(field),optionContext=(options||[]).flatMap(option=>[option?.label,option?.value]).join(' ');
  const employment=approvedEmploymentAnswer(field,profile);
  if(employment){const matches=(options||[]).filter(o=>!o.disabled&&normalize(o.label)===normalize(employment.answer));return matches.length===1?matches[0]:null;}
@@ -93,8 +96,9 @@ export function hostedOptionChoice(field,options,profile,answers={}){
 }
 
 export function approvedHostedRadioIndex(options,answers={},profile={}){
+ if(options?.some(option=>option.ambiguous||option.contextRequired))return -1;
  const questions=[...new Set((options||[]).map(option=>normalize(option.question)).filter(Boolean))];
- const context=(options||[]).flatMap(option=>[option?.question,option?.label,option?.value]).join(' ');
+ const context=(options||[]).flatMap(option=>[option?.question,option?.description,option?.label,option?.value]).join(' ');
  if(questions.length!==1||GENERIC_QUESTION.test(policyText(options?.[0]?.question)))return -1;
  const employment=approvedEmploymentAnswer({label:options[0].question,description:options[0].description},profile);
  if(employment){const matches=options.map((option,index)=>({option,index})).filter(({option})=>!option.disabled&&normalize(option.label)===normalize(employment.answer));return matches.length===1?matches[0].index:-1;}

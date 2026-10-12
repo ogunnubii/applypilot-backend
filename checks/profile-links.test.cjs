@@ -37,7 +37,7 @@ test('the browser automatically fills three separate link fields and leaves Subm
  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent}});w.HTMLElement.prototype.getClientRects=function(){return [{}]};w.setInterval=()=>0;
  let clicks=0;const messages=[];w.document.querySelector('button').onclick=()=>clicks++;
  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);return {ok:true,data:m.action==='packet'?{job:{title:'Fixture'},profile:{},answers:links}:m.action==='state'?{automatic:true,attempted:false}:{}};}}};
- w.eval(read('extension/policy.js'));w.eval(read('extension/content.js'));await new Promise(r=>setTimeout(r,60));
+ w.eval(read('extension/policy.js'));w.eval(read('extension/content.js'));for(let i=0;i<150&&!messages.some(m=>m.action==='progress'&&m.blocked);i++)await new Promise(r=>setTimeout(r,20));
  for(const [id,key]of [['linkedin','LinkedIn'],['github','GitHub'],['website','Website']])assert.equal(w.document.getElementById(id).value,links[key],id);
  assert.equal(w.document.getElementById('company').value,'');assert.equal(clicks,0);assert(!messages.some(m=>m.action==='attempt'));w.close();
 });

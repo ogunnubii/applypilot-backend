@@ -9,7 +9,8 @@ async function fixture(html,url='https://jobs.ashbyhq.com/example/12345678-1234-
  w.HTMLElement.prototype.getClientRects=function(){return this.isConnected&&!this.closest('[hidden]')&&this.type!=='hidden'?[{}]:[];};
  w.setInterval=fn=>{timers.push(fn);return timers.length;};w.clearInterval=()=>{};
  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);return {ok:true,data:m.action==='packet'?{job:{title:'Platform Engineer'},autofillOnly:true,profile:{name:'Test Applicant'},answers:{}}:m.action==='state'?{automatic:true,autofillOnly:true,refreshEnabled:true,attempted:false}:{}};}}};
- const wait=()=>new Promise(r=>setTimeout(r,400));
+ let statusListener;w.chrome.runtime.onMessage.addListener=listener=>{statusListener=listener;};
+ const wait=async()=>{for(let i=0;i<300;i++){await new Promise(r=>setTimeout(r,20));let status;statusListener?.({action:'preparation-status'},{},value=>{status=value;});if(status&&!status.busy)return;}assert.fail('Preparation did not settle');};
  const start=async()=>{w.eval(source('policy.js'));w.eval(source('content.js'));await wait();};
  const tick=async()=>{for(const fn of [...timers])await fn();await wait();};
  return {w,messages,start,tick,close:()=>w.close()};

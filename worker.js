@@ -14,7 +14,7 @@ import {hasResearchDraftForQuestion,installResearch,markResearchDraftUsed} from 
 import {researchConsentWithdrawn} from './research-consent.js';
 import {automaticTextAnswer} from './automatic-answer.js';
 import {prepareHostedDropdown} from './dropdown-answer.js';
-import {supported as hostAllowed,sameApplication,employerPageIssue} from './local-policy.js';
+import {supported as hostAllowed,sameApplication,employerPageIssue,savedOptionSelections} from './local-policy.js';
 import {recoverWorkerJobs} from './local-state.js';
 import {Handoffs,serveHandoffs} from './handoff.js';
 import {pickResumeField} from './form-policy.js';
@@ -56,15 +56,25 @@ async function fill(page,p){
  return n;
 }
 function authorizeResearchFill(job,profile,question){if(researchConsentWithdrawn(db,job.id,profile.id))return false;if(!hasResearchDraftForQuestion(db,job.id,question))return true;markResearchDraftUsed(db,job.id,question);return !researchConsentWithdrawn(db,job.id,profile.id);}
-async function review(page){return page.evaluate(hostedFormState);}
+async function review(page){
+ const state=await page.evaluate(hostedFormState);
+ // A matching embedded form does not exempt an outer-page CAPTCHA, sign-in,
+ // or validation overlay. Do not count unrelated outer fields as questions.
+ if(typeof page.parentFrame==='function'&&page.parentFrame()){
+  const outer=await page.page().mainFrame().evaluate(hostedFormState);
+  state.captcha=state.captcha||outer.captcha;state.signIn=state.signIn||outer.signIn;state.pending=state.pending||outer.pending;
+ }
+ return state;
+}
 async function custom(page,p,j){
- const answers=JSON.parse(p.answers_json||'{}'),applicationAnswers=JSON.parse(j.answers_json||'{}'),inputs=page.locator('textarea:visible,input[type="text"]:not([role="combobox"]):visible,input:not([type]):not([role="combobox"]):visible'),unresolved=[];
+ const answers=JSON.parse(p.answers_json||'{}'),applicationAnswers=JSON.parse(j.answers_json||'{}'),inputs=page.locator('textarea:visible,input[type="text"]:not([role="combobox"]):visible,input:not([type]):not([role="combobox"]):visible,input[type="number"]:visible,input[type="date"]:visible'),unresolved=[];
  for(let i=0;i<Math.min(await inputs.count(),50);i++){
   const l=inputs.nth(i);if(await l.inputValue().catch(()=>'')!=='')continue;
   const descriptor=await fieldDescriptor(l),q=descriptor.label||descriptor.ariaLabel||descriptor.description||descriptor.placeholder||descriptor.name||descriptor.id;if(!q)continue;
+  if(descriptor.ambiguous||descriptor.contextRequired){if(descriptor.required)unresolved.push(q);continue;}
   const approved=hostedFieldAnswer(descriptor,p,answers);
   if(approved?.kind==='employment'){if(await fillHostedText(l,approved.answer,{kind:approved.kind}))event(j.id,'answer',`Filled approved application fact: ${q}`);continue;}
-  if(protectedHostedQuestion(q)){if(descriptor.required)unresolved.push(q);continue;}
+  if(protectedHostedQuestion(q+' '+(descriptor.description||''))){if(descriptor.required)unresolved.push(q);continue;}
   // Profile conflicts/missing facts must not fall through to model drafting.
   // This also fills contact facts when an employer renders them as textareas.
   if(hostedFieldKind(descriptor)){
@@ -73,7 +83,7 @@ async function custom(page,p,j){
    else if(descriptor.required)unresolved.push(q);
    continue;
   }
-  const selected=await automaticTextAnswer({db,profile:p,job:j,question:q,answers,applicationAnswers,fieldHelp:descriptor.description,maxLength:await l.evaluate(e=>e.maxLength>0?e.maxLength:4000)}),applicationOnly=['public_page','application_only','approved_facts'].includes(selected.source);
+  const selected=await automaticTextAnswer({db,profile:p,job:j,question:q,answers,applicationAnswers,fieldHelp:descriptor.description,answerFormat:descriptor.type==='number'?'number':'text',maxLength:await l.evaluate(e=>e.maxLength>0?e.maxLength:4000)}),applicationOnly=['public_page','application_only','approved_facts'].includes(selected.source);
   if(selected.answer===null&&selected.reason)event(j.id,'answer_blocked',q+': '+selected.reason);
   if(applicationOnly)await l.evaluate(e=>e.dataset.applypilotApplicationOnly='true');if(selected.source==='public_page')event(j.id,'public_page_draft',`Google filled a cited public-page draft for: ${q}`);if(selected.source==='application_only')event(j.id,'application_only_answer',`Filled an edited application-only answer for: ${q}`);if(selected.source==='approved_facts')event(j.id,'ai_draft',`AI filled a fact-grounded draft for: ${q}`);
   if(selected.answer!==null){if(applicationOnly&&!authorizeResearchFill(j,p,q))return {unresolved,withdrawn:true};if(await fillHostedText(l,selected.answer))event(j.id,'answer',`Answered: ${q}`)}else if(descriptor.required)unresolved.push(q);
@@ -86,23 +96,34 @@ async function selections(page,p,j){
  for(let i=0;i<await selects.count();i++){
   const el=selects.nth(i),descriptor={...await fieldDescriptor(el),type:'select',populated:await el.evaluate(e=>!!e.value&&!e.selectedOptions?.[0]?.disabled&&!/^(?:select|choose)(?:\b|\.{3})/i.test(e.selectedOptions?.[0]?.textContent?.trim()||''))};if(descriptor.populated)continue;
   const q=descriptor.label||descriptor.ariaLabel||descriptor.name||descriptor.id;
-  const options=await el.locator('option').evaluateAll(xs=>xs.map(x=>({label:x.textContent,value:x.value,disabled:x.disabled})));
-  if(await el.evaluate(e=>e.multiple))continue;
+  if(descriptor.ambiguous||descriptor.contextRequired)continue;
+  const options=await el.locator('option').evaluateAll(xs=>xs.map((x,index)=>({index,label:x.textContent,value:x.value,disabled:x.disabled||!!x.closest('optgroup[disabled]')})));
+  if(await el.evaluate(e=>e.multiple)){
+   const choices=savedOptionSelections(q,options,answers);if(!choices||protectedHostedQuestion(q+' '+(descriptor.description||'')+' '+options.map(o=>o.label).join(' ')))continue;
+   const current=await el.locator('option').evaluateAll(xs=>xs.map((x,index)=>({index,label:x.textContent,value:x.value,disabled:x.disabled||!!x.closest('optgroup[disabled]')})));
+   if(JSON.stringify(current)!==JSON.stringify(options)||await el.evaluate(e=>[...e.selectedOptions].some(o=>o.value&&!o.disabled&&!/^(?:select|choose)\b/i.test(o.textContent.trim()))))continue;
+   if(!authorizeResearchFill(j,p,q))return false;
+   await el.selectOption(choices.map(o=>({index:o.index})));await el.blur();
+   const retained=await el.evaluate(e=>[...e.selectedOptions].map(o=>({index:o.index,label:o.textContent,value:o.value})).sort((a,b)=>a.index-b.index));
+   const expected=choices.map(o=>({index:o.index,label:o.label,value:o.value})).sort((a,b)=>a.index-b.index);
+   if(JSON.stringify(retained)!==JSON.stringify(expected)){const error=Error('The employer form did not retain the complete selection. Review the field before continuing.');error.code='HOSTED_INPUT_NOT_RETAINED';throw error;}
+   continue;
+  }
   const choice=await prepareHostedDropdown(db,j,p,descriptor,options,answers);
-  const current=await el.locator('option').evaluateAll(xs=>xs.map(x=>({label:x.textContent,value:x.value,disabled:x.disabled})));
+  const current=await el.locator('option').evaluateAll(xs=>xs.map((x,index)=>({index,label:x.textContent,value:x.value,disabled:x.disabled||!!x.closest('optgroup[disabled]')})));
   const populated=await el.evaluate(e=>!!e.value&&!e.selectedOptions?.[0]?.disabled&&!/^(?:select|choose)\b/i.test(e.selectedOptions?.[0]?.textContent?.trim()||''));
-  if(choice&&!populated&&JSON.stringify(current)===JSON.stringify(options)){if(!authorizeResearchFill(j,p,q))return false;await el.selectOption(choice.value);if(choice.aiPrepared)await el.evaluate(e=>e.dataset.applypilotApplicationOnly='true');}
+  if(choice&&!populated&&JSON.stringify(current)===JSON.stringify(options)){if(!authorizeResearchFill(j,p,q))return false;await el.selectOption({index:choice.index});await el.blur();if(!await el.evaluate((e,selected)=>e.selectedIndex===selected.index&&e.selectedOptions[0]?.textContent===selected.label&&e.value===String(selected.value),choice)){const error=Error('The employer form did not retain the selected answer.');error.code='HOSTED_INPUT_NOT_RETAINED';throw error;}if(choice.aiPrepared)await el.evaluate(e=>e.dataset.applypilotApplicationOnly='true');}
  }
  return true;
 }
 async function radios(page,p,j){
  const fields=page.locator('input[type="radio"]:visible');
  const descriptors=await fields.evaluateAll(xs=>xs.map(e=>({name:e.name,form:[...document.forms].indexOf(e.form),label:e.labels?.[0]?.innerText?.trim()||e.getAttribute('aria-label')||'',checked:e.checked,disabled:e.disabled})));
- for(let i=0;i<descriptors.length;i++){const d=await fieldDescriptor(fields.nth(i));descriptors[i].question=d.label||d.ariaLabel;descriptors[i].description=d.description;}
- const groups=new Map();descriptors.forEach((o,index)=>{const key=o.form+':'+o.name;if(!groups.has(key))groups.set(key,[]);groups.get(key).push({...o,index})});
+ for(let i=0;i<descriptors.length;i++){const d=await fieldDescriptor(fields.nth(i));descriptors[i].question=d.label||d.ariaLabel;descriptors[i].label=d.optionLabel||descriptors[i].label;descriptors[i].description=d.description;descriptors[i].ambiguous=d.ambiguous;descriptors[i].contextRequired=d.contextRequired;}
+ const groups=new Map();descriptors.forEach((o,index)=>{const key=o.form+':'+(o.name||'unnamed-'+index);if(!groups.has(key))groups.set(key,[]);groups.get(key).push({...o,index})});
  const answers=JSON.parse(p.answers_json||'{}');for(const options of groups.values()){
   if(options.some(o=>o.checked))continue;const selected=approvedHostedRadioIndex(options,answers,p);
-  if(selected>=0){if(!authorizeResearchFill(j,p,options[selected].question))return false;await fields.nth(options[selected].index).check();}
+  if(selected>=0){if(!authorizeResearchFill(j,p,options[selected].question))return false;const choice=fields.nth(options[selected].index);await choice.check();await choice.blur();if(!await choice.isChecked()){const error=Error('The employer form did not retain the selected answer.');error.code='HOSTED_INPUT_NOT_RETAINED';throw error;}}
  }
  return true;
 }
@@ -111,7 +132,7 @@ async function checkboxes(page,p,j){
  for(let i=0;i<await fields.count();i++){
   const field=fields.nth(i);if(await field.isChecked().catch(()=>false))continue;
   const descriptor=await fieldDescriptor(field),question=descriptor.label||descriptor.ariaLabel||descriptor.description||descriptor.name||descriptor.id;
-  const approved=approvedHostedCheckbox(question,answers);if(approved===true){if(!authorizeResearchFill(j,p,question))return false;await field.check();}
+  const approved=descriptor.ambiguous||descriptor.contextRequired||protectedHostedQuestion(question+' '+(descriptor.description||''))?null:approvedHostedCheckbox(question,answers);if(approved===true){if(!authorizeResearchFill(j,p,question))return false;await field.check();await field.blur();if(!await field.isChecked()){const error=Error('The employer form did not retain the selected answer.');error.code='HOSTED_INPUT_NOT_RETAINED';throw error;}}
  }
  return true;
 }
@@ -120,6 +141,20 @@ async function customControls(page,p,j){
  const combos=page.locator('[role="combobox"]:not(select):visible');
  for(let i=0;i<await combos.count();i++){
   const control=combos.nth(i),descriptor=await fieldDescriptor(control),question=descriptor.label||descriptor.ariaLabel||descriptor.description||descriptor.name||descriptor.id;
+  if(descriptor.ambiguous||descriptor.contextRequired){if(descriptor.required)unresolved.push(question);continue;}
+  // Native multiple selects have an atomic adapter. Custom multi-selects do
+  // not: never treat their first chip as the whole saved selection, or apply a
+  // JSON/newline list through the single-option path.
+  const canonical=value=>String(value||'').normalize('NFKC').toLowerCase().replace(/[?*✱]/g,'').replace(/\s+/g,' ').trim();
+  const saved=Object.entries(answers).filter(([label])=>canonical(label)===canonical(question));
+  let requested=null;if(saved.length===1){const value=saved[0][1];if(Array.isArray(value))requested=value;else if(typeof value==='string'){try{const parsed=JSON.parse(value);if(Array.isArray(parsed))requested=parsed;}catch{}if(!requested&&value.includes('\n'))requested=value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);}}
+  if(requested&&requested.length>1){
+   const selected=(descriptor.selectedValue||'').split('\n').map(canonical).filter(Boolean);
+   const complete=requested.every(value=>typeof value==='string')&&new Set(requested.map(canonical)).size===requested.length&&selected.length===requested.length&&requested.every(value=>selected.includes(canonical(value)));
+   await control.evaluate((e,incomplete)=>{if(incomplete)e.dataset.applypilotIncompleteSelection='true';else delete e.dataset.applypilotIncompleteSelection;},!complete);
+   if(!complete&&descriptor.required)unresolved.push(question);
+   continue;
+  }
   if(descriptor.populated)continue;
   // A user's unfinished menu search is still their edit, even though it is
   // not a committed option. Resume only a query this worker owns.
@@ -148,10 +183,12 @@ async function customControls(page,p,j){
    // A failed/ignored click must remain an exact required-question blocker.
    let committed=false;for(let retry=0;retry<10;retry++){
     const selected=await fieldDescriptor(control);
-    if(selected.selectedValue===String(choice.label).replace(/\s+/g,' ').trim()&&await control.getAttribute('aria-expanded')!=='true'){committed=true;break;}
-    await page.waitForTimeout(75);
+    const expected=String(choice.label).replace(/\s+/g,' ').trim();
+    const inputCommit=await control.evaluate((e,label)=>e.matches('input')&&e.value===label&&e.getAttribute('aria-expanded')!=='true',expected);
+    if((selected.selectedValue===expected||inputCommit)&&await control.getAttribute('aria-expanded')!=='true'){committed=true;break;}
+    await (typeof page.waitForTimeout==='function'?page:page.page()).waitForTimeout(75);
    }
-   if(committed){await control.evaluate(e=>delete e.dataset.applypilotUncommittedSearch);}
+   if(committed){await control.evaluate((e,label)=>{e.dataset.applypilotCommittedValue=label;delete e.dataset.applypilotUncommittedSearch;},String(choice.label).replace(/\s+/g,' ').trim());}
    else if(descriptor.required)unresolved.push(question);
    if(choice.aiPrepared)await control.evaluate(e=>e.dataset.applypilotApplicationOnly='true');}
   else {await control.press('Escape').catch(()=>{});if(descriptor.required)unresolved.push(question);}
@@ -160,27 +197,95 @@ async function customControls(page,p,j){
  for(let i=0;i<await groups.count();i++){
   const group=groups.nth(i),descriptor=await fieldDescriptor(group),question=descriptor.label||descriptor.ariaLabel||descriptor.description||`Selection ${i+1}`,optionsLocator=group.locator('[role="radio"]:visible');
   if(await optionsLocator.evaluateAll(xs=>xs.some(x=>x.getAttribute('aria-checked')==='true')))continue;
-  const options=await optionsLocator.evaluateAll((xs,q)=>xs.map((x,index)=>({index,question:q,label:(x.innerText||x.textContent||x.getAttribute('aria-label')||'').trim(),checked:x.getAttribute('aria-checked')==='true',disabled:x.getAttribute('aria-disabled')==='true'})),question),selected=approvedHostedRadioIndex(options.map(o=>({...o,description:descriptor.description})),answers,p);
+  const options=await optionsLocator.evaluateAll((xs,q)=>xs.map((x,index)=>({index,question:q,label:(x.innerText||x.textContent||x.getAttribute('aria-label')||'').trim(),checked:x.getAttribute('aria-checked')==='true',disabled:x.getAttribute('aria-disabled')==='true'})),question),selected=approvedHostedRadioIndex(options.map(o=>({...o,description:descriptor.description,ambiguous:descriptor.ambiguous,contextRequired:descriptor.contextRequired})),answers,p);
   if(selected>=0){if(!authorizeResearchFill(j,p,question))return {unresolved,withdrawn:true};await optionsLocator.nth(selected).click();}else if(descriptor.required)unresolved.push(question);
  }
  await fillHostedButtonGroups(page,p,answers);
  const roles=page.locator('[role="checkbox"]:not(input):visible');
  for(let i=0;i<await roles.count();i++){
   const field=roles.nth(i);if(await field.getAttribute('aria-checked')==='true')continue;
-  const descriptor=await fieldDescriptor(field),question=descriptor.label||descriptor.ariaLabel||descriptor.description||`Checkbox ${i+1}`,approved=approvedHostedCheckbox(question,answers);
+  const descriptor=await fieldDescriptor(field),question=descriptor.label||descriptor.ariaLabel||descriptor.description||`Checkbox ${i+1}`,approved=descriptor.ambiguous||descriptor.contextRequired||protectedHostedQuestion(question+' '+(descriptor.description||''))?null:approvedHostedCheckbox(question,answers);
   if(approved===true){if(!authorizeResearchFill(j,p,question))return {unresolved,withdrawn:true};await field.click();}else if(descriptor.required)unresolved.push(question);
  }
  return {unresolved,withdrawn:false};
 }
+// Upload only a currently actionable, uniquely identified resume field. A
+// resumed form or conditional rescan must never replace an applicant's file.
+async function attachHostedResume(page,p){
+ const files=page.locator('input[type="file"]');
+ const fields=await files.evaluateAll(xs=>xs.map((e,index)=>{
+  const wrapper=e.closest('.ashby-application-form-field-entry,.application-question,fieldset,[class*="upload" i],[class*="field" i]')||e.parentElement;
+  const visible=node=>{if(!node)return false;const r=node.getBoundingClientRect(),s=getComputedStyle(node);return r.width>1&&r.height>1&&s.display!=='none'&&s.visibility!=='hidden'&&!node.closest('[hidden],[aria-hidden="true"]');};
+  return {index,active:!e.disabled&&!e.matches(':disabled')&&!e.closest('[hidden],[aria-hidden="true"]')&&(visible(e)||visible(wrapper)),label:[...e.labels||[]].map(l=>l.innerText).join(' '),id:e.id.replace(/[_-]/g,' '),name:e.name.replace(/[_-]/g,' '),context:wrapper?.querySelector('legend,label')?.innerText||''};
+ }).filter(f=>f.active));
+ if(!fields.length)return {attached:false};
+ const selected=pickResumeField(fields);
+ if(selected<0)return {issue:'Cannot identify a unique resume upload. Fields: '+fields.map(f=>f.label||f.id||f.name||'unlabelled upload').join('; ')};
+ const file=files.nth(fields[selected].index);
+ if(await file.evaluate(e=>!!e.files?.length||e.dataset.applypilotUploadAttempted==='true'))return {attached:false};
+ await file.evaluate(e=>e.dataset.applypilotUploadAttempted='true');
+ await file.setInputFiles(p.resume_path);
+ const retained=await file.evaluate(e=>!!e.files?.length&&[...e.files].every(f=>f.size>0)).catch(()=>false);
+ if(!retained)return {issue:'The employer did not retain the resume attachment. Review the upload before continuing.'};
+ return {attached:true};
+}
+
+// Fill newly revealed questions without replaying uploads or overwriting edits.
+// Two quiet seconds after the final change catches debounced validation and
+// delayed conditional sections before a form is described as ready.
+async function prepareHostedFields(page,p,job,wait){
+ const final=page.getByRole?.('button',{name:/^(submit application|submit|send application|complete application)$/i});
+ if(final&&await final.count()===1)await final.scrollIntoViewIfNeeded().catch(()=>{});
+ let unknown=[],check=await review(page),filled=0,previous=check.signature||JSON.stringify([check.required,check.filled,check.missing]);
+ for(let pass=0;pass<4;pass++){
+  if(!sameApplication(page.url(),job.url)||typeof page.parentFrame==='function'&&page.parentFrame()&&!sameApplication(page.page().url(),job.url))return {identityChanged:true};
+  if(check.captcha||check.signIn)return {check,unknown,filled};
+  filled+=await fill(page,p);
+  const upload=await attachHostedResume(page,p);if(upload.issue)return {check,unknown,filled,uploadIssue:upload.issue};
+  if(upload.attached)event(job.id,'upload','Resume selected in the identified resume field; checking employer validation');
+  if(!await selections(page,p,job)||!await radios(page,p,job)||!await checkboxes(page,p,job))return {withdrawn:true};
+  const text=await custom(page,p,job);if(text.withdrawn)return {withdrawn:true};
+  const controls=await customControls(page,p,job);if(controls.withdrawn)return {withdrawn:true};
+  unknown=[...new Set([...text.unresolved,...controls.unresolved])];
+  let stable=0,last=null;
+  for(let settle=0;settle<20;settle++){
+   await wait(250);check=await review(page);
+   if(check.captcha||check.signIn)break;
+   const key=check.signature||JSON.stringify([check.required,check.filled,check.missing]);
+   stable=!check.pending&&key===last?stable+1:0;last=key;
+   if(stable>=8)break;
+  }
+  if(stable<8&&!check.captcha&&!check.signIn)check.pending=true;
+  const key=check.signature||JSON.stringify([check.required,check.filled,check.missing]);
+  if(check.captcha||check.signIn||check.pending||key===previous)break;
+  previous=key;
+ }
+ unknown=unknown.filter(question=>!check.questions||check.questions.includes(question));
+ return {check,unknown,filled};
+}
 async function recordFormProgress(page,job){const {required,filled}=await page.evaluate(hostedFormState);saveFormProgress(db,job.id,{required,filled});}
 async function rememberForm(page,job){
- const fields=await page.locator('input:visible,textarea:visible,select:visible').evaluateAll(xs=>xs.filter(e=>e.dataset.applypilotApplicationOnly!=='true'&&!['password','hidden','file','checkbox','submit','button'].includes(e.type)&&(e.type!=='radio'||e.checked)).map(e=>({question:(e.type==='radio'?e.closest('fieldset')?.querySelector('legend')?.innerText:null)||e.labels?.[0]?.innerText||e.getAttribute('aria-label')||'',answer:e.tagName==='SELECT'?e.selectedOptions?.[0]?.textContent:e.type==='radio'?(e.labels?.[0]?.innerText||''):e.value})).filter(f=>f.question&&f.answer).slice(0,120));
+ const controls=page.locator('input:visible,textarea:visible,select:visible'),fields=[];
+ for(let i=0;i<Math.min(await controls.count(),120);i++){
+  const control=controls.nth(i),descriptor=await fieldDescriptor(control);
+  if(descriptor.ambiguous||descriptor.contextRequired)continue;
+  const eligible=await control.evaluate(e=>e.dataset.applypilotApplicationOnly!=='true'&&!['password','hidden','file','checkbox','submit','button'].includes(e.type)&&(e.type!=='radio'||e.checked));
+  if(!eligible)continue;
+  const value=await control.evaluate(e=>{
+   if(e.dataset.applypilotApplicationOnly==='true'||['password','hidden','file','checkbox','submit','button'].includes(e.type)||e.type==='radio'&&!e.checked)return null;
+   if(e.tagName==='SELECT'){const selected=[...e.selectedOptions].filter(o=>!o.disabled&&!o.closest('optgroup[disabled]')&&o.value&&!/^(?:select|choose)\b/i.test(o.textContent.trim())).map(o=>o.textContent.trim());return selected.length?(e.multiple?JSON.stringify(selected):selected[0]):null;}
+   return e.type==='radio'?null:e.value;
+  });
+  const question=descriptor.label||descriptor.ariaLabel||'',answer=descriptor.type==='radio'?await control.isChecked()?descriptor.optionLabel:null:await control.getAttribute('role')==='combobox'?descriptor.populated?descriptor.selectedValue:null:value;
+  if(question&&answer&&!protectedHostedQuestion(question+' '+(descriptor.description||'')))fields.push({question,answer});
+ }
+
  captureAnswers(db,job,fields.filter(field=>!hasResearchDraftForQuestion(db,job.id,field.question)));
 }
 async function humanPause(job,page,p){
  // Fill only accessible fields. Playwright respects overlays and actionability.
  const filled=await fill(page,p).catch(()=>0);if(filled)event(job.id,'filled',`Filled ${filled} contact fields before human handoff`);
- try{const files=page.locator('input[type="file"]');const fields=await files.evaluateAll(xs=>xs.map(e=>({label:[...e.labels||[]].map(l=>l.innerText).join(' '),id:e.id.replace(/[_-]/g,' '),name:e.name.replace(/[_-]/g,' ')})));const selected=pickResumeField(fields);if(selected>=0){await files.nth(selected).setInputFiles(p.resume_path);event(job.id,'upload','Resume attached before human handoff');}}catch{}
+ try{const upload=await attachHostedResume(page,p);if(upload.attached)event(job.id,'upload','Resume selected before human handoff');}catch{}
  await recordFormProgress(page,job).catch(()=>{});
  set(job,'paused','Human verification required','CAPTCHA');
 }
@@ -196,7 +301,6 @@ const scopes=[];for(const frame of browserPage.frames()){
 if(scopes.length>1)return set(job,'needs_review','Several application forms were found. Open the employer form to choose the correct one.','Ambiguous form');
 if(scopes.length===1){page=scopes[0];if(page!==browserPage.mainFrame())event(job.id,'form','Located embedded employer application');}
 check=await review(page);db.prepare('UPDATE jobs SET required_fields_json=? WHERE id=?').run(JSON.stringify(check.missing),job.id);if(check.captcha)return await humanPause(job,page,p);if(check.signIn)return set(job,'paused','Sign-in required','Sign-in');
-let uploaded=false;
 for(let step=0;step<15;step++){
 if(!inActiveBatch(db,job)||db.prepare('SELECT status FROM jobs WHERE id=?').get(job.id)?.status==='archived')return;
 const focusedNow=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(job.user_id);if(focusedNow&&focusedNow.job_id!==job.id)return set(job,'needs_review','Parked while the selected application completes.','Parked');
@@ -207,12 +311,12 @@ const freshResearch=db.prepare('SELECT google_research_consent FROM applicants W
 if(researchConsentWithdrawn(db,job.id,p.id))return set(job,'needs_review','Google public job-page drafting consent was withdrawn','Research consent withdrawn');
 if(!sameApplication(page.url(),job.url))return set(job,'needs_review','Application redirected to a different or unsupported job','Application identity changed');
 if(await page.locator('input[autocomplete=one-time-code]:visible,input[type=password]:visible').count())return set(job,'paused','Sign-in or MFA requires you','Sign-in');
-let filled=await fill(page,p);event(job.id,'filled',`Filled ${filled} standard fields`);let file=page.locator('input[type="file"]'),count=await file.count();if(count){
-const fields=await file.evaluateAll(xs=>xs.map(e=>({label:[...e.labels||[]].map(l=>l.innerText).join(' '),id:e.id.replace(/[_-]/g,' '),name:e.name.replace(/[_-]/g,' '),context:(e.closest('fieldset')?.querySelector('legend')?.innerText||e.parentElement?.querySelector('label')?.innerText||'')})));
-const selected=pickResumeField(fields);
-if(selected<0)return set(job,'needs_review','Cannot identify a unique resume upload. Fields: '+fields.map(f=>f.label||f.id||f.name||'unlabelled upload').join('; '),'Upload needs review');
-await file.nth(selected).setInputFiles(p.resume_path);uploaded=true;event(job.id,'upload','Resume attached to identified resume field');
-}if(!await selections(page,p,job)||!await radios(page,p,job)||!await checkboxes(page,p,job))return set(job,'needs_review','Google public job-page drafting consent was withdrawn','Research consent withdrawn');const customResult=await custom(page,p,job);if(customResult.withdrawn)return set(job,'needs_review','Google public job-page drafting consent was withdrawn','Research consent withdrawn');const customState=await customControls(page,p,job);if(customState.withdrawn)return set(job,'needs_review','Google public job-page drafting consent was withdrawn','Research consent withdrawn');let unknown=[...new Set([...customResult.unresolved,...customState.unresolved])];check=await review(page);const requiredMissing=[...new Set([...check.missing,...unknown])];await recordFormProgress(page,job);db.prepare('UPDATE jobs SET required_fields_json=? WHERE id=?').run(JSON.stringify(requiredMissing),job.id);if(check.captcha)return await humanPause(job,page,p);if(check.signIn)return set(job,'paused','Sign-in required','Sign-in');if(check.pending&&!focusAllowsSubmit(db,job))return set(job,'needs_review','The employer form is still validating. Review it before continuing.','Form validation');if(requiredMissing.length){const protectedMissing=requiredMissing.filter(protectedHostedQuestion);return set(job,'needs_review',`${protectedMissing.length?'Protected questions need you':'Missing required fields'}: ${requiredMissing.slice(0,8).join('; ')}`,protectedMissing.length?'Sensitive action':'Missing answers');}const radioState=await page.locator('input[type=radio]:visible').evaluateAll(radios=>radios.map(r=>({form:[...document.forms].indexOf(r.form),name:r.name||'',question:r.closest('fieldset')?.querySelector('legend')?.innerText||'',required:r.required||r.getAttribute('aria-required')==='true'||r.closest('fieldset')?.getAttribute('aria-required')==='true',checked:r.checked}))),unanswered=requiredUnansweredRadioGroups(radioState);if(unanswered.length)return set(job,'needs_review',`Unanswered selection questions: ${unanswered.slice(0,8).join('; ')}`,'Missing answers');let submit=page.getByRole('button',{name:/^(submit application|submit|send application|complete application)$/i});const next=page.getByRole('button',{name:/^(next|next step|continue|continue application|save (?:and|&) continue|review|review application|proceed)$/i});
+const preparation=await prepareHostedFields(page,p,job,ms=>browserPage.waitForTimeout(ms));
+if(preparation.identityChanged)return set(job,'needs_review','Application redirected to a different or unsupported job','Application identity changed');
+if(preparation.withdrawn)return set(job,'needs_review','Google public job-page drafting consent was withdrawn','Research consent withdrawn');
+if(preparation.uploadIssue)return set(job,'needs_review',preparation.uploadIssue,'Upload needs review');
+event(job.id,'filled',`Filled ${preparation.filled} standard fields`);
+let unknown=preparation.unknown;check=preparation.check;const requiredMissing=[...new Set([...check.missing,...unknown])];await recordFormProgress(page,job);db.prepare('UPDATE jobs SET required_fields_json=? WHERE id=?').run(JSON.stringify(requiredMissing),job.id);if(check.captcha)return await humanPause(job,page,p);if(check.signIn)return set(job,'paused','Sign-in required','Sign-in');if(check.pending)return set(job,'needs_review','The employer form is still validating. Review it before continuing.','Form validation');if(requiredMissing.length){const protectedMissing=requiredMissing.filter(protectedHostedQuestion);return set(job,'needs_review',`${protectedMissing.length?'Protected questions need you':'Missing required fields'}: ${requiredMissing.slice(0,8).join('; ')}`,protectedMissing.length?'Sensitive action':'Missing answers');}const radioState=await page.locator('input[type=radio]:visible').evaluateAll(radios=>radios.map(r=>({form:[...document.forms].indexOf(r.form),name:r.name||'',question:r.closest('fieldset')?.querySelector('legend')?.innerText||'',required:r.required||r.getAttribute('aria-required')==='true'||r.closest('fieldset')?.getAttribute('aria-required')==='true',checked:r.checked}))),unanswered=requiredUnansweredRadioGroups(radioState);if(unanswered.length)return set(job,'needs_review',`Unanswered selection questions: ${unanswered.slice(0,8).join('; ')}`,'Missing answers');let submit=page.getByRole('button',{name:/^(submit application|submit|send application|complete application)$/i});const next=page.getByRole('button',{name:/^(next|next step|continue|continue application|save (?:and|&) continue|review|review application|proceed)$/i});
 if(await next.count()===1&&await submit.count()===0){
  if(researchConsentWithdrawn(db,job.id,p.id))return set(job,'needs_review','Google public job-page drafting consent was withdrawn','Research consent withdrawn');
  await rememberForm(page,job);const before=await page.locator('body').innerText();await next.click();let advanced=false;for(let settle=0;settle<8;settle++){await browserPage.waitForTimeout(300);if(await page.locator('body').innerText()!==before){advanced=true;break;}}

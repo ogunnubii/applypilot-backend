@@ -3,7 +3,7 @@
 // Use real Playwright keyboard input from an empty control, then commit focus.
 // Never repair a value by deleting/re-appending a character or overwrite a
 // populated field: it may contain an applicant edit or employer autofill.
-const TEXT_TYPES=new Set(['text','email','tel','url','search','number','textarea']);
+const TEXT_TYPES=new Set(['text','email','tel','url','search','number','textarea','date']);
 
 // A searchable combobox must keep focus while its remote suggestions load.
 // The query is preparation, not a selected answer, until the exact option is
@@ -52,11 +52,19 @@ export async function fillHostedText(locator,answer,{kind}={}){
  }
  const type=await locator.evaluate(e=>e.tagName==='TEXTAREA'?'textarea':e.type);
  if(!TEXT_TYPES.has(type))return false;
+ // Native date controls accept ISO dates. Do not interpret locale-dependent
+ // strings, durations, or availability wording as a calendar date.
+ if(type==='date'){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(value)||value.slice(0,4)==='0000')return false;
+  const date=new Date(value+'T00:00:00Z');if(!Number.isFinite(date.getTime())||date.toISOString().slice(0,10)!==value)return false;
+  if(!await locator.evaluate((e,v)=>(!e.min||v>=e.min)&&(!e.max||v<=e.max),value))return false;
+ }
  // click() retains Playwright's visibility/overlay/actionability checks, which
  // focus()/pressSequentially() alone do not provide.
  await locator.click();
  if(!await locator.isEditable()||await locator.inputValue()!=='')return false;
- await locator.pressSequentially(value,{delay:8,timeout:Math.min(60000,Math.max(5000,value.length*30+2000))});
+ if(type==='date')await locator.fill(value);
+ else await locator.pressSequentially(value,{delay:8,timeout:Math.min(60000,Math.max(5000,value.length*30+2000))});
  // Non-ASCII characters may use native insertText without character keyup.
  // End commits keyboard-driven models without changing any applicant data.
  await locator.press('End');

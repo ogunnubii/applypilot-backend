@@ -111,7 +111,7 @@ test('exact saved answers fill required ARIA radio and checkbox controls using a
  for(const control of w.document.querySelectorAll('[role="radio"]'))control.onclick=()=>{for(const other of control.parentElement.querySelectorAll('[role="radio"]'))other.setAttribute('aria-checked',String(other===control));};
  w.document.querySelector('[role="checkbox"]').onclick=function(){this.setAttribute('aria-checked','true');};
  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(m);if(m.action==='packet')return {ok:true,data:{job:{title:'Fixture'},profile:{},answers:{'Preferred work arrangement':'Remote','Receive product updates':'Yes'},resume:{name:'resume.pdf',base64:''}}};if(m.action==='state')return {ok:true,data:{automatic:true,attempted:false}};return {ok:true,data:{}};}}};
- w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);await new Promise(r=>setTimeout(r,250));
+ w.eval(sources['extension/policy.js']);w.eval(sources['extension/content.js']);for(let i=0;i<150&&!messages.some(m=>m.action==='progress'&&m.blocked);i++)await new Promise(r=>setTimeout(r,20));
  assert.equal(w.document.querySelector('[role="radio"][aria-label="Remote"]').getAttribute('aria-checked'),'true');assert.equal(w.document.querySelector('[role="checkbox"]').getAttribute('aria-checked'),'true');
  assert(messages.some(m=>m.action==='capture'&&m.fields.some(f=>f.question==='Preferred work arrangement'&&f.answer==='Remote')&&m.fields.some(f=>f.question==='Receive product updates'&&f.answer==='Yes')));assert(messages.some(m=>m.action==='progress'&&m.message.includes('Ready to submit')));assert(!messages.some(m=>m.action==='attempt'));w.close();
 });
@@ -215,7 +215,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.33",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.34",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -527,7 +527,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.33'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.34'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{
@@ -895,9 +895,9 @@ test('Gemini uses saved resume professional content and respects exact choice an
 });
 test('application AI preparation preserves concurrent edits, owner changes, consent and prior attempts',async()=>{
  const assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(':memory:');
- db.exec("CREATE TABLE applicants(id TEXT,user_id TEXT,consent INTEGER,gemini_facts_consent INTEGER,ai_consent INTEGER,google_research_consent INTEGER);CREATE TABLE jobs(id TEXT,user_id TEXT,applicant_id TEXT,status TEXT,local_owner TEXT,local_attempt_at TEXT,handoff_available INTEGER,url TEXT,answers_json TEXT,updated_at TEXT);CREATE TABLE events(job_id TEXT,type TEXT);INSERT INTO applicants VALUES('p','u',1,1,0,1);INSERT INTO jobs VALUES('j','u','p','local_browser','device',NULL,0,'https://example.test/job','{}','now');");
- const src=sources['form-answer.js'].replace(/^import .+;\s*$/gm,'').replace(/\bexport\s+(?=(?:async\s+)?function|const)/g,'');
- const {prepareFormAnswer}=new Function('canResearchQuestion','researchForJob','markResearchDraftUsed','canDraftProfessional','draftForJob','researchConsentWithdrawn','hostedFieldAnswer','reusableAnswers','employmentContext','currentSearchScope',src+';return {prepareFormAnswer};')(()=>false,()=>{throw Error('wrong provider')},()=>{},()=>true,()=>{},()=>false,()=>null,()=>({}),()=>({}),()=>null);
+ db.exec("CREATE TABLE applicants(id TEXT PRIMARY KEY,user_id TEXT,consent INTEGER,gemini_facts_consent INTEGER,ai_consent INTEGER,google_research_consent INTEGER);CREATE TABLE jobs(id TEXT PRIMARY KEY,user_id TEXT,applicant_id TEXT,status TEXT,local_owner TEXT,local_attempt_at TEXT,handoff_available INTEGER,url TEXT,answers_json TEXT,updated_at TEXT);CREATE TABLE events(job_id TEXT,type TEXT);INSERT INTO applicants VALUES('p','u',1,1,0,1);INSERT INTO jobs VALUES('j','u','p','local_browser','device',NULL,0,'https://example.test/job','{}','now');");
+ const {prepareFormAnswer}=await import('../form-answer.js');
+ (await import('../answer-library.js')).installLibrary(db);(await import('../answer-drafts.js')).installDrafts(db);(await import('../google-research.js')).installResearch(db);
  const q='Describe your technical experience',good={answer:'I build Kubernetes platforms.',provider:'gemini',sources:['Skills']};
  await assert.rejects(prepareFormAnswer(db,'other','j',q),/cannot be prepared/);
  await assert.rejects(prepareFormAnswer(db,'u','j',q,{check:()=> 'Employer hold'}),/Employer hold/);

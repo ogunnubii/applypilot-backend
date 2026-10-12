@@ -155,7 +155,7 @@ test('both hosted contact and custom-answer filling use the keyboard commit help
 
 test('combobox roles cannot hide native type and pattern validation errors',async()=>{
  const f=fixture('<label>Email choice<input role="combobox" type="email" value="invalid"></label><label>Postal choice<input role="combobox" pattern="[0-9]{5}" value="ABC"></label><label>Valid choice<input role="combobox" required value="Toronto"></label>');
- try{assert.deepEqual([...(await f.review()).missing],['Email choice','Postal choice']);}
+ try{assert.deepEqual([...(await f.review()).missing],['Email choice','Postal choice','Valid choice']);}
  finally{f.dom.window.close();}
 });
 

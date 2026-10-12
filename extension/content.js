@@ -9,37 +9,70 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const visible=e=>!!e?.isConnected&&!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).display!=='none';
 const compact=value=>String(value||'').replace(/\s+/g,' ').trim();
 const protectedQuestion=value=>P.sensitive(value)||/\b(?:date of birth|birth date|dob|age|race|ethnic(?:ity| origin)?|gender|sex(?:ual)?|sexual orientation|disabilit(?:y|ies)|veteran|religion|marital status|nationality|medical|health condition)\b/i.test(String(value));
-const isRequired=e=>!!(e?.required||e?.getAttribute?.('aria-required')==='true'||e?.closest?.('[role="radiogroup"][aria-required="true"],[role="group"][aria-required="true"]')||controlRole(e)==='combobox'&&(e.querySelector?.('[required],[aria-required="true"]')||e.closest?.('.select__container')?.querySelector('input[required]')));
+function isRequired(e){
+ const title=questionTitle(e),ashby=title?.classList.contains('ashby-application-form-question-title')&&[...title.classList].some(c=>/^_required_/.test(c));
+ return !!(e?.required||e?.getAttribute?.('aria-required')==='true'||e?.closest?.('[role="radiogroup"][aria-required="true"],[role="group"][aria-required="true"],fieldset[aria-required="true"]')||ashby||controlRole(e)==='combobox'&&(e.querySelector?.('[required],[aria-required="true"]')||e.closest?.('.select__container')?.querySelector('input[required]')));
+}
 const isChecked=e=>e?.checked===true||e?.getAttribute?.('aria-checked')==='true'||e?.getAttribute?.('aria-selected')==='true';
-const controlRole=e=>e?.getAttribute?.('role')||'';
+const controlRole=e=>e?.tagName==='SELECT'?'':e?.getAttribute?.('role')||'';
 const labelText=e=>{if(!e)return '';const c=e.cloneNode(true);c.querySelectorAll('input,select,textarea,button,script,style,[aria-hidden="true"],[role="option"],[role="radio"],[role="checkbox"],[role="combobox"],[role="button"]').forEach(n=>n.remove());return compact(c.textContent);};
 function referencedText(e,attribute){return compact((e.getAttribute(attribute)||'').split(/\s+/).filter(Boolean).map(id=>{const node=document.getElementById(id);return attribute==='aria-labelledby'?labelText(node):node?.textContent||'';}).join(' '));}
-function questionContainer(e){return e.closest?.('[data-automation-id*="formField"],[data-automation-id*="question"],.application-question,[class*="application-question"],[class*="form-field"],[class*="formField"],[role="radiogroup"],[role="group"],fieldset');}
+function questionContainer(e){return e.closest?.('.ashby-application-form-texting-consent-description,.ashby-application-form-field-entry,.ashby-application-form-input-radio-group,[data-field-entry-id],[data-automation-id*="formField"],[data-automation-id*="question"],.application-question,[class*="application-question"],[class*="form-field"],[class*="formField"],.field-wrapper,.field,[role="radiogroup"],[role="group"],fieldset');}
+function questionTitle(e){const container=questionContainer(e);return container?.querySelector?.(':scope > .ashby-application-form-question-title,:scope > legend,:scope > .application-label,:scope > label,:scope > [data-automation-id*="label"],:scope > [class*="question-label"],:scope > [class*="field-label"]')||container?.querySelector?.('.application-label,[data-automation-id*="label"],[class*="question-label"],[class*="field-label"]');}
 function normalizeDescriptor(value){return norm(value).replace(/\b(?:optional|required)\b/g,'').replace(/\s+/g,' ').trim();}
 function descriptors(e,metadata=true){
  const values=[],add=value=>{value=compact(value);if(value&&normalizeDescriptor(value)!=='required field'&&!values.some(v=>normalizeDescriptor(v)===normalizeDescriptor(value)))values.push(value);};
- const container=questionContainer(e),containerLabel=container?.querySelector?.('.application-label,[data-automation-id*="label"],[class*="question-label"],[class*="field-label"]')?.textContent;
+ const container=questionContainer(e),containerLabel=labelText(questionTitle(e));
  const group=e.closest?.('fieldset,[role="radiogroup"],[role="group"]');
  if(e.type==='radio'||controlRole(e)==='radio'){add(group?.querySelector?.(':scope > legend')?.textContent);add(group&&referencedText(group,'aria-labelledby'));add(group?.getAttribute?.('aria-label'));add(containerLabel);}
- add(labelText(e.labels?.[0]||e.closest?.('label')));add(referencedText(e,'aria-labelledby'));add(e.getAttribute?.('aria-label'));
+ add(referencedText(e,'aria-labelledby'));add(e.labels?.length?[...e.labels].map(labelText).join(' '):labelText(e.closest?.('label')));add(e.getAttribute?.('aria-label'));
  add(containerLabel);
  if(!values.length)add(labelText(container));if(!values.length)add(referencedText(e,'aria-describedby'));if(metadata){add(e.placeholder);add(e.name);add(e.id);}
  return values.length?values:['Required field'];
 }
 const label=e=>descriptors(e)[0];
+const protectedField=e=>descriptors(e).some(protectedQuestion)||protectedQuestion(referencedText(e,'aria-describedby'));
+function ambiguousHelp(e,fields=controls()){
+ const question=normalizeDescriptor(label(e)),help=referencedText(e,'aria-describedby');
+ if(help&&/^(?:additional (?:details|information)|details|please explain|please describe|answer)$/.test(question))return true;
+ const descriptions=new Set(fields.filter(other=>normalizeDescriptor(label(other))===question).map(other=>referencedText(other,'aria-describedby')).filter(Boolean));
+ return descriptions.size>1;
+}
 async function send(action,data={}){const r=await chrome.runtime.sendMessage({action,...data});if(!r?.ok)throw Error(r?.error||'ApplyPilot connection unavailable');return r.data;}
 async function recordAssistance(){if(!started||assistanceSent)return;try{await send('assistance');assistanceSent=true;}catch{/* The boundary remains unknown if tracking cannot sync. */}}
 function bodyText(){return [...document.body.childNodes].filter(e=>e.nodeType===3||e.nodeType===1&&e!==bar&&!e.matches('script,style,noscript,template')&&visible(e)).map(e=>e.nodeType===3?e.textContent:e.innerText||'').join('\n');}
 function siteIssue(){return P.employerPageIssue({title:document.title,text:bodyText(),hasForm:controls().length>0||!!document.querySelector('form')});}
 function receipt(){return P.receipt(bodyText());}
 function setValue(e,value){
- if(e.maxLength>0&&String(value).length>e.maxLength){fieldErrors.push(label(e)+': saved answer exceeds the employer’s character limit.');return false;}
- if(e.matches?.('[contenteditable="true"]')){e.textContent=String(value);e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:String(value)}));e.dispatchEvent(new Event('change',{bubbles:true}));return;}
+ if(e.maxLength>=0&&String(value).length>e.maxLength){fieldErrors.push(label(e)+': saved answer exceeds the employer’s character limit.');return false;}
+ if(e.matches?.('[contenteditable="true"]')){e.textContent=String(value);e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:String(value)}));e.dispatchEvent(new Event('change',{bubbles:true}));return true;}
  const proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;
- Object.getOwnPropertyDescriptor(proto,'value').set.call(e,value);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));
+ Object.getOwnPropertyDescriptor(proto,'value').set.call(e,value);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return true;
+}
+const nativeExpected=new WeakMap(),multiExpected=new WeakMap(),fieldEdits=new WeakMap(),programmaticFields=new WeakSet();
+function fieldValue(e){return e.matches('[contenteditable="true"]')?e.textContent:e.value;}
+function equivalentValue(e,actual,expected){
+ if(String(actual)===String(expected))return true;
+ // Formatting may change phone punctuation, but never its digits, country
+ // code, or extension. No locale-dependent date parsing or numeric rounding.
+ return P.fieldKind(label(e))==='phone'&&/^[+\d\s().-]+$/.test(String(actual))&&/^[+\d\s().-]+$/.test(String(expected))&&String(actual).replace(/\D/g,'')===String(expected).replace(/\D/g,'');
+}
+async function fillNative(e,value){
+ if(e.readOnly)return false;
+ const edit=fieldEdits.get(e);let expected=String(value);
+ if(P.fieldKind(label(e))==='phone'&&e.pattern&&/^[+\d\s().-]+$/.test(expected)){
+  const probe=e.cloneNode();probe.value=expected;
+  if(!probe.validity.valid){for(const unformatted of [expected.replace(/[\s().-]/g,''),expected.replace(/\D/g,'')]){probe.value=unformatted;if(probe.validity.valid){expected=unformatted;break;}}}
+ }
+ nativeExpected.set(e,expected);programmaticFields.add(e);e.focus();if(!setValue(e,expected)){e.blur();programmaticFields.delete(e);return false;}e.blur();
+ await pause(60);programmaticFields.delete(e);if(fieldEdits.get(e)!==edit)return false;
+ if(!e.isConnected||!equivalentValue(e,fieldValue(e),expected)||e.getAttribute('aria-invalid')==='true'||e.willValidate&&e.validity?.valid===false){
+  fieldErrors.push(label(e)+': employer did not retain a valid saved answer.');return false;
+ }
+ return true;
 }
 function answer(e){
- const allQuestions=descriptors(e);if(allQuestions.some(protectedQuestion))return null;
+ const allQuestions=descriptors(e);if(protectedField(e)||ambiguousHelp(e))return null;
  const visibleQuestions=descriptors(e,false).filter(q=>q!=='Required field');
  // Prefer the employer's actual question. Generic ids such as "name" must
  // not turn First name into a conflicting Full name answer.
@@ -56,7 +89,7 @@ function answer(e){
  return kind?P.knownAnswer(kind,packet.profile,packet.answers):null;
 }
 
-const completedCustom=new WeakMap();
+const completedCustom=new WeakMap(),uncommittedCustom=new WeakMap();
 let attemptedCustom=new WeakMap(),fieldErrors=[];
 function customValue(e){
  const reactSelect=e.closest('[class*="select__control"]'),container=reactSelect||e.closest('[role="combobox"]')||e.parentElement?.parentElement;
@@ -66,9 +99,18 @@ function customValue(e){
  const text=compact(selected?.textContent||e.getAttribute('aria-valuetext')||((!reactSelect&&e.getAttribute('aria-expanded')!=='true'&&e.matches('input'))?e.value:'')||(!e.matches('input')?labelText(e):''));
  return /^(select|choose)(\b|\.\.\.)/i.test(text)?'':text;
 }
+function isCustomMulti(e){
+ const ids=((e.getAttribute('aria-controls')||'')+' '+(e.getAttribute('aria-owns')||'')).split(/\s+/).filter(Boolean);
+ return e.getAttribute('aria-multiselectable')==='true'||ids.some(id=>document.getElementById(id)?.getAttribute('aria-multiselectable')==='true')||!!e.closest('[class*="select__control"]')?.querySelector('[class*="multi-value"],[class*="multiValue"],[class*="value-container--is-multi"]');
+}
 function customComplete(e){
- if(controlRole(e)!=='combobox')return false;const selected=customValue(e),saved=completedCustom.get(e);
- if(saved!==undefined)return !!selected&&P.optionMatches(label(e),selected,saved,packet.profile);return !!selected;
+ if(controlRole(e)!=='combobox'||isCustomMulti(e)||e.getAttribute('aria-invalid')==='true'||uncommittedCustom.has(e))return false;const selected=customValue(e),saved=completedCustom.get(e);
+ if(saved!==undefined)return !!selected&&P.optionMatches(label(e),selected,saved,packet.profile);
+ // An editable input can hold a user's unfinished location search even after
+ // its menu closes. Only an actual selected label/value or our verified click
+ // establishes commitment; preserve unexplained text and request review.
+ if(e.matches('input')&&!e.readOnly&&!e.getAttribute('aria-valuetext')&&!e.closest('[class*="select__control"]')?.querySelector('[class*="single-value"],[class*="singleValue"]'))return false;
+ return !!selected;
 }
 function optionNodes(e,before=null){
  const ids=((e.getAttribute('aria-controls')||'')+' '+(e.getAttribute('aria-owns')||'')).split(/\s+/).filter(Boolean);
@@ -77,7 +119,7 @@ function optionNodes(e,before=null){
  return [...new Set(candidates)].filter(o=>!bar?.contains(o)&&visible(o)&&o.getAttribute('aria-disabled')!=='true');
 }
 function openDropdown(e){
- const before=new Set([...document.querySelectorAll('[role="option"]')].filter(visible));e.focus();
+ const before=new Set([...document.querySelectorAll('[role="option"]')].filter(visible));programmaticFields.add(e);e.focus();
  if(e.getAttribute('aria-expanded')!=='true'){
   // HTMLElement.click() omits the mousedown that opens React Select menus.
   if(e.closest('[class*="select__control"]')){e.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0}));e.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,button:0}));}
@@ -85,7 +127,7 @@ function openDropdown(e){
  }
  return before;
 }
-function closeDropdown(e){e.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true}));}
+function closeDropdown(e){e.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true}));if(document.activeElement===e)e.blur();programmaticFields.delete(e);}
 function validOptionLabel(value){const text=compact(value);return text&&!/^(?:select|choose)(?:\b|\.{3}|…)/i.test(text);}
 async function dropdownChoices(e){
  if(e.tagName==='SELECT')return [...e.options].filter(o=>!o.disabled&&o.value&&validOptionLabel(o.textContent)).map(o=>compact(o.textContent));
@@ -94,20 +136,29 @@ async function dropdownChoices(e){
  closeDropdown(e);return options;
 }
 async function fillCombobox(e,a){
- if(customComplete(e))return false;if(e.matches('input')&&e.value?.trim()&&e.getAttribute('aria-expanded')!=='true')return false;
- if(attemptedCustom.get(e)===String(a))return false;attemptedCustom.set(e,String(a));const before=openDropdown(e),initial=e.matches('input')?e.value:'';let typed=false;
- for(let retry=0;retry<12;retry++){
+ if(customComplete(e))return false;if(e.matches('input')&&e.value?.trim()&&e.getAttribute('aria-expanded')!=='true'&&!uncommittedCustom.has(e))return false;
+ if(attemptedCustom.get(e)===String(a))return false;attemptedCustom.set(e,String(a));const edit=fieldEdits.get(e),before=openDropdown(e),initial=e.matches('input')?e.value:'';let typed=false;
+ for(let retry=0;retry<24;retry++){
+  if(isCustomMulti(e)||fieldEdits.get(e)!==edit){closeDropdown(e);return false;}
   const matches=optionNodes(e,before).filter(o=>P.optionMatches(label(e),o.textContent||o.getAttribute('aria-label'),a,packet.profile));if(matches.length>1)break;
-  if(matches.length===1){matches[0].click();for(let verify=0;verify<10;verify++){if(P.optionMatches(label(e),customValue(e),a,packet.profile)){completedCustom.set(e,String(a));return true;}await pause(50);}break;}
-  if(retry===1&&e.matches('input')&&!e.readOnly){setValue(e,a);typed=true;}await pause(75);
+  if(matches.length===1){matches[0].click();for(let verify=0;verify<10;verify++){if(fieldEdits.get(e)!==edit){closeDropdown(e);return false;}if(P.optionMatches(label(e),customValue(e),a,packet.profile)&&e.getAttribute('aria-expanded')!=='true'&&e.getAttribute('aria-invalid')!=='true'){uncommittedCustom.delete(e);completedCustom.set(e,String(a));if(document.activeElement===e)e.blur();programmaticFields.delete(e);return true;}await pause(50);}break;}
+  if(retry===1&&e.matches('input')&&!e.readOnly){uncommittedCustom.set(e,String(a));setValue(e,a);typed=true;}await pause(75);
  }
- if(typed&&e.value===String(a))setValue(e,initial);closeDropdown(e);
+ if(typed&&e.value===String(a)){setValue(e,initial);if(!initial)uncommittedCustom.delete(e);}closeDropdown(e);
  return false;
+}
+async function fillMultiSelect(e){
+ if([...e.selectedOptions].some(o=>o.value&&!o.disabled&&validOptionLabel(o.textContent))||e.readOnly||protectedField(e)||ambiguousHelp(e))return false;
+ const options=[...e.options].map((option,index)=>({label:compact(option.textContent),value:option.value,index,disabled:option.disabled||option.closest('optgroup')?.disabled||!option.value||!validOptionLabel(option.textContent)}));
+ const selected=P.savedOptionSelections?.(label(e),options,packet.answers);if(!selected?.length)return false;const edit=fieldEdits.get(e);
+ multiExpected.set(e,selected.map(option=>({value:option.value,label:option.label})));programmaticFields.add(e);e.focus();for(const option of e.options)option.selected=selected.some(saved=>e.options[saved.index]===option);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));e.blur();await pause(60);programmaticFields.delete(e);if(fieldEdits.get(e)!==edit)return false;
+ if(selected.every(option=>e.options[option.index]?.selected)&&e.selectedOptions.length===selected.length&&e.validity.valid)return true;
+ fieldErrors.push(label(e)+': employer did not retain every saved selection.');return false;
 }
 async function fillRoleCheckbox(e,a){
  if(isChecked(e)||protectedQuestion(label(e))||!/^(yes|true)$/i.test(String(a)))return false;e.click();for(let i=0;i<8;i++){if(isChecked(e))return true;await pause(40);}return false;
 }
-function roleRadioGroup(e){const root=e.closest('[role="radiogroup"],[role="group"],fieldset')||e.parentElement;return [...(root?.querySelectorAll('[role="radio"]')||[e])].filter(visible);}
+function roleRadioGroup(e){const root=e.closest('[role="radiogroup"],[role="group"],fieldset')||e.parentElement;return [...(root?.querySelectorAll('[role="radio"]')||[e])].filter(o=>visible(o)&&!o.disabled&&o.getAttribute('aria-disabled')!=='true');}
 const optionText=e=>compact(e.getAttribute('aria-label')||referencedText(e,'aria-labelledby')||labelText(e.closest('label'))||e.textContent||e.value);
 async function fillRoleRadios(fields){
  let count=0;const seen=new Set();
@@ -136,46 +187,49 @@ function applicationRoot(){
  if(site==='iitjobs')return [...document.querySelectorAll('[role="dialog"],.MuiDialog-paper,.MuiDrawer-paper')].find(e=>visible(e)&&/quick apply|application/i.test(e.querySelector('h1,h2,h3,h4,h5,h6')?.textContent||''))||null;
  return document;
 }
-function controls(){return [...(applicationRoot()?.querySelectorAll('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]')||[])].filter(e=>!bar?.contains(e)&&!e.closest('[aria-hidden="true"]')&&visible(e)&&!e.disabled&&(!e.readOnly||controlRole(e)==='combobox'));}
+function controlVisible(e){return visible(e)||e.type==='file'&&visible(questionContainer(e)||e.closest('label')||[...e.labels||[]].find(visible));}
+function controls(){return [...(applicationRoot()?.querySelectorAll('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]')||[])].filter(e=>!bar?.contains(e)&&!(e.type==='file'?e.parentElement:e).closest('[aria-hidden="true"]')&&controlVisible(e)&&!e.disabled&&!e.matches(':disabled')&&e.getAttribute('aria-disabled')!=='true');}
 function formAnswers(){
  const rows=[];for(const e of controls()){
-  const q=label(e),role=controlRole(e);if(protectedQuestion(q)||/password|one.?time|verification code|captcha/i.test(q)||['password','file','hidden','submit','button'].includes(e.type))continue;
-  let value='';if(role==='combobox'){if(!customComplete(e))continue;value=customValue(e);}else if(role==='radio'||e.type==='radio'){if(!isChecked(e))continue;value=optionText(e);}else if(role==='checkbox'||e.type==='checkbox'){if(!isChecked(e))continue;value='Yes';}else if(e.tagName==='SELECT'){if(!e.value||e.selectedOptions[0]?.disabled)continue;value=e.selectedOptions[0]?.textContent;}else value=e.matches?.('[contenteditable="true"]')?e.textContent:e.value;
+  const q=label(e),role=controlRole(e);if(protectedField(e)||ambiguousHelp(e)||/password|one.?time|verification code|captcha/i.test(q)||['password','file','hidden','submit','button'].includes(e.type))continue;
+  let value='';if(role==='combobox'){if(!customComplete(e))continue;value=customValue(e);}else if(role==='radio'||e.type==='radio'){if(!isChecked(e))continue;value=optionText(e);}else if(role==='checkbox'||e.type==='checkbox'){if(!isChecked(e))continue;value='Yes';}else if(e.tagName==='SELECT'){if(!e.value||e.selectedOptions[0]?.disabled)continue;value=e.multiple?JSON.stringify([...e.selectedOptions].map(option=>compact(option.textContent))):e.selectedOptions[0]?.textContent;}else value=e.matches?.('[contenteditable="true"]')?e.textContent:e.value;
   if(typeof value==='string'&&value.trim())rows.push({question:q,answer:value.trim().slice(0,4000)});
  }return rows.slice(0,120);
 }
 function controlComplete(e,fields){
- const role=controlRole(e);if(role==='combobox')return customComplete(e);if(role==='checkbox'||e.type==='checkbox')return isChecked(e);if(role==='radio')return roleRadioGroup(e).some(isChecked);if(e.type==='radio')return fields.some(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form&&o.checked);
- if(e.type==='file')return !!e.files?.length;if(e.tagName==='SELECT')return !!e.value&&!e.selectedOptions[0]?.disabled&&validOptionLabel(e.selectedOptions[0]?.textContent)&&!(e.validity&&!e.validity.valid);if(e.matches?.('[contenteditable="true"]'))return !!compact(e.textContent);return !!e.value&&!(e.validity&&!e.validity.valid);
+ const role=controlRole(e);if(ambiguousHelp(e,fields))return false;if(multiExpected.has(e)){const expected=multiExpected.get(e),actual=[...e.selectedOptions];if(actual.length!==expected.length||!expected.every(saved=>actual.some(option=>option.value===saved.value&&compact(option.textContent)===saved.label)))return false;}if(nativeExpected.has(e)&&!equivalentValue(e,fieldValue(e),nativeExpected.get(e)))return false;if(e.getAttribute('aria-invalid')==='true'||e.willValidate&&e.validity?.valid===false)return false;if(role==='combobox')return customComplete(e);if(role==='checkbox'||e.type==='checkbox')return isChecked(e);if(role==='radio')return roleRadioGroup(e).some(isChecked);if(e.type==='radio')return e.name?fields.some(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form&&o.checked):e.checked;
+ if(e.type==='file')return !!e.files?.length;if(e.tagName==='SELECT')return e.selectedOptions.length>0&&[...e.selectedOptions].every(option=>option.value&&!option.disabled&&!option.closest('optgroup')?.disabled&&validOptionLabel(option.textContent))&&!(e.validity&&!e.validity.valid);if(e.matches?.('[contenteditable="true"]'))return !!compact(e.textContent);return !!compact(e.value)&&!(e.validity&&!e.validity.valid);
 }
 function formProgress(){
- const fields=controls(),groups=new Map();for(const e of fields.filter(isRequired)){const key=(e.type==='radio'?e.name:label(e))+'|'+(e.type==='radio'?'radio':controlRole(e)||e.type||e.tagName);groups.set(key,(groups.get(key)||false)||controlComplete(e,fields));}
+ const fields=controls(),groups=new Map(),forms=[...document.forms];for(const e of fields.filter(isRequired)){const key=e.type==='radio'&&e.name?'radio:'+forms.indexOf(e.form)+':'+e.name:controlRole(e)==='radio'?roleRadioGroup(e)[0]:e;groups.set(key,(groups.get(key)||false)||controlComplete(e,fields));}
  return {required:groups.size,filled:[...groups.values()].filter(Boolean).length};
 }
 function review(){
  const fields=controls(),required=fields.filter(isRequired),captcha=[...document.querySelectorAll('iframe[src*="captcha"],iframe[title*="challenge" i],.g-recaptcha,.h-captcha,[data-sitekey]')].some(visible);
  const login=fields.some(e=>e.type==='password'||e.autocomplete==='one-time-code'||/\b(verification code|authentication code|one.time code)\b/i.test(label(e)));
- const sensitive=required.some(e=>descriptors(e).some(protectedQuestion)),custom=required.some(e=>['combobox','checkbox','radio'].includes(controlRole(e))&&!controlComplete(e,fields));
- const missing=[...new Set(required.filter(e=>!controlComplete(e,fields)).map(label))];
+ const sensitive=required.some(protectedField),custom=required.some(e=>['combobox','checkbox','radio'].includes(controlRole(e))&&!controlComplete(e,fields));
+ const missing=[...new Set(fields.filter(e=>(isRequired(e)||ambiguousHelp(e,fields)||nativeExpected.has(e)||multiExpected.has(e)||e.getAttribute('aria-invalid')==='true'||e.willValidate&&e.validity?.valid===false)&&!controlComplete(e,fields)).map(label))];
+ const ambiguous=fields.filter(e=>ambiguousHelp(e,fields));
  const errors=[...document.querySelectorAll('[aria-invalid="true"],[role="alert"]')].filter(visible).filter(e=>e.getAttribute('aria-invalid')==='true'||/required|invalid|error/i.test(e.innerText||''));
  const embedded=[...document.querySelectorAll('iframe')].filter(visible).some(e=>!/captcha|challenge/i.test(e.src)&&e.getBoundingClientRect().height>150);
- return {fields:missing,reason:fieldErrors.length?'Could not fill: '+fieldErrors.join('; '):captcha?'CAPTCHA requires you':login?'Sign-in or MFA requires you':sensitive?'Sensitive, legal, or demographic response requires you':custom?'Required custom form control requires review':embedded?'Embedded form requires review':missing.length?'Needs your input: '+missing.join('; '):errors.length?'Employer validation needs review':''};
+ const pending=[...(applicationRoot()?.querySelectorAll('form[aria-busy="true"],[role="form"][aria-busy="true"],input[aria-busy="true"],.application-question [aria-busy="true"],.field-wrapper [aria-busy="true"],.ashby-application-form-field-entry [aria-busy="true"],form [role="progressbar"],form progress')||[])].some(e=>visible(e)&&(e.tagName!=='PROGRESS'||!e.hasAttribute('value')||e.value<e.max));
+ return {fields:missing,reason:ambiguous.length?'Question needs clarification: '+[...new Set(ambiguous.map(e=>label(e)+' — '+referencedText(e,'aria-describedby')))].join('; '):fieldErrors.length?'Could not fill: '+fieldErrors.join('; '):captcha?'CAPTCHA requires you':login?'Sign-in or MFA requires you':sensitive?'Sensitive, legal, or demographic response requires you':custom?'Required custom form control requires review':embedded?'Embedded form requires review':pending?'Employer form is still processing an answer or upload':missing.length?'Needs your input: '+missing.join('; '):errors.length?'Employer validation needs review':''};
 }
 async function fillPass(){
  if(!packet)packet=await send('packet');if(!bar)mount();let count=0;fieldErrors=[];if(siteIssue())return 0;const fields=controls();if(fields.length||document.querySelector('form'))await send('form-opened');
  for(const e of fields){
   try{
-   const role=controlRole(e),a=answer(e);if(role==='combobox'){if(a!==null&&await fillCombobox(e,a))count++;continue;}if(role==='checkbox'){if(a!==null&&await fillRoleCheckbox(e,a))count++;continue;}if(role==='radio')continue;
-   if(e.tagName==='SELECT'&&e.multiple)continue;if(!e.matches('input,select,textarea,[contenteditable="true"]')||['hidden','password','file','checkbox','submit','button','radio','reset','image'].includes(e.type)||(compact(e.matches('[contenteditable="true"]')?e.textContent:e.value)&&!(e.tagName==='SELECT'&&(e.selectedOptions[0]?.disabled||/^(select|choose)(\b|\.\.\.)/i.test(compact(e.selectedOptions[0]?.textContent))))))continue;
-   if(a===null||a===undefined||a==='')continue;if(e.maxLength>0&&String(a).length>e.maxLength){fieldErrors.push(label(e)+': saved answer exceeds the employer’s character limit.');continue;}if(e.tagName==='SELECT'){const opts=[...e.options].filter(o=>!o.disabled&&P.optionMatches(label(e),o.textContent,a,packet.profile));if(opts.length!==1)continue;setValue(e,opts[0].value);}else setValue(e,a);count++;
+   const role=controlRole(e),a=answer(e);if(role==='combobox'){if(isCustomMulti(e))continue;if(a!==null&&await fillCombobox(e,a))count++;continue;}if(role==='checkbox'){if(a!==null&&await fillRoleCheckbox(e,a))count++;continue;}if(role==='radio')continue;
+   if(e.tagName==='SELECT'&&e.multiple){if(await fillMultiSelect(e))count++;continue;}if(!e.matches('input,select,textarea,[contenteditable="true"]')||['hidden','password','file','checkbox','submit','button','radio','reset','image'].includes(e.type)||(compact(e.matches('[contenteditable="true"]')?e.textContent:e.value)&&!(e.tagName==='SELECT'&&(e.selectedOptions[0]?.disabled||/^(select|choose)(\b|\.\.\.)/i.test(compact(e.selectedOptions[0]?.textContent))))))continue;
+   if(a===null||a===undefined||a==='')continue;if(e.maxLength>=0&&String(a).length>e.maxLength){fieldErrors.push(label(e)+': saved answer exceeds the employer’s character limit.');continue;}if(e.tagName==='SELECT'){const opts=[...e.options].filter(o=>!o.disabled&&!o.closest('optgroup')?.disabled&&o.value&&validOptionLabel(o.textContent)&&P.optionMatches(label(e),o.textContent,a,packet.profile));if(opts.length!==1)continue;if(await fillNative(e,opts[0].value))count++;}else if(await fillNative(e,a))count++;
   }catch{if(isRequired(e))fieldErrors.push(label(e)+' (field could not accept the saved value)');}
  }
  for(const e of fields.filter(e=>e.type==='checkbox'&&!e.checked)){const a=answer(e);if(a!==null&&/^(yes|true)$/i.test(String(a))&&!protectedQuestion(label(e))){e.click();if(e.checked)count++;}}
  const forms=[...document.forms],groups=new Map();for(const e of fields.filter(e=>e.type==='radio')){const key=forms.indexOf(e.form)+':'+e.name;if(!e.name)continue;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(e);}
  for(const group of groups.values()){if(group.some(e=>e.checked))continue;const a=answer(group[0]);if(a===null)continue;const match=group.filter(e=>P.optionMatches(label(group[0]),optionText(e),a,packet.profile));if(match.length===1){match[0].click();if(match[0].checked)count++;}}
  count+=await fillRoleRadios(fields);
- const files=[...(applicationRoot()?.querySelectorAll('input[type="file"]')||[])].filter(e=>!e.disabled&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
- if(files.length===1&&!files[0].files.length&&packet.resume?.base64){const r=packet.resume,bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0)),dt=new DataTransfer();dt.items.add(new File([bytes],r.name,{type:r.name.endsWith('.pdf')?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));files[0].files=dt.files;files[0].dispatchEvent(new Event('input',{bubbles:true}));files[0].dispatchEvent(new Event('change',{bubbles:true}));count++;}
+ const files=[...(applicationRoot()?.querySelectorAll('input[type="file"]')||[])].filter(e=>controlVisible(e)&&!e.disabled&&!e.matches(':disabled')&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
+ if(files.length===1&&!files[0].files.length&&packet.resume?.base64){const r=packet.resume,mime=/\.pdf$/i.test(r.name)?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document';if(files[0].accept&&!files[0].accept.split(',').some(type=>{type=type.trim().toLowerCase();return type.startsWith('.')?r.name.toLowerCase().endsWith(type):type===mime||type==='application/*'||type==='*/*';})){fieldErrors.push(label(files[0])+': saved resume format is not accepted.');return count;}const bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0)),dt=new DataTransfer();dt.items.add(new File([bytes],r.name,{type:mime}));files[0].files=dt.files;files[0].dispatchEvent(new Event('input',{bubbles:true}));files[0].dispatchEvent(new Event('change',{bubbles:true}));await pause(60);if(files[0].files?.length)count++;else fieldErrors.push(label(files[0])+': employer did not retain the resume attachment.');}
  if(count)note.textContent=count+' additional fields filled.';if(count)await send('progress',{fields:[],message:'Filled '+count+' fields on the employer form.',blocked:false,filled:count});return count;
 }
 // AI results are application-only and are never allowed to overwrite a user's edit.
@@ -186,15 +240,15 @@ async function prepareMissingAnswers(){
   const fields=controls(),q=label(e),key=norm(q);
   if(prepared>=12)break;
   const dropdown=e.tagName==='SELECT'||controlRole(e)==='combobox';
-  if(attempted||!visible(e)||controlComplete(e,fields)||descriptors(e).some(protectedQuestion)||!dropdown&&answer(e)!==null||e.multiple||e.getAttribute('aria-multiselectable')==='true'||q==='Required field'||q.length<3||q.length>4000||['file','password','checkbox','hidden','submit'].includes(e.type)||e.type==='button'&&!dropdown||controlRole(e)==='checkbox')continue;
+  if(attempted||!visible(e)||e.maxLength===0||controlComplete(e,fields)||protectedField(e)||ambiguousHelp(e,fields)||!dropdown&&answer(e)!==null||e.multiple||isCustomMulti(e)||q==='Required field'||q.length<3||q.length>4000||['file','password','checkbox','hidden','submit'].includes(e.type)||e.type==='button'&&!dropdown||controlRole(e)==='checkbox')continue;
   if(!e.matches('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="radio"]'))continue;
   if(aiTried.has(key)&&Date.now()-aiTried.get(key)<60000)continue;
-  aiTried.set(key,Date.now());const url=location.href,question=q;note.textContent='Preparing: '+q;
+  aiTried.set(key,Date.now());const url=location.href,question=q,help=referencedText(e,'aria-describedby'),edit=fieldEdits.get(e);note.textContent='Preparing: '+q;
   try{
    const choices=dropdown?await dropdownChoices(e):e.type==='radio'?fields.filter(o=>o.type==='radio'&&o.name===e.name&&o.form===e.form).map(optionText):controlRole(e)==='radio'?roleRadioGroup(e).map(optionText):[];
    if(dropdown&&(!choices.length||choices.length>80||new Set(choices.map(norm)).size!==choices.length||choices.some(c=>c.length>200))){if(isRequired(e))aiIssues.set(question,'The dropdown options could not be read unambiguously. Please choose this one yourself.');continue;}
-   const result=await send('answer',{question,choices,answerFormat:e.type==='number'?'number':'text',maxLength:e.maxLength>0?e.maxLength:4000,fieldHelp:referencedText(e,'aria-describedby').slice(0,2000)}),state=await send('state');
-   if(attempted||state.attempted||location.href!==url||!visible(e)||label(e)!==question||controlComplete(e,controls()))continue;
+   const result=await send('answer',{question,choices,answerFormat:e.type==='number'?'number':'text',maxLength:e.maxLength>0?e.maxLength:4000,fieldHelp:help.slice(0,2000)}),state=await send('state');
+   if(attempted||state.attempted||location.href!==url||!visible(e)||label(e)!==question||referencedText(e,'aria-describedby')!==help||protectedField(e)||ambiguousHelp(e)||fieldEdits.get(e)!==edit||controlComplete(e,controls()))continue;
    if(dropdown){const current=await dropdownChoices(e);if(JSON.stringify(current)!==JSON.stringify(choices)||!visible(e)||controlComplete(e,controls())||!choices.includes(result.answer?.trim()))continue;}
    if(typeof result.answer==='string'&&result.answer.trim()){
     packet.answers=packet.answers||{};Object.defineProperty(packet.answers,question,{value:result.answer.trim(),enumerable:true,configurable:true,writable:true});
@@ -219,12 +273,15 @@ async function fillWithFacts(){
  if(!packet)packet=await send('packet');attempted=attempted||!!packet.job.attempted;if(!bar)mount();
  let total=0;
  if(packet.excludeFrench&&P.frenchApplication({title:packet.job.title,language:document.documentElement.lang,required_fields_json:JSON.stringify(controls().map(label))})){stopped=true;clearInterval(timer);note.textContent='French-language application excluded by your preference.';await send('progress',{blocked:true,fields:controls().map(label),formLanguage:'fr',message:note.textContent});return 0;}
- for(let pass=0;pass<4;pass++){
+ let previous='',stable=0;
+ for(let pass=0;pass<6;pass++){
   if(attempted&&(!packet.autofillOnly||receipt()))break;
   let filled=await fillPass();total+=filled;
   const prepared=await prepareMissingAnswers();
   if(prepared){const added=await fillPass();filled+=added;total+=added;}
-  if(!filled&&!prepared)break;
+  if(!filled&&!prepared&&!total)break;
+  const current=signature();stable=!filled&&!prepared&&current===previous?stable+1:0;previous=current;
+  if(stable>=2)break;
   await pause(180);
  }
  return total;
@@ -241,7 +298,7 @@ function preparationMessage(check){
  if(check.reason)return check.reason;
  if(!hasApplicationFields())return 'The application form is not open yet. Open Application or Apply to begin autofill.';
  const actions=buttons();
- if(actions.filter(isSubmitAction).length===1&&!actions.some(isNextAction))return 'Ready to submit - all supported fields are filled. Review the form, then click Submit.';
+ if(readyForMySubmit())return 'Ready to submit - all supported fields are filled. Review the form, then click Submit.';
  return 'This step is filled. Continue to the next employer step; autofill will prepare fields as they appear.';
 }
 function applicationEntry(){
@@ -282,7 +339,7 @@ async function advance(){
  if(!controls().length&&!bs.some(b=>isSubmitAction(b)||isNextAction(b)||/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(b)))&&Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer form to load…';return;}
  if(submit.length===1&&next.length===0){
   if(!controls().length&&!document.querySelector('form'))return report('Cannot identify the final application form.');await send('capture',{fields:formAnswers()});const finalCheck=review();if(finalCheck.reason)return report(finalCheck.reason,finalCheck.fields);
-  const finalButtons=buttons(),finalSubmit=finalButtons.filter(isSubmitAction);if(finalSubmit.length!==1||finalButtons.some(isNextAction))return report('The form changed before final review. Review this step.');if(packet.autonomousSubmit!==true||state.autonomousSubmit!==true)return report('Ready to submit — all supported fields are filled. Review the form, then click Submit.',[],true);
+  const finalButtons=buttons(),finalSubmit=finalButtons.filter(isSubmitAction);if(finalSubmit.length!==1||finalButtons.some(isNextAction))return report('The form changed before final review. Review this step.');if(!readyForMySubmit())return report('Review the employer form: required fields or the final action could not be verified.',[],true);if(packet.autonomousSubmit!==true||state.autonomousSubmit!==true)return report('Ready to submit — all supported fields are filled. Review the form, then click Submit.',[],true);
   if(P.submissionDeclaration(bodyText()))return report('The final Submit action includes an employer declaration. Review and submit this form yourself.');
   const before=bodyText(),grant=await send('attempt',{before,automatic:true,human:false,clickId:crypto.randomUUID()});
   attempted=true;submitAt=Date.now();if(grant?.permitted!==true)return report('Submission authorization was not confirmed. Check the employer receipt before retrying.');
@@ -327,10 +384,10 @@ async function refreshPausedAnswers(){
 if(!siteIssue()){
  setInterval(refreshPausedAnswers,30000);
  new MutationObserver(changes=>{
-  if(!changes.some(c=>!bar?.contains(c.target)&&[...c.addedNodes,...c.removedNodes].some(n=>n!==bar)))return;
+  if(!changes.some(c=>!bar?.contains(c.target)&&(c.type==='attributes'||[...c.addedNodes,...c.removedNodes].some(n=>n!==bar))))return;
   formChanged=true;clearTimeout(formChangeTimer);
   formChangeTimer=setTimeout(()=>{if(packet?.autofillOnly)refreshPausedAnswers();},750);
- }).observe(document.body,{subtree:true,childList:true});
+ }).observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['required','aria-required','aria-invalid','aria-busy','hidden','disabled','aria-disabled','style','class']});
 }
 async function resumeFill(){
  if(busy)throw Error('Form preparation is already running. Wait for it to finish.');busy=true;clearInterval(timer);pageWaitAt=Date.now();
@@ -350,8 +407,8 @@ async function flushHumanAnswers(){
  finally{answerSaveBusy=false;if(pendingHumanAnswers.size)answerSaveTimer=setTimeout(flushHumanAnswers,5000);}
 }
 function humanAnswerChanged(e){
- if(!started||!e.isTrusted||bar?.contains(e.target)||!e.target.matches?.('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]'))return;
- recordAssistance();const q=label(e.target);if(protectedQuestion(q))return;
+ if(!started||!e.isTrusted||e.type==='focusout'&&programmaticFields.has(e.target)||bar?.contains(e.target)||!e.target.matches?.('input,select,textarea,[contenteditable="true"],[role="combobox"],[role="checkbox"],[role="radio"]'))return;
+ recordAssistance();fieldEdits.set(e.target,(fieldEdits.get(e.target)||0)+1);nativeExpected.delete(e.target);multiExpected.delete(e.target);uncommittedCustom.delete(e.target);completedCustom.delete(e.target);const q=label(e.target);if(protectedField(e.target))return;
  const row=formAnswers().find(r=>r.question===q);if(!row)return;pendingHumanAnswers.set(q,{answer:row.answer,resume:e.type!=='input'});
  clearTimeout(answerSaveTimer);answerSaveTimer=setTimeout(flushHumanAnswers,e.type==='input'?650:0);
 }

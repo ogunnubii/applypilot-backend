@@ -52,6 +52,7 @@ test('four contact/upload values cannot hide the three missing custom questions'
   Object.defineProperty(f.d.querySelector('[type=file]'),'validity',{value:{valid:true}});
   let state=f.read();assert.equal(state.required,7);assert.equal(state.filled,4);assert.deepEqual([...state.missing],['Location','Work authorization','Sponsorship']);
   f.d.querySelector('[role=combobox]').value='Toronto, Ontario, Canada';
+  f.d.querySelector('[role=combobox]').dataset.applypilotCommittedValue='Toronto, Ontario, Canada';
   f.d.querySelector('[type=radio]').checked=true;
   f.d.querySelector('[data-option=no]').setAttribute('aria-pressed','true');
   assert.equal(f.d.querySelector('[type=checkbox]').checked,false,'No legitimately leaves the hidden checkbox unchecked');
@@ -63,6 +64,8 @@ test('uncommitted autocomplete query remains missing even though text is visible
   const combo=f.d.querySelector('[role=combobox]');combo.value='Toronto';combo.dataset.applypilotUncommittedSearch='true';
   assert(f.read().missing.includes('Location'));
   combo.value='Toronto, Ontario, Canada';delete combo.dataset.applypilotUncommittedSearch;
+  assert(f.read().missing.includes('Location'),'raw input text is still not a committed choice');
+  combo.dataset.applypilotCommittedValue=combo.value;
   assert(!f.read().missing.includes('Location'));
  }finally{f.dom.window.close();}
 });

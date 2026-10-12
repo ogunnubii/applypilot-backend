@@ -68,6 +68,20 @@
     return keys.length === 1 && ['string','number','boolean'].includes(typeof answers[keys[0]]) ? String(answers[keys[0]]) : null;
   }
 
+  // Multi-select answers are explicit lists, never inferred from a skills
+  // paragraph or split on commas (an option itself may contain a comma).
+  function savedOptionSelections(question, options, answers) {
+    const value=savedAnswer(question,answers);
+    if(value===null||!Array.isArray(options)||!options.length||options.length>80||sensitive(options.map(o=>o.label).join(' ')))return null;
+    let labels;
+    if(value.trim().startsWith('[')){try{labels=JSON.parse(value);}catch{return null;}}
+    else labels=value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+    if(!Array.isArray(labels)||!labels.length||labels.length>80||labels.some(v=>typeof v!=='string'||!v.trim())||new Set(labels.map(normalize)).size!==labels.length)return null;
+    const result=[];
+    for(const label of labels){const matches=options.filter(o=>!o.disabled&&normalize(o.label)===normalize(label));if(matches.length!==1)return null;result.push(matches[0]);}
+    return result;
+  }
+
   const aliases={
    name:['full name','your full name','name','your name','first and last name','your first and last name','first & last name','your first & last name'],first:['first name','given name'],last:['last name','family name','surname'],
    email:['email','email address','your email','your email address'],phone:['phone','phone number','telephone','telephone number','mobile','mobile phone','mobile number','contact number','contact phone number','primary phone number'],
@@ -191,5 +205,5 @@ function frenchApplication(job={}){
  return signals.filter(s=>text.includes(s)).length>=2;
 }
 
-  globalThis.ApplyPilotPolicy = Object.freeze({customApplication,submissionDeclaration,greenhouseIdentity,trustedFrame,frenchApplication,needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,fieldKind,knownAnswer,optionMatches});
+  globalThis.ApplyPilotPolicy = Object.freeze({customApplication,submissionDeclaration,greenhouseIdentity,trustedFrame,frenchApplication,needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,savedOptionSelections,fieldKind,knownAnswer,optionMatches});
 })();

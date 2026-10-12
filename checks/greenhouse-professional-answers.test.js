@@ -42,7 +42,7 @@ test('Greenhouse professional history wording is allowed while protected questio
  }
 });
 
-test('customer-facing support history reaches fact drafting and uses explicit saved evidence',async()=>{
+test('customer-facing support history reaches drafting but a categorical answer needs explicit confirmation',async()=>{
  const fact='I worked in a customer-facing support role, resolving customer tickets and troubleshooting software issues.';
  const {db}=fixture({'Professional background':fact});let calls=0;
  try{
@@ -52,7 +52,8 @@ test('customer-facing support history reaches fact drafting and uses explicit sa
    const source=input.facts.find(f=>f.answer===fact);assert(source);
    return providerOutput({answer:'Yes',reason:'Explicit customer-facing support history.',evidence:[{id:source.id,quote:fact}]});
   }});
-  assert.equal(calls,1);assert.equal(result.answer,'Yes');assert.deepEqual(result.sources,['Professional background']);
+  assert.equal(calls,1);assert.equal(result.answer,'');assert.match(result.reason,/Please confirm your actual experience/);assert.deepEqual(result.sources,[]);
+  assert.equal(hostedOptionChoice({label:SUPPORT_QUESTION},[{label:'Yes'},{label:'No'}],{},{[SUPPORT_QUESTION]:'Yes'}).label,'Yes');
   assert.equal(db.prepare('SELECT count FROM draft_usage').get().count,1);
  }finally{db.close();}
 });

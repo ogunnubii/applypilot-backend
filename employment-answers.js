@@ -1,4 +1,4 @@
-import {scopedWorkEligibility} from './search-scope.js';
+import {scopedWorkEligibility,ontarioLocation} from './search-scope.js';
 // Employer eligibility questions use explicit applicant answers, never model
 // inference, search preferences, nationality or an inferred immigration status.
 const clean=value=>String(value??'').normalize('NFKC').replace(/[\u2013\u2014]/g,'-').replace(/[?*✱\s]+$/g,'').replace(/\s+/g,' ').trim().toLowerCase();
@@ -23,7 +23,7 @@ function canadaJob(job){
  const location=String(m.location||'');
  // Multi-country/global roles do not establish the country of employment.
  if(/\b(?:united states|us|usa|uk|united kingdom|france|germany|india|australia|worldwide|global|anywhere|europe)\b|\bu\.s\.?(?=\W|$)|\bOntario\s*,\s*(?:CA|OR)\b/i.test(location))return false;
- return /\b(?:canada|ontario|british columbia|alberta|quebec|nova scotia|new brunswick|manitoba|saskatchewan|newfoundland|prince edward island)\b/i.test(location)||clean(m.country)==='canada'&&!location.includes('/');
+ return /\b(?:canada|ontario|british columbia|alberta|quebec|nova scotia|new brunswick|manitoba|saskatchewan|newfoundland|prince edward island)\b/i.test(location)||ontarioLocation(location)&&/\bON\b/.test(location)||clean(m.country)==='canada'&&!location.includes('/');
 }
 function selectedCanadianRemoteJob(job,scope){
  // An explicit Canada remote-search choice can select the Canadian option in

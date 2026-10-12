@@ -57,8 +57,11 @@ export function recoverAutomaticPreparation(db,uid,jobId){
  db.exec('BEGIN IMMEDIATE');try{
   const c=automaticCampaign(db,uid),j=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,uid),m=automaticMember(db,j);
   if(!c?.enabled||!m||m.campaign_id!==c.id||m.batch_number!==c.current_batch||m.outcome!=='blocked')throw Error('Only a blocked form in the active batch can resume.');
-  if(!['paused','needs_review'].includes(j.status)||j.local_owner||j.handoff_available||submissionStarted(db,j))throw Error('An existing browser or possible submission is protected from restarting.');
-  if(!['Missing answers','Form validation','Sensitive action','Worker error'].includes(j.challenge))throw Error('This employer step is deferred.');
+  if(!['paused','needs_review','queued'].includes(j.status))throw Error('Only a parked form can resume; a running application cannot restart.');
+  if(j.local_owner||j.handoff_available||submissionStarted(db,j))throw Error('An existing browser or possible submission is protected from restarting.');
+  // A legacy preparation action can queue a job while its batch member stays
+  // blocked. Reconcile that same unattempted record; do not create a new member.
+  if(!['Missing answers','Form validation','Sensitive action','Worker error'].includes(j.challenge||m.reason))throw Error('This employer step is deferred.');
   const problem=memberProblem(db,j);if(problem)throw Error(problem);
   db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=?").run(now(),j.id);
   db.prepare("UPDATE automatic_members SET outcome='pending',reason=NULL,settled_at=NULL WHERE job_id=?").run(j.id);

@@ -118,6 +118,13 @@ test('Canadian province locations are scoped while Ontario California stays bloc
  assert.equal(hostedOptionChoice({label:auth},options,profile('Ontario, CA')),null);
  assert.equal(hostedOptionChoice({label:auth},options,profile('Canada / US')),null);
 });
+
+test('observed Canadian city and ON labels establish employment country without claiming foreign authorization',()=>{
+ for(const location of ['Toronto, ON','Ottawa, ON','London, ON','Toronto, ON - Remote'])assert.equal(hostedOptionChoice({label:auth},options,profile(location))?.value,'yes',location);
+ for(const location of ['Toronto, Ohio','Toronto, ON / United States','Ontario, CA','London, United Kingdom','Remote','Toronto, ON / Europe'])assert.equal(hostedOptionChoice({label:auth},options,profile(location)),null,location);
+ const label='Are you physically located in Canada and legally authorized to work in Canada for any employer?✱';
+ assert.equal(approvedHostedRadioIndex(options.map(o=>({...o,question:label})),{},profile('Toronto, ON',{...facts,Country:'Canada',[K.canadaRestrictions]:'No restrictions'})),0);
+});
 test('unapproved history, generic saved answers and resume prose do not become eligibility facts',()=>{
  const p=profile('Toronto, Canada',{'Are you authorized to work in Canada?':'Yes','Professional background':'I can work in Canada','Sponsorship':'No'});
  assert.equal(hostedOptionChoice({label:auth},options,p),null);

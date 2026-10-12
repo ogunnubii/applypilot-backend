@@ -20,7 +20,7 @@ function waiting(db,id){
 }
 function policy(db,j){return employerHold(db,j)?.message||preparationPreferenceProblem(db,j)||(priorApplication(db,j.user_id,j)?'Previous application protected.':'')||(researchConsentWithdrawn(db,j.id,j.applicant_id)?'Drafting consent changed.':'');}
 function profileFor(db,j){const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,j.user_id);return p?.consent?p:null;}
-function fingerprint(p,j){const metadata=parse(j.job_metadata_json,{});delete metadata.checkedAt;return createHash('sha256').update(JSON.stringify([j.user_id,j.applicant_id,j.url,j.title,j.company,p.name,p.email,p.phone,p.location,p.answers_json,p.resume_path,p.ai_consent,p.gemini_facts_consent,p.google_research_consent,j.required_fields_json,j.answers_json,metadata])).digest('hex');}
+function fingerprint(p,j){const metadata=parse(j.job_metadata_json,{});delete metadata.checkedAt;return createHash('sha256').update(JSON.stringify(['professional-interest-v2',j.user_id,j.applicant_id,j.url,j.title,j.company,p.name,p.email,p.phone,p.location,p.answers_json,p.resume_path,p.ai_consent,p.gemini_facts_consent,p.google_research_consent,j.required_fields_json,j.answers_json,metadata])).digest('hex');}
 // Resolve saved questions independently of an open dashboard. This routine
 // saves answers only: it never starts a browser, clicks Submit or retries jobs.
 export async function resolvePendingAnswers(db,{answer=automaticTextAnswer,check=policy,clock=Date.now}={}){

@@ -10,6 +10,7 @@ export function installAutomaticCampaign(db){
  CREATE TABLE IF NOT EXISTS automatic_batches(campaign_id TEXT NOT NULL,number INTEGER NOT NULL,opened_at TEXT NOT NULL,closed_at TEXT,PRIMARY KEY(campaign_id,number));
 CREATE TABLE IF NOT EXISTS automatic_members(job_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,campaign_id TEXT NOT NULL,batch_number INTEGER NOT NULL,position INTEGER NOT NULL,title_group TEXT NOT NULL,outcome TEXT NOT NULL DEFAULT 'pending',reason TEXT,selected_at TEXT NOT NULL,settled_at TEXT);
 CREATE TABLE IF NOT EXISTS automatic_preparation_recovery(job_id TEXT PRIMARY KEY,retries INTEGER NOT NULL DEFAULT 0,next_at TEXT,last_failure INTEGER NOT NULL);`);
+ if(!db.prepare('PRAGMA table_info(automatic_campaigns)').all().some(c=>c.name==='mode'))db.exec("ALTER TABLE automatic_campaigns ADD COLUMN mode TEXT NOT NULL DEFAULT 'automatic'");
 }
 const now=()=>new Date().toISOString();
 function installed(db){return !!db.prepare("SELECT 1 FROM sqlite_master WHERE name='automatic_campaigns' AND type='table'").get();}
@@ -31,17 +32,39 @@ export function automaticClaimProblem(db,j){
  if(!['queued','running'].includes(j.status))return 'This application is parked for review.';
  return memberProblem(db,j);
 }
-export function automaticAllowsSubmit(db,j){return !!automaticMember(db,j)&&automaticClaimProblem(db,j)==='';}
+export function automaticAllowsSubmit(db,j){return automaticCampaign(db,j.user_id)?.mode==='automatic'&&!!automaticMember(db,j)&&automaticClaimProblem(db,j)==='';}
+
+// A numbered preparation batch is an explicit mode change, never permission
+// to retry an earlier form. Expected batch makes repeated HTTP requests safe.
+export function startManualBatch(db,uid,{applicant_id,mode,auto_submit,batch_size=20,expected_batch}={}){
+ if(mode!=='prepare_only'||auto_submit!==false||batch_size!==20)throw Error('Choose preparation only; final Submit stays with you.');
+ const old=automaticCampaign(db,uid),p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(applicant_id,uid);
+ if(!old||old.applicant_id!==applicant_id||old.current_batch!==expected_batch)throw Error('Refresh the campaign before starting its next batch.');
+ if(old.enabled)throw Error('Stop the current campaign first.');
+ if(!p?.consent||!p.email||!p.resume_path||p.execution_mode!=='cloud'||!currentSearchScope(db,{user_id:uid,applicant_id}))throw Error('A saved hosted profile, resume, consent and enabled search are required.');
+ if(db.prepare("SELECT 1 FROM jobs WHERE user_id=? AND status='running'").get(uid))throw Error('Wait for the current form to settle.');
+ db.exec('BEGIN IMMEDIATE');try{
+  db.prepare('UPDATE automatic_batches SET closed_at=COALESCE(closed_at,?) WHERE campaign_id=? AND number=?').run(now(),old.id,old.current_batch);
+  db.prepare("UPDATE automatic_members SET outcome='deferred',reason='Previous batch closed by applicant; history and attempts preserved.',settled_at=? WHERE campaign_id=? AND batch_number=? AND outcome='pending'").run(now(),old.id,old.current_batch);
+  db.prepare("UPDATE automatic_campaigns SET mode='prepare_only',current_batch=current_batch+1,enabled=1 WHERE user_id=?").run(uid);
+  db.prepare('UPDATE preparation_campaigns SET enabled=0 WHERE user_id=?').run(uid);
+  db.prepare('UPDATE application_batch_preferences SET enabled=0 WHERE user_id=?').run(uid);
+  db.prepare('UPDATE work_focus SET enabled=0,auto_submit=0,skip_blocked=0,job_id=NULL WHERE user_id=?').run(uid);
+  db.exec('COMMIT');
+ }catch(error){db.exec('ROLLBACK');throw error;}
+ return populateAutomaticCampaign(db,uid);
+}
 
 export function startAutomaticCampaign(db,uid,{applicant_id,mode,auto_submit,batch_size=20}={}){
- if(mode!=='automatic'||auto_submit!==true||batch_size!==20)throw Error('Explicitly authorize automatic submission in batches of 20.');
+ if(!((mode==='automatic'&&auto_submit===true)||(mode==='prepare_only'&&auto_submit===false))||batch_size!==20)throw Error('Explicitly authorize automatic submission in batches of 20, or resume preparation only.');
  const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(applicant_id,uid),scope=currentSearchScope(db,{user_id:uid,applicant_id});
  if(!p?.consent||!p.email||!p.resume_path||p.execution_mode!=='cloud'||!scope)throw Error('A saved hosted profile, resume, consent and enabled structured search are required.');
  const old=automaticCampaign(db,uid);if(old&&old.applicant_id!==applicant_id)throw Error('Resume this campaign with its original applicant.');
+ if(old&&old.mode!==mode)throw Error('Resume with the existing batch mode. A new mode requires an explicit new batch.');
  if(db.prepare("SELECT 1 FROM jobs WHERE user_id=? AND status='running' LIMIT 1").get(uid))throw Error('Let the currently running application settle before switching campaigns.');
  db.exec('BEGIN IMMEDIATE');try{
   if(old)db.prepare('UPDATE automatic_campaigns SET enabled=1 WHERE user_id=?').run(uid);
-  else db.prepare('INSERT INTO automatic_campaigns VALUES(?,?,?,1,20,1,?)').run(uid,randomUUID(),applicant_id,now());
+  else db.prepare('INSERT INTO automatic_campaigns(user_id,id,applicant_id,enabled,batch_size,current_batch,created_at,mode) VALUES(?,?,?,1,20,1,?,?)').run(uid,randomUUID(),applicant_id,now(),mode);
   db.prepare('UPDATE preparation_campaigns SET enabled=0 WHERE user_id=?').run(uid);
   db.prepare('UPDATE application_batch_preferences SET enabled=0 WHERE user_id=?').run(uid);
   db.prepare('UPDATE work_focus SET enabled=0,auto_submit=0,skip_blocked=0,job_id=NULL WHERE user_id=?').run(uid);
@@ -138,10 +161,11 @@ export function populateAutomaticCampaign(db,uid){
    const j=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(m.job_id,uid);if(!j)continue;
    let outcome=m.outcome,reason=m.reason;
    if(evidence.get(j.id)?.confirmed){outcome='confirmed';reason='Attributable employer receipt recorded.';}
-   else if(m.outcome==='pending'){
+   else if(['pending','ready'].includes(m.outcome)){
     if(j.status==='running')continue;
     if(submissionStarted(db,j)){outcome='unresolved';reason='Submission outcome is protected from retries; receipt review required.';}
     else if(['duplicate','archived'].includes(j.status)){outcome=j.status;reason='Excluded with history preserved.';}
+    else if(c.mode==='prepare_only'&&j.challenge==='Ready to submit'){outcome='ready';reason=j.handoff_available?'Prepared form is available for your Submit click.':'Prepared form is no longer live; no submission was made.';}
     else if(['paused','needs_review','local_browser'].includes(j.status)){outcome='blocked';reason=j.challenge||'The employer form needs review.';}
     else{reason=memberProblem(db,j);if(reason)outcome='deferred';}
    }
@@ -150,7 +174,7 @@ export function populateAutomaticCampaign(db,uid){
    if(outcome!==m.outcome||reason!==m.reason)db.prepare('UPDATE automatic_members SET outcome=?,reason=?,settled_at=? WHERE job_id=?').run(outcome,reason,outcome==='pending'?null:now(),j.id);
   }
   let batch=db.prepare('SELECT * FROM automatic_members WHERE campaign_id=? AND batch_number=? ORDER BY position').all(c.id,c.current_batch);
-  if(batch.length===20&&batch.every(m=>m.outcome!=='pending')){
+  if(c.mode==='automatic'&&batch.length===20&&batch.every(m=>m.outcome!=='pending')){
    db.prepare('UPDATE automatic_batches SET closed_at=COALESCE(closed_at,?) WHERE campaign_id=? AND number=?').run(now(),c.id,c.current_batch);
    db.prepare('UPDATE automatic_campaigns SET current_batch=current_batch+1 WHERE user_id=?').run(uid);c={...c,current_batch:c.current_batch+1};batch=[];
   }
@@ -182,5 +206,6 @@ export function automaticSnapshot(db,uid){
  const totals={selected:members.length,prepared:0,attempted:0,confirmed:0,automatic:0,assisted:0,unknown:0,blocked:0,deferred:0,unresolved:0};
  for(const m of members){if(m.prepared)totals.prepared++;for(const key of ['attempted','confirmed','automatic','assisted','unknown'])if(m.evidence[key])totals[key]++;if(m.outcome==='blocked')totals.blocked++;if(['deferred','duplicate','archived'].includes(m.outcome))totals.deferred++;if(m.outcome==='unresolved'&&!m.evidence.confirmed)totals.unresolved++;}
  const current=members.filter(m=>m.batch_number===c.current_batch);
- return {id:c.id,applicant_id:c.applicant_id,enabled:!!c.enabled,mode:'automatic',executor:'hosted',batch_size:20,current_batch:c.current_batch,selected:current.length,settled:current.filter(m=>m.outcome!=='pending').length,supply_needed:20-current.length,totals,batches:db.prepare('SELECT number,opened_at,closed_at FROM automatic_batches WHERE campaign_id=? ORDER BY number').all(c.id),members:members.slice(-40)};
+ const ready=current.filter(m=>m.outcome==='ready'&&db.prepare('SELECT handoff_available FROM jobs WHERE id=?').get(m.job_id)?.handoff_available).length;
+ return {id:c.id,applicant_id:c.applicant_id,enabled:!!c.enabled,mode:c.mode,executor:'hosted',batch_size:20,current_batch:c.current_batch,selected:current.length,ready,settled:current.filter(m=>m.outcome!=='pending').length,supply_needed:20-current.length,totals,batches:db.prepare('SELECT number,opened_at,closed_at FROM automatic_batches WHERE campaign_id=? ORDER BY number').all(c.id),members:members.slice(-40)};
 }

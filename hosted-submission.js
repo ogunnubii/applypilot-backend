@@ -94,7 +94,7 @@ export function retainBlockedSession({status,challenge,attempted,skipBlocked}){
  if(['Employer site unavailable','Employer application limit'].includes(challenge))return false;
  // Releasing an explicitly skipped pre-submit browser frees capacity for the
  // next job. An uncertain attempt stays available for receipt review.
- return !skipBlocked||attempted||['Submission in progress','Unconfirmed submission'].includes(challenge);
+ return !skipBlocked||attempted||['Ready to submit','Submission in progress','Unconfirmed submission'].includes(challenge);
 }
 
 export async function releaseSkippedHandoffs(handoffs,shouldRelease){

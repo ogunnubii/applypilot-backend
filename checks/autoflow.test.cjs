@@ -139,15 +139,6 @@ test('progress counts are based on evidence and do not recount outcomes',async()
  assert.equal(operationSnapshot(db,'another-user').applications.length,0);
  db.prepare("UPDATE jobs SET status='offer' WHERE id='receipt'").run();assert.equal(operationSnapshot(db,'owner').totals.confirmed,1);db.close();
 });
-test('local missing answers are saved without queuing a new attempt',async()=>{
- const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
- const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
- w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([url,opts?.method]);return {ok:true,json:async()=>({})};};w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- const job={id:'local',applicant_id:'p',company:'Example',title:'Engineer',status:'local_browser',local_phase:'blocked',challenge:'Local browser',required_fields_json:'["Preferred name","Required field","AI Policy for Application"]',answers_json:'{}'};
- w.renderMissingAnswers([job]);const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form'),input=form.querySelector('textarea');assert(!section.hidden);assert.equal(form.querySelectorAll('textarea').length,1);assert.equal(section.querySelector('details').open,false);input.value='Applicant';
- w.eval('refresh=async()=>{}');input.dispatchEvent(new w.Event("input",{bubbles:true}));input.dispatchEvent(new w.Event("blur"));await new Promise(r=>setTimeout(r,20));assert(requests.some(([url,method])=>url.endsWith('/answers')&&method==='PUT'));assert(!requests.some(([url])=>url.endsWith('/continue')));
- section.dataset.dirty='false';w.renderMissingAnswers([{...job,local_attempt_at:'2026-10-01'}]);assert.equal(section.querySelector('form'),null,'attempted application must not re-enter the answer/resume flow');w.close();
-});
 
 test('dashboard resume rejects attempted applications and other origins',async()=>{
  const assert=require('node:assert/strict'),vm=require('node:vm');
@@ -195,21 +186,6 @@ test('continuation queue validates readiness, isolates users and never redispatc
  db.close();
 });
 
-test('autosave sends per-question updates; server owns continuation and attempted forms stay protected',async()=>{
- const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
- async function scenario(questions,attempted=false){
-  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
-  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([url,opts?.method,opts?.body]);return {ok:true,json:async()=>({state:'queued'})};};
-  w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);w.eval('refresh=async()=>{}');
-  w.renderMissingAnswers([{id:'j',applicant_id:'p',company:'Fixture',title:'Engineer',status:'local_browser',local_phase:'blocked',required_fields_json:JSON.stringify(questions),answers_json:'{}',local_attempt_at:attempted?'today':null}]);
-  const section=w.document.querySelector('#missing-answers'),form=section.querySelector('form');
-  if(form){form.querySelector('textarea').value='Applicant';const input=form.querySelector("textarea");input.dispatchEvent(new w.Event("input",{bubbles:true}));input.dispatchEvent(new w.Event("blur"));await new Promise(r=>setTimeout(r,20));}
-  const result={requests,hidden:!section.querySelector('form')};w.close();return result;
- }
- let r=await scenario(['Preferred name']);assert(r.requests.some(([url,method,payload])=>url.endsWith('/answers')&&method==='PUT'&&JSON.parse(payload).autosave));assert(!r.requests.some(([url])=>url.endsWith('/continue')||url.endsWith('/attempt')));
- for(const questions of [['Preferred name','Unknown fact'],['Preferred name','AI policy']]){r=await scenario(questions);assert(!r.requests.some(([url])=>url.endsWith('/continuation')));}
- assert((await scenario(['Preferred name'],true)).hidden);
-});
 
 test('dashboard only retries an explicit busy refusal and honours a paused helper',async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
@@ -231,10 +207,9 @@ test('saved profile fills basic field aliases while unknown and conflicting answ
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window;
  const profile={id:'p',name:'Test Applicant',location:'Toronto, Ontario, Canada',reusableAnswers:{School:'First University',University:'Second University'}};
  w.setInterval=()=>0;w.fetch=async()=>({ok:true,json:async()=>({applicants:[profile]})});w.eval(sources['extension/policy.js']);w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.renderMissingAnswers([{id:'j',applicant_id:'p',company:'Fixture',title:'Engineer',status:'local_browser',local_phase:'blocked',required_fields_json:JSON.stringify(['Given name','Country','State / Province','City','University','Do you need visa sponsorship?']),application_only_questions:['Do you need visa sponsorship?'],answers_json:'{}'}]);
- const form=w.document.querySelector('#missing-answers form');await new Promise(r=>setTimeout(r,25));
- const values=Object.fromEntries([...form.querySelectorAll('textarea[data-answer-key]')].map(i=>[i.getAttribute('aria-label'),i.value]));
- assert.equal(values['Given name'],'Test');assert.equal(values.Country,'Canada');assert.equal(values['State / Province'],'Ontario');assert.equal(values.City,'Toronto');assert.equal(values.University,'','conflicting aliases must remain blank');assert.equal(values['Do you need visa sponsorship?'],'');
+ const questions=['Given name','Country','State / Province','City','University','Do you need visa sponsorship?'];
+ const values=Object.fromEntries(questions.map(q=>[q,w.preparedProfileAnswer(q,profile,profile.reusableAnswers)]));
+ assert.equal(values['Given name'],'Test');assert.equal(values.Country,'Canada');assert.equal(values['State / Province'],'Ontario');assert.equal(values.City,'Toronto');assert(!values.University,'conflicting aliases must remain blank');assert(!values['Do you need visa sponsorship?']);
  w.close();
 });
 
@@ -846,9 +821,7 @@ test('focused homepage shows pending jobs, keeps attempts separate and exposes u
  assert.equal($('#workspace-tools').open,false);assert.equal($('#interview-panel').open,false);
  for(const id of ['operations','next-match','application-pipeline','employer-limits','browser-readiness','discovery-status','blocker-notifications'])assert.equal($('#'+id).parentElement.id,'workspace-tools-body',id);
  assert.equal($('#career-overview').parentElement.id,'interview-panel-body');assert.equal($('#ai-status').parentElement.id,'ai-status-slot');assert.equal($('#ai-status .ai-details').open,false);
- assert.equal($('#missing-answers').querySelector('form').closest('details'),null,'unanswered form must be immediately visible');
- const input=$('#missing-answers textarea');input.value='My unfinished answer';input.dispatchEvent(new w.Event('input',{bubbles:true}));
- await w.refresh();assert.equal($('#missing-answers textarea'),input);assert.equal(input.value,'My unfinished answer');
+ assert.equal($('#missing-answers'),null,'questions panel is removed; server resolves supported questions');
  $('#home-summary [data-home-filter="awaiting"]').click();assert(!visible().includes('job-attempt'),'receipt counts do not expose finished work on the focused homepage');
  $('#home-summary [data-home-filter="prep-ready"]').click();assert.deepEqual(visible().sort(),['job-local','job-ready']);
  $('#home-summary [data-home-filter="receipt"]').click();assert(!visible().includes('job-done'));assert.equal(w.document.body.dataset.view,'focus');assert.equal(w.getComputedStyle($('#workspace-tools')).display,'none');assert.equal(w.getComputedStyle($('#ai-status-slot')).display,'none');

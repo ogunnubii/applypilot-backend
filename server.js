@@ -1,6 +1,7 @@
+import {resolvePendingAnswers} from './pending-answers.js';
 import {parkUnresolvedAttempt,unresolvedAttemptState,unresolvedAttemptMarker} from './unresolved-attempts.js';
 import {installReceiptSync,syncLocalReceipt} from './receipt-sync.js';
-import {automaticCampaign,automaticMember,automaticSnapshot,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,recoverAutomaticPreparation} from './automatic-campaign.js';
+import {automaticCampaign,automaticMember,automaticSnapshot,startManualBatch,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,recoverAutomaticPreparation} from './automatic-campaign.js';
 import {preparationCampaign,preparationMember,startPreparationCampaign,populatePreparationCampaign,preparationSnapshot,preparationClaimProblem,recordPreparationProgress} from './preparation-campaign.js';
 import {searchInstruction,normalizeSearchScope,setSearchRemotePreference} from './search-scope.js';
 import {canEmailAccount} from './account-policy.js';
@@ -57,7 +58,7 @@ const savedRecoveryTick=()=>{try{recoverSavedAnswers(db);}catch(error){console.e
 const savedRecoveryTimer=setInterval(savedRecoveryTick,60000);savedRecoveryTimer.unref();setTimeout(savedRecoveryTick,2000).unref();
 const pipelineTimer=setInterval(()=>{try{queueEnabledPipelines(db);}catch(error){console.error('Application pipeline:',error.message);}},60000);pipelineTimer.unref();
 let publicFillBusy=false;
-async function publicFillTick(){if(publicFillBusy)return;publicFillBusy=true;try{await fillPendingPublicQuestions(db);await fillPendingFactQuestions(db);}catch(error){console.error('Public answer drafting:',error.message);}finally{publicFillBusy=false;}}
+async function publicFillTick(){if(publicFillBusy)return;publicFillBusy=true;try{await resolvePendingAnswers(db);await fillPendingPublicQuestions(db);await fillPendingFactQuestions(db);}catch(error){console.error('Public answer drafting:',error.message);}finally{publicFillBusy=false;}}
 const publicFillTimer=setInterval(publicFillTick,60000);publicFillTimer.unref();setTimeout(publicFillTick,1500).unref();
 let emailBusy=false;
 const emailTimer=setInterval(async()=>{if(emailBusy)return;emailBusy=true;try{await sendBlockerEmails(db)}catch{console.error('Blocker notification delivery failed')}finally{emailBusy=false}},60000);emailTimer.unref();
@@ -162,6 +163,7 @@ if(path==='/api/application-batch'&&['GET','POST'].includes(req.method)){try{if(
 if(path==='/api/work-focus/start-one'&&req.method==='POST'){try{const input=JSON.parse(await body(req));return send(res,200,startOneApplication(db,uid,input.job_id));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/work-focus/prepare-one'&&req.method==='POST'){try{const input=JSON.parse(await body(req));return send(res,200,startOneApplication(db,uid,input.job_id,{auto_submit:false}));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/work-focus'&&['GET','PUT'].includes(req.method)){try{return send(res,200,req.method==='PUT'?setWorkFocus(db,uid,JSON.parse(await body(req))):ensureFocusedJob(db,uid));}catch(e){return send(res,409,{error:e.message});}}
+if(path==='/api/automatic-campaign/manual-batch'&&req.method==='POST'){try{return send(res,200,startManualBatch(db,uid,JSON.parse(await body(req))));}catch(error){return send(res,409,{error:error.message});}}
 if(path==='/api/automatic-campaign/recover'&&req.method==='POST'){try{const input=JSON.parse(await body(req));return send(res,200,recoverAutomaticPreparation(db,uid,input.job_id));}catch(error){return send(res,409,{error:error.message});}}
 if(path==='/api/automatic-campaign'&&['GET','POST','PUT'].includes(req.method)){
  try{

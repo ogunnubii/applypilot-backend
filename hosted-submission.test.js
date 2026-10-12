@@ -63,6 +63,7 @@ test('verification appearing after Submit parks the uncertain attempt promptly a
 test('best-effort mode releases pre-submit blocked browsers without discarding uncertain sessions',async()=>{
  const {retainBlockedSession}=await import('./hosted-submission.js');
  assert.equal(retainBlockedSession({status:'needs_review',challenge:'Missing answers',skipBlocked:true}),false);
+ assert.equal(retainBlockedSession({status:'needs_review',challenge:'Ready to submit',skipBlocked:true}),true);
  assert.equal(retainBlockedSession({status:'needs_review',challenge:'Missing answers',skipBlocked:false}),true);
  assert.equal(retainBlockedSession({status:'needs_review',challenge:'Unconfirmed submission',skipBlocked:true}),true);
  assert.equal(retainBlockedSession({status:'needs_review',challenge:'Worker error',attempted:true,skipBlocked:true}),true);

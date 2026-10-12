@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {submitHostedApplication} from './hosted-submission.js';
+import {submitHostedApplication,declineLeverCookies} from './hosted-submission.js';
+test('only the observed optional Lever cookie notice can be declined',async()=>{
+ const expected='This website uses cookies to improve your web experience. By clicking Accept, you agree to the use of cookies.';
+ for(const scenario of ['valid','foreign','ambiguous','terms','accept','stays']){
+  let clicks=0,hidden=false;
+  const deny={count:async()=>scenario==='ambiguous'?2:1,innerText:async()=>scenario==='accept'?'Accept':'Deny',click:async()=>{clicks++;hidden=scenario!=='stays';}};
+  const notice={count:async()=>1,locator:selector=>selector==='p'?{allTextContents:async()=>[scenario==='terms'?expected+' By submitting, you agree to employment terms.':expected]}:deny,waitFor:async()=>{if(!hidden)throw Error('still visible');}};
+  const page={url:()=>scenario==='foreign'?'https://example.test/apply':'https://jobs.lever.co/fixture/role-123',locator:selector=>{assert.equal(selector,'.cc-window[role="dialog"][aria-label="cookieconsent"]:visible');return notice;}};
+  assert.equal(await declineLeverCookies(page),scenario==='valid',scenario);
+  assert.equal(clicks,['valid','stays'].includes(scenario)?1:0,scenario);
+ }
+});
 function fixture(options={}){
  let text=options.before||'Name Email Resume Submit application',url='https://jobs.lever.co/fixture/role-123',attempts=0,clicks=0;
  const events=[];

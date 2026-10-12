@@ -2,10 +2,29 @@ import {sameApplication,receipt,submissionDeclaration} from './local-policy.js';
 import {applicationLimit} from './employer-limits.js';
 import {watchSubmission} from './submission-diagnostics.js';
 
+// The observed Lever cookie banner contains "By clicking Accept, you agree",
+// which is not an application declaration. Decline only that exact optional
+// cookie notice through its real control; never remove declaration text or
+// accept cookies, terms, consent, marketing or employer attestations.
+export async function declineLeverCookies(page){
+ try{
+  if(!['jobs.lever.co','jobs.eu.lever.co'].includes(new URL(page.url()).hostname))return false;
+  const notice=page.locator('.cc-window[role="dialog"][aria-label="cookieconsent"]:visible');
+  if(await notice.count()!==1)return false;
+  const paragraphs=await notice.locator('p').allTextContents();
+  if(paragraphs.length!==1||paragraphs[0].replace(/\s+/g,' ').trim()!=='This website uses cookies to improve your web experience. By clicking Accept, you agree to the use of cookies.')return false;
+  const deny=notice.locator('button.cc-deny:visible');
+  if(await deny.count()!==1||!/^Deny$/i.test((await deny.innerText()).trim()))return false;
+  await deny.click({timeout:5000});await notice.waitFor({state:'hidden',timeout:5000});return true;
+ }catch{return false;}
+}
+
 // Reservation is durable before the only possible click. Errors after reservation
 // must remain uncertain; neither timeouts nor an unrelated receipt allow a replay.
 export async function submitHostedApplication({page,job,submit,review,reserve,wait,recordLimit,recordDiagnostic=()=>{},prepared=()=>{}}){
  const blocked=(message,challenge)=>({status:'needs_review',message,challenge});
+ if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');
+ await declineLeverCookies(page);
  if(!sameApplication(page.url(),job.url))return blocked('The final form no longer matches this application.','Application identity changed');
  const before=await page.locator('body').innerText();
  if(submissionDeclaration(before))return blocked('The final Submit action includes an employer declaration. Review and submit this form yourself.','Employer declaration');

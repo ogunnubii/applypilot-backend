@@ -61,7 +61,7 @@ export function recoverAutomaticPreparation(db,uid,jobId){
   if(j.local_owner||j.handoff_available||submissionStarted(db,j))throw Error('An existing browser or possible submission is protected from restarting.');
   // A legacy preparation action can queue a job while its batch member stays
   // blocked. Reconcile that same unattempted record; do not create a new member.
-  if(!['Missing answers','Form validation','Sensitive action','Worker error'].includes(j.challenge||m.reason))throw Error('This employer step is deferred.');
+  if(!['Missing answers','Form validation','Sensitive action','Worker error','Employer declaration'].includes(j.challenge||m.reason))throw Error('This employer step is deferred.');
   const problem=memberProblem(db,j);if(problem)throw Error(problem);
   db.prepare("UPDATE jobs SET status='queued',challenge=NULL,updated_at=? WHERE id=?").run(now(),j.id);
   db.prepare("UPDATE automatic_members SET outcome='pending',reason=NULL,settled_at=NULL WHERE job_id=?").run(j.id);

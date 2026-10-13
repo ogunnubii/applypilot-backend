@@ -13,6 +13,7 @@ import {excludesFrench,frenchApplication} from './language-policy.js';
 import {researchConsentWithdrawn} from './research-consent.js';
 import {priorApplication} from './application-dedup.js';
 import {companyKey,historyKey} from './application-history.js';
+import {externalPreparationProblem} from './preparation-handoff.js';
 
 const now=()=>new Date().toISOString();
 export function installSingleApplication(db){
@@ -100,6 +101,7 @@ function savedSearchProblem(db,job,focus,candidate=false){
  return preparationPreferenceProblem(db,job);
 }
 export function savedSearchClaimProblem(db,job){
+ const external=externalPreparationProblem(db,job);if(external)return external;
  const automatic=automaticClaimProblem(db,job);if(automatic!==null)return automatic;
  if(preparationCampaign(db,job.user_id)?.enabled)return 'Chrome preparation campaign is active; hosted execution is parked.';
  const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(job.user_id);
@@ -136,6 +138,7 @@ function hasSubmissionEvidence(db,job){
   !!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('submission_started','manual_submission','automatic_submission','applicant_reported_submission','submitted','manual_confirmation') LIMIT 1").get(job.id));
 }
 function preparationProblem(db,job){
+ const external=externalPreparationProblem(db,job);if(external)return external;
  const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,job.user_id),metadata=metadataFor(job);
  if(!p?.consent||!p.email||!p.resume_path)return 'Applicant consent, email and resume are required.';
  if(!inActiveBatch(db,job))return 'This application is outside your active batch.';

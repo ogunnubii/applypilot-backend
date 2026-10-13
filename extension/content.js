@@ -462,7 +462,7 @@ document.addEventListener('submit',e=>{
  if(submitter&&Date.now()-lastNativeSubmitClickAt>1000){recordAssistance();void observeManualSubmission();}
 },true);
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{
- if(m.action==='preparation-status'){reply({busy:!!busy,stopped:!!stopped,attempted:!!attempted,started:!!started});return;}
+ if(m.action==='preparation-status'){reply({busy:!!busy,stopped:!!stopped,attempted:!!attempted,started:!!started,jobId:packet?.job?.id,url:location.href,readyForSubmit:!!started&&!busy&&readyForMySubmit()});return;}
  if(m.action==='fill'){resumeFill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}
 });
 begin();

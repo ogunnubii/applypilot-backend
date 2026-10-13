@@ -19,6 +19,7 @@ import {automaticTextAnswer} from './automatic-answer.js';
 import {prepareHostedDropdown} from './dropdown-answer.js';
 import {supported as hostAllowed,sameApplication,employerPageIssue,savedOptionSelections} from './local-policy.js';
 import {recoverWorkerJobs} from './local-state.js';
+import {closeRetainedBrowser} from './retained-state.js';
 import {Handoffs,serveHandoffs} from './handoff.js';
 import {pickResumeField} from './form-policy.js';
 import {approvedHostedCheckbox,approvedHostedRadioIndex,hostedFieldAnswer,hostedFieldKind,hostedOptionChoice,protectedHostedQuestion,requiredUnansweredRadioGroups,scopedHostedComboboxOptions} from './hosted-form.js';
@@ -393,7 +394,7 @@ async function main(){recoverWorkerJobs();let browser=await chromium.launch({hea
  handoffs=new Handoffs({
   onDiagnostic:(job,message)=>event(job.id,'submission_diagnostic',message),
   onRejection:(job,text)=>recordEmployerRejection(db,job.user_id,job.id,text,{source:'Employer response in retained browser'}),
-  onClose:(job,message)=>{db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id);event(job.id,'handoff_closed',message)},
+  onClose:(job,message,details)=>closeRetainedBrowser(db,job.id,message,details),
   onPossibleSubmit:job=>{if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('manual_submission','submission_started') LIMIT 1").get(job.id)){event(job.id,'manual_submission','Applicant clicked the employer submit control.');event(job.id,'submission_started','Submission intent saved before the employer action.');}db.prepare("UPDATE jobs SET challenge='Unconfirmed submission',updated_at=? WHERE id=?").run(now(),job.id)},
   onSubmitted:(job,receiptText,observed)=>{if(db.prepare("SELECT 1 FROM autonomous_attempts WHERE job_id=? AND owner='hosted-worker'").get(job.id))syncHostedReceipt(db,job.id,job.user_id,{...observed,receipt:receiptText});else set(job,'submitted','Employer confirmed receipt during human handoff',null,receiptText);confirmLibrary(db,job);db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id)},
   onResume:async(job,session)=>{

@@ -111,3 +111,12 @@ test('equivalent LinkedIn profile URLs agree without accepting different account
  assert.equal(hostedFieldAnswer(field,profile,{'LinkedIn URL':'https://www.linkedin.com.evil.test/in/fixture'}),null);
  assert(protectedHostedQuestion('Do you require sponorship to work in the country you currently reside in?'));
 });
+
+test('observed Linkedln spelling uses only the saved applicant link and retains conflict/declaration guards',()=>{
+ const profile={linkedin:'https://www.linkedin.com/in/fictional-applicant'};
+ for(const label of ['Linkedln','Linkedln profile URL','Your Linkedln link'])assert.equal(hostedFieldAnswer({label},profile)?.answer,profile.linkedin,label);
+ assert.equal(hostedFieldAnswer({label:'Linkedln'},{},{LinkedIn:profile.linkedin})?.answer,profile.linkedin);
+ assert.equal(hostedFieldAnswer({label:'Linkedln'},{},{}),null);
+ assert.equal(hostedFieldAnswer({label:'Linkedln'},profile,{LinkedIn:'https://linkedin.com/in/another-applicant'}),null);
+ for(const field of [{label:'Supervisor Linkedln'},{label:'Linkedln',description:'Your emergency contact profile'},{label:'I certify my Linkedln information is accurate'},{label:'Linkedln',ambiguous:true}])assert.equal(hostedFieldAnswer(field,profile),null);
+});

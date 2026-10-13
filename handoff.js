@@ -60,7 +60,7 @@ export class Handoffs {
   if(this.full()){await context.close().catch(()=>{});this.onClose(job,'Live browser capacity is full. This application remains saved until a slot is available.');return false;}
   let initial='';for(const frame of page.frames())if(sameApplication(frame.url(),job.url))initial+='\n'+await frame.locator('body').innerText({timeout:1500}).catch(()=>'');
   const session={job,context,page,created:this.clock(),touched:this.clock(),busy:false,ready:job.challenge==='Ready to submit',attempted:['Submission in progress','Unconfirmed submission'].includes(job.challenge),initialReceipt:!!receipt(initial),chooser:null};
-  const attach=p=>p.on?.('filechooser',chooser=>{session.chooser=chooser});context.pages().forEach(attach);context.on?.('page',attach);
+  const attach=p=>{p.on?.('filechooser',chooser=>{session.chooser=chooser});p.on?.('crash',()=>{session.crashed=true;});};context.pages().forEach(attach);context.on?.('page',attach);
   this.sessions.set(job.id,session);
   session.diagnostic=watchSubmission(page);
  }
@@ -93,7 +93,14 @@ export class Handoffs {
    }finally{s.busy=false;}
   }
  }
+ async retireCrashed(id,s){
+  // A failed close leaves the session retained; recovery must not race it.
+  await s.context.close();
+  await this.onClose(s.job,s.attempted?'Retained browser crashed after possible submission. Receipt review is required; no retry is permitted.':'Retained browser crashed before submission. Closed the failed context; bounded preparation recovery may recheck this job.',{crashed:true,attempted:s.attempted});
+  s.diagnostic.stop();this.sessions.delete(id);
+ }
  async expire(){for(const [id,s] of this.sessions){
+  if(s.crashed&&!s.busy){s.busy=true;try{await this.retireCrashed(id,s);}catch{}finally{s.busy=false;}continue;}
   const expired=s.ready?this.clock()-s.created>12*60*60*1000:(this.clock()-s.touched>15*60*1000||this.clock()-s.created>45*60*1000);
   if(s.busy||!expired)continue;
   s.busy=true;
@@ -155,6 +162,9 @@ export class Handoffs {
    const image=await p.screenshot({type:'jpeg',quality:60,timeout:10000});
    const frameId=createHash('sha256').update(image).digest('hex');
    const url=new URL(p.url());return {image:data.frameId===frameId?undefined:image.toString('base64'),frameId,width:1100,height:800,host:url.hostname,uploadRequested:!!s.chooser,expiresAt:s.ready?s.created+12*60*60*1000:Math.min(s.touched+15*60*1000,s.created+45*60*1000)};
+  }catch(error){
+   if(/(?:^|: )Target crashed(?:\r?\n|$)/.test(String(error.message))){s.crashed=true;await this.retireCrashed(id,s);}
+   throw error;
   }finally{s.busy=false}
  }
 }

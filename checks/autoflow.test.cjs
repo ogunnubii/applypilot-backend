@@ -191,7 +191,7 @@ test('dashboard only retries an explicit busy refusal and honours a paused helpe
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://marvelous-vitality-production-c2d8.up.railway.app/'}),w=dom.window,requests=[];
  w.setInterval=()=>0;w.fetch=async(url,opts)=>{requests.push([String(url),opts?.body&&JSON.parse(opts.body)]);return {ok:true,json:async()=>String(url).endsWith('/claim')?{request:{jobId:'j',claimId:'lease'}}:{requests:[]}};};
- w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.37",checkedAt:Date.now()};resumeLocalApplication=handler;};');
+ w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']+';window.configureContinuationTest=(enabled,handler)=>{nextContinuationCheck=0;browserHelperStatus={enabled,version:"0.6.38",checkedAt:Date.now()};resumeLocalApplication=handler;};');
  w.configureContinuationTest(false,async()=>{});
  await w.drainContinuations({requests:[{state:'queued'}]});assert.equal(requests.filter(([url])=>url.endsWith('/claim')).length,0);
  for(const [error,expected] of [['Another application is running. Your answers are saved.','busy'],['Browser response timed out','review'],['','started']]){
@@ -474,14 +474,14 @@ test('resume editor escapes content, restricts ownership, preserves prior file a
  await assert.rejects(editor.saveResumeEdit(db,'u','p',draft.draftId,'/data',{read,write,makeDir}),/expired/);
  const stale=await editor.prepareResumeEdit(db,'u','p','text',{render,read});db.exec("UPDATE applicants SET resume_path='changed.pdf'");await assert.rejects(editor.saveResumeEdit(db,'u','p',stale.draftId,'/data',{read,write,makeDir}),/changed/);db.close();
 });
-test('needs-input numbering is stable, deduplicated, excludes completed jobs, and renders in extension popup',async()=>{
+test('needs-input ordering remains available to the dashboard but unfinished jobs do not render in the ready-only popup',async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
  const jobs=[{id:'two',title:'Platform',company:'B',status:'paused',created_at:'2026-02-01'},{id:'done',title:'Done',status:'submitted',local_phase:'blocked'},{id:'one',title:'SRE',company:'A',status:'local_browser',local_phase:'blocked',created_at:'2026-01-01'},{id:'queued',title:'Queued',status:'queued'}, {id:'one',status:'paused'}];
  const dom=new JSDOM(sources['extension/popup.html'],{runScripts:'outside-only'}),w=dom.window;
  w.chrome={runtime:{sendMessage:async()=>({ok:true,data:{jobs,state:{environment:'hosted',enabled:false,queue:[]}}})}};
  w.eval(sources['extension/policy.js']);assert.deepEqual(Array.from(w.ApplyPilotPolicy.attentionOrder(jobs),j=>j.id),['one','two']);
- w.eval(sources['extension/popup.js']);await new Promise(r=>setTimeout(r,10));
- assert.deepEqual(Array.from(w.document.querySelectorAll('.attention-position'),n=>n.textContent),['1/3','2/3','3/3']);assert(w.document.querySelector('#numbers').textContent.includes('2Need your input'));assert(!w.document.querySelector('#jobs').textContent.includes('Done'));dom.window.close();
+ w.eval(fs.readFileSync('extension/ready-forms.js','utf8'));w.eval(sources['extension/popup.js']);await new Promise(r=>setTimeout(r,10));
+ assert.equal(w.document.querySelectorAll('article').length,0);assert.match(w.document.querySelector('#numbers').textContent,/0Filled forms ready/);assert.match(w.document.querySelector('#jobs').textContent,/No filled forms are ready/);dom.window.close();
 });
 test('resume editor previews before save and invalidates edited drafts',async()=>{
  const {JSDOM}=require('jsdom'),assert=require('node:assert/strict');
@@ -505,8 +505,9 @@ test('attention counters share operation evidence while linked employer tabs rec
  const noOp={addListener(){}},chrome={storage:{local:{get:async()=>state,set:async v=>Object.assign(state,v),setAccessLevel:async()=>{}}},tabs:{query:async()=>[{id:4}],onRemoved:noOp},scripting:{executeScript:async({args})=>!args?[{result:{ready:true}}]:[{result:{data:args[1]==='/jobs'?{jobs}:{applications:[{id:'second',stalled:true}]}}}]},runtime:{getURL:p=>'chrome-extension://fixture/'+p,onMessage:noOp,onStartup:noOp,onInstalled:noOp},alarms:{get:async()=>({}),onAlarm:noOp}};
  const c={chrome,URL,console,Date,crypto:require('node:crypto').webcrypto,importScripts(){}};
  vm.runInNewContext(sources['extension/policy.js'],Object.assign(c,{setTimeout,clearTimeout}));vm.runInNewContext(sources['extension/background.js']+';globalThis.testHandle=handle;',Object.assign(c,{setTimeout,clearTimeout}));
+ vm.runInNewContext(fs.readFileSync('extension/ready-forms.js','utf8'),c);
  const popup=await c.testHandle({action:'list'},{url:'chrome-extension://fixture/popup.html'});
- assert.equal(popup.jobs.find(j=>j.id==='second').evidence.stalled,true);
+ assert.equal(popup.jobs.length,0,'unfinished jobs stay out of the popup while employer attention numbering remains intact');
  const result=await c.testHandle({action:'attention-position'},{tab:{id:8},frameId:0,url:'https://jobs.lever.co/example/second'});
  assert.equal(result.position,2);assert.equal(result.total,2);assert.deepEqual(Object.keys(result).sort(),['position','total']);
  await assert.rejects(c.testHandle({action:'attention-position'},{tab:{id:9},frameId:0,url:'https://jobs.lever.co/example/unrelated'}),/not linked/);
@@ -514,7 +515,7 @@ test('attention counters share operation evidence while linked employer tabs rec
  assert(!sources['extension/content.js'].includes("send('list')"));
  const {JSDOM}=require('jsdom'),dom=new JSDOM(sources['assistant-page.html'],{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
  w.setInterval=()=>0;w.eval(sources['extension/policy.js']);w.eval(sources['assistant-client.js']);
- w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.37'));w.close();
+ w.eval('renderBrowserReadiness([{execution_mode:"local"}])');assert(w.document.body.textContent.includes('0.6.38'));w.close();
 });
 
 test("Gemini live diagnostic is authenticated, scoped, rate limited and cannot submit",async()=>{

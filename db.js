@@ -4,6 +4,7 @@ import {installPipeline} from './application-pipeline.js';
 import {installRepeatGuard,sameApplication} from './application-dedup.js';
 import {companyKey,historyKey,installHistory} from './application-history.js';
 import {canonicalJobURL} from './form-policy.js';
+import {installPreparationHandoff,registerPreparationHandoffFunctions} from './preparation-handoff.js';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
@@ -20,6 +21,7 @@ CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(status,created_at);CREATE INDEX IF
 // SQLite triggers persist across restarts and can fire during startup
 // migrations, so restore their connection-local functions before any updates.
 registerCompanyApplicationPolicyFunctions(db);
+registerPreparationHandoffFunctions(db);
 db.function('application_employer_key',{deterministic:true},(company,url)=>employerKey({company,url}));
 db.function('same_application',{deterministic:true},(ac,at,au,bc,bt,bu)=>Number(sameApplication({company:ac,title:at,url:au},{company:bc,title:bt,url:bu})));
 db.function('history_company',{deterministic:true},companyKey);
@@ -98,4 +100,5 @@ import {installAutomaticCampaign} from './automatic-campaign.js';
 installAutomaticCampaign(db);
 import {installReceiptSync} from './receipt-sync.js';
 installReceiptSync(db);
+installPreparationHandoff(db);
 

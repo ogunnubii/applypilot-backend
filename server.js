@@ -1,4 +1,5 @@
 import {resolvePendingAnswers} from './pending-answers.js';
+import {exportPreparationLedger,reservePreparation} from './preparation-handoff.js';
 import {parkUnresolvedAttempt,unresolvedAttemptState,unresolvedAttemptMarker} from './unresolved-attempts.js';
 import {installReceiptSync,syncLocalReceipt} from './receipt-sync.js';
 import {automaticCampaign,automaticMember,automaticSnapshot,startManualBatch,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,recoverAutomaticPreparation} from './automatic-campaign.js';
@@ -97,6 +98,9 @@ const allowedOrigins=new Set([origin,process.env.SERVICE_ORIGIN,'https://applypi
 createServer(async(req,res)=>{res.setHeader('x-robots-tag','noindex, nofollow');res.setHeader('referrer-policy','no-referrer');res.setHeader('x-content-type-options','nosniff');const requestOrigin=req.headers.origin;if(requestOrigin&&!allowedOrigins.has(requestOrigin))return send(res,403,{error:'Origin not allowed'});res.setHeader('access-control-allow-origin',requestOrigin||origin);res.setHeader('vary','Origin');res.setHeader('access-control-allow-headers','authorization,content-type,x-applypilot-device');res.setHeader('access-control-allow-methods','GET,POST,PUT,DELETE,OPTIONS');if(req.method==='OPTIONS'){res.writeHead(204);res.end();return}
 try{let path=new URL(req.url,'http://localhost').pathname;if(await servePublicSite(req,res))return;if(req.method==='GET'&&['/assistant','/signup','/login','/assistant.js'].includes(path)){res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./assistant-client.js':'./assistant-page.html',import.meta.url)));return;}
 if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./extension/policy.js',import.meta.url)));return;}
+if(req.method==='GET'&&['/preparation-handoff','/preparation-handoff.js'].includes(path)){
+ res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/preparation-handoff.js':'./web/preparation-handoff.html',import.meta.url)));return;
+}
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
@@ -116,6 +120,12 @@ const authToken=req.headers.authorization?.replace(/^Bearer /i,'');
 let uid=readToken(authToken,db);if(!uid)return send(res,401,{error:'Sign in required'});
 if(path==='/api/me'&&req.method==='GET')return send(res,200,{user:{...db.prepare('SELECT id,email FROM users WHERE id=?').get(uid),emailVerified:false}});
 if(path==='/api/logout'&&req.method==='POST'){revokeToken(db,authToken);return send(res,200,{ok:true});}
+if(path==='/api/preparation-handoff/ledger'&&req.method==='GET'){
+ try{return send(res,200,exportPreparationLedger(db,uid));}catch(error){return send(res,409,{error:'Protected history could not be exported completely. Preparation remains blocked.',code:error.code||'incomplete_projection'});}
+}
+if(path==='/api/preparation-handoff/reserve'&&req.method==='POST'){
+ try{return send(res,200,reservePreparation(db,uid,JSON.parse(await body(req,10000))));}catch(error){return send(res,409,{error:'Preparation reservation requires a fresh protection check.',code:error.code||'reservation_failed'});}
+}
 
 
 if(path==='/api/ai-status'&&req.method==='GET')return send(res,200,publicFillStatus(db,uid));

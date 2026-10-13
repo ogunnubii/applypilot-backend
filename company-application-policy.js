@@ -1,5 +1,6 @@
 import {employerKey} from './employer-limits.js';
 import {companyKey} from './application-history.js';
+import {externalPreparationProblem} from './preparation-handoff.js';
 
 const OUTCOMES=new Set(['submitted','interview','rejected','offer']);
 const LIMIT_ERROR='Same-company application limit reached';
@@ -29,6 +30,7 @@ function started(job){return ['running','local_browser'].includes(job.status)||O
 function appendNote(notes,message){const value=String(notes||'');return value.includes('Same-company limit reached:')?value:[value,message].filter(Boolean).join(' · ');}
 
 export function companyApplicationPolicy(db,applicantId,job){
+ const external=externalPreparationProblem(db,{...job,applicant_id:applicantId});if(external)return {allowed:false,external:true,message:external};
  // Application history prevents repeating a requisition. Applying to a different
  // role at the same company is not a block; actual employer holds are separate.
  const own=job?.id&&db.prepare('SELECT * FROM company_application_activity WHERE job_id=?').get(job.id);
@@ -56,7 +58,7 @@ export function markExactRequisitionDuplicate(db,job,policy,{at=new Date().toISO
  return {id:job.id,company:job.company,title:job.title,status:changed?'duplicate':job.status,reason:message};
 }
 
-export function isCompanyApplicationPolicyError(error){return new RegExp(LIMIT_ERROR+'|'+DUPLICATE_ERROR,'i').test(String(error?.message||error));}
+export function isCompanyApplicationPolicyError(error){return new RegExp(LIMIT_ERROR+'|'+DUPLICATE_ERROR+'|Application reserved by ApplyPilot 2','i').test(String(error?.message||error));}
 
 export function registerCompanyApplicationPolicyFunctions(db){
  db.function('application_company_keys',{deterministic:true},(company,url)=>keysJSON({company,url}));

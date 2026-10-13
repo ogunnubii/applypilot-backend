@@ -41,6 +41,8 @@ function failBeforeSubmit(f,{message='Worker stopped: locator.evaluate: Target c
 
 const preparationTimeouts=[
  'Worker stopped: locator.evaluate: Timeout 5000ms exceeded.\nCall log:\n - waiting for locator(\'input:not([role="combobox"]):visible\').nth(1)',
+ 'Worker stopped: locator.blur: Timeout 5000ms exceeded.\nCall log:\n - waiting for locator(\'input:not([role="combobox"]):visible\').nth(1)',
+ "Worker stopped: locator.click: Timeout 5000ms exceeded.\nCall log:\n - waiting for getByRole('button', { name: /^(apply|apply now|apply for this job)$/i })",
  "Worker stopped: locator.click: Timeout 5000ms exceeded.\nCall log:\n - waiting for getByRole('link', { name: /^apply for this job$/i }).first()"
 ];
 test('observed pre-submit read/open-link timeouts recover autonomously while manual batch Submit remains disabled',()=>{
@@ -52,7 +54,7 @@ test('observed pre-submit read/open-link timeouts recover autonomously while man
   assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE type='human_assistance'").get().n,0);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM autonomous_attempts').get().n,0);
   assert.equal(f.get('next').status,'queued');f.db.close();
  }
- for(const message of ["Worker stopped: locator.click: Timeout 5000ms exceeded.\nCall log:\n - waiting for getByRole('button', { name: /^submit application$/i })",'Worker stopped: locator.fill: Timeout 5000ms exceeded.','Worker stopped: locator.evaluate: Unrecognized page error'])assert.equal(transientPreparationFailure(message),'');
+ for(const message of ["Worker stopped: locator.click: Timeout 5000ms exceeded.\nCall log:\n - waiting for getByRole('button', { name: /^submit application$/i })",'Worker stopped: locator.fill: Timeout 5000ms exceeded.','Worker stopped: locator.blur: Timeout 5000ms exceeded.\nCall log:\n - waiting for an unknown control','Worker stopped: locator.evaluate: Unrecognized page error'])assert.equal(transientPreparationFailure(message),'');
 });
 test('read/open-link timeout recovery never overrides attempts, employer holds, Stop or a live browser',()=>{
  for(const message of preparationTimeouts)for(const marker of ['intent','event','local','phase','receipt','handoff','owner','unclosed','stopped','hold']){

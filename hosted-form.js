@@ -28,6 +28,9 @@ function profileKind(value){
  // These observed labels explicitly accept alternative professional links.
  // LinkedIn is one accepted choice, so use the saved LinkedIn fact unchanged.
  if(/^(?:linkedin profile or website|linkedin, portfolio, personal website, github)$/.test(q.replace(/\blinked in\b/g,'linkedin').replace(/\bgit hub\b/g,'github')))return 'linkedin';
+ // Some employer forms spell the capital I as a lower-case l. Recognize only
+ // the personal profile label; declarations and third-party contacts stay held.
+ if(/^(?:your )?linkedln(?: profile)?(?: url| link)?$/.test(q))return 'linkedin';
  const direct=fieldKind(value)||fieldKind(spaced)||fieldKind(q);if(direct)return direct;
  if(/^(?:(?:please )?(?:enter|provide) )?(?:your )?(?:(?:full )?legal name|legal full name)$/.test(q))return 'name';
  if(/^(?:your )?full name legal$/.test(q))return 'name';

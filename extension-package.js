@@ -13,6 +13,6 @@ export function buildZip(entries){
 }
 let archive;
 export async function extensionArchive(){
- if(!archive){const files=['manifest.json','background.js','content.js','dashboard-bridge.js','policy.js','popup.html','popup.js','README.md'];archive=buildZip(await Promise.all(files.map(async name=>[name,await readFile(new URL('./extension/'+name,import.meta.url))])));}
+ if(!archive){const files=['manifest.json','background.js','content.js','dashboard-bridge.js','policy.js','ready-forms.js','popup.html','popup.js','README.md'];archive=buildZip(await Promise.all(files.map(async name=>[name,await readFile(new URL('./extension/'+name,import.meta.url))])));}
  return archive;
 }

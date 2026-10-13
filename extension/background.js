@@ -1,4 +1,4 @@
-importScripts('policy.js');
+importScripts('policy.js','ready-forms.js');
 const P=globalThis.ApplyPilotPolicy;
 const environments={hosted:{dashboard:'https://marvelous-vitality-production-c2d8.up.railway.app/',pagesDashboard:'https://applypilot-jobs.pages.dev/',legacyDashboard:'https://applypilot-jobs.netlify.app/',api:'https://marvelous-vitality-production-c2d8.up.railway.app/api'},local:{dashboard:'http://localhost:8080/assistant',api:'http://localhost:8080/api'}};
 const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','error','automaticDefault','userPaused'])});
@@ -31,6 +31,67 @@ async function listedJobs(){
  const [data,operations]=await Promise.all([api('/jobs'),api('/operations')]);
  const evidence=new Map((operations.applications||[]).map(j=>[j.id,j]));
  return {...data,totals:operations.totals,jobs:data.jobs.map(j=>({...j,evidence:evidence.get(j.id)}))};
+}
+async function readyJobs(onlyId){
+ const data=await listedJobs();
+ const state=await read(),jobs=[];let unavailable=0;
+ for(const job of data.jobs){
+  if(onlyId&&job.id!==onlyId)continue;
+  const record=state.records[job.id],source=ApplyPilotReadyForms.source(job,record);
+  if(!source||!job.evidence)continue;
+  try{
+   let expiresAt;
+   if(source==='hosted'){
+    // View can observe receipts, but cannot open/restart, fill or submit a form.
+    const view=await api('/jobs/'+job.id+'/handoff/view','POST',{});
+    if(view.submitted||view.closed||!view.frameId||view.expiresAt<=Date.now())continue;
+    expiresAt=view.expiresAt;
+   }else{
+    const tab=await chrome.tabs.get(record.tabId),tabs=await chrome.tabs.query({});
+    if(!P.sameApplication(tab.url,job.url)||!P.sameApplication(record.url,job.url)||tabs.filter(t=>P.sameApplication(t.url,job.url)).length!==1)continue;
+    const live=await probeForm(record);
+    if(!live?.readyForSubmit||!live.started||live.busy||live.attempted||live.jobId!==job.id||!P.sameApplication(live.url,job.url))continue;
+    expiresAt=Date.now()+30000;
+   }
+   jobs.push({...job,ready_form:{source,checked_at:Date.now(),expires_at:expiresAt}});
+  }catch{unavailable++;}
+ }
+ return {...data,jobs,unavailable};
+}
+async function reviewPrepared(id){
+ if(typeof id!=='string'||!/^[-a-f0-9]{36}$/.test(id))throw Error('Choose a prepared application.');
+ // Recheck at click time: never use the popup's potentially stale result.
+ const job=(await readyJobs(id)).jobs.find(j=>j.id===id);
+ if(!job)throw Error('This filled form is no longer ready or available. Refresh the list. No application was restarted.');
+ if(job.ready_form.source==='local'){
+  const record=(await read()).records[id],tab=await chrome.tabs.get(record.tabId);
+  if(!P.sameApplication(tab.url,job.url))throw Error('The prepared employer tab has changed. Refresh the list.');
+  await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});
+  return {opened:true,source:'local'};
+ }
+ const tab=await chrome.tabs.get(responsiveDashboardId);
+ await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});
+ const show=()=>chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:async job=>{
+  if(typeof openHandoff!=='function')return {dashboardRequired:true};
+  const existing=document.querySelector('#live-browser');
+  if(existing&&existing.dataset.preparedJobId!==job.id)return {error:'Close the other live application view first. Its employer session will stay open.'};
+  // Open only the existing viewer. The card's handoff/open action can queue a
+  // replacement browser after expiry, so deliberately do not click that card.
+  await openHandoff(job);
+  const panel=document.querySelector('#live-browser');if(panel)panel.dataset.preparedJobId=job.id;
+  return document.querySelector('#live-surface img')?.getAttribute('src')?{opened:true,source:'hosted'}:{error:'The live form could not be displayed. Check the connection in ApplyPilot; no application was restarted.'};
+ },args:[{id:job.id,title:job.title,company:job.company,url:job.url,challenge:'Ready to submit'}]});
+ let result=(await show())[0]?.result;
+ if(result?.dashboardRequired){
+  // Keep the authenticated tab and its sessionStorage on the same origin.
+  await chrome.tabs.update(tab.id,{url:new URL('/assistant?view=settings#job-'+id,tab.url).href});
+  for(let attempt=0;attempt<30;attempt++){
+   await new Promise(resolve=>setTimeout(resolve,250));
+   try{result=(await show())[0]?.result;if(result&&!result.dashboardRequired)break;}catch{}
+  }
+ }
+ if(!result?.opened)throw Error(result?.error||'Open the Applications page in ApplyPilot, then try again.');
+ return result;
 }
 async function initialize(){const s=await read();if(!s.automaticDefault)await chrome.storage.local.set({automaticDefault:true,enabled:true,userPaused:false});if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
 async function saveRecord(record){const s=await read();s.records[record.id]=record;await chrome.storage.local.set({records:s.records});}
@@ -202,7 +263,8 @@ async function handle(m,sender){
  }
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){
-  if(m.action==='list')return {...await listedJobs(),state:await read()};
+  if(m.action==='list')return {...await readyJobs(),state:await read()};
+  if(m.action==='review-prepared')return reviewPrepared(m.id);
   if(m.action==='open')return openJob(m.id,m.auto!==false,m.auto===false);
   if(m.action==='mark-completed'){
    if(typeof m.id!=='string'||!/^[-a-f0-9]{36}$/.test(m.id))throw Error('Choose a tracked application.');

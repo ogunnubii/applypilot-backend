@@ -96,6 +96,10 @@ export function recoverAutomaticPreparation(db,uid,jobId){
 
 export function transientPreparationFailure(message){
  const text=String(message||'');
+ // Only preparation reads and the specifically identified opening link are
+ // recoverable. A generic click timeout could have followed a Submit action.
+ if(/^Worker stopped: locator\.(?:evaluate|evaluateAll|inputValue|innerText|textContent): Timeout \d+ms exceeded\.(?:\r?\n|$)/.test(text))return 'Temporary employer-form read timeout before submission';
+ if(/^Worker stopped: locator\.click: Timeout \d+ms exceeded\./.test(text)&&/waiting for getByRole\('link', \{ name: \/\^apply for this job\$\/i \}\)\.first\(\)/.test(text))return 'Temporary timeout opening the employer application form';
  if(/^Worker stopped: (?:[A-Za-z][\w.]*: )?Target crashed(?:\r?\n|$)/.test(text))return 'Employer browser crashed before submission';
  if(/^Worker stopped: page\.goto: (?:net::ERR_(?:CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_TIMED_OUT|TIMED_OUT|NAME_NOT_RESOLVED)\b|Timeout \d+ms exceeded\.)/.test(text))return 'Temporary employer-page navigation failure';
  if(text==='Worker stopped: browser process restarted before submission.')return 'Worker restarted before submission';

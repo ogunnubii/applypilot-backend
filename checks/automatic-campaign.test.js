@@ -39,6 +39,37 @@ function failBeforeSubmit(f,{message='Worker stopped: locator.evaluate: Target c
  if(closed)f.db.prepare("INSERT INTO events VALUES('j',?,'handoff_closed','Failed context closed before submission')").run(new Date().toISOString());
 }
 
+const preparationTimeouts=[
+ 'Worker stopped: locator.evaluate: Timeout 5000ms exceeded.\nCall log:\n - waiting for locator(\'input:not([role="combobox"]):visible\').nth(1)',
+ "Worker stopped: locator.click: Timeout 5000ms exceeded.\nCall log:\n - waiting for getByRole('link', { name: /^apply for this job$/i }).first()"
+];
+test('observed pre-submit read/open-link timeouts recover autonomously while manual batch Submit remains disabled',()=>{
+ for(const message of preparationTimeouts){
+  const f=fixture();f.add('j');f.add('next');f.start({mode:'prepare_only',auto_submit:false});failBeforeSubmit(f,{message});
+  const before=f.get('j');let c=populateAutomaticCampaign(f.db,'u');assert.equal(c.members.find(x=>x.job_id==='j').outcome,'pending');assert.equal(f.get('j').status,'needs_review');
+  f.db.exec("UPDATE automatic_preparation_recovery SET next_at='2000'");populateAutomaticCampaign(f.db,'u');
+  assert.equal(f.get('j').status,'queued');assert.equal(f.get('j').attempts,before.attempts);assert.equal(focusAllowsSubmit(f.db,f.get('j')),false);assert.throws(()=>reserveAutonomousAttempt(f.db,'j','u','hosted-worker'));
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE type='human_assistance'").get().n,0);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM autonomous_attempts').get().n,0);
+  assert.equal(f.get('next').status,'queued');f.db.close();
+ }
+ for(const message of ["Worker stopped: locator.click: Timeout 5000ms exceeded.\nCall log:\n - waiting for getByRole('button', { name: /^submit application$/i })",'Worker stopped: locator.fill: Timeout 5000ms exceeded.','Worker stopped: locator.evaluate: Unrecognized page error'])assert.equal(transientPreparationFailure(message),'');
+});
+test('read/open-link timeout recovery never overrides attempts, employer holds, Stop or a live browser',()=>{
+ for(const message of preparationTimeouts)for(const marker of ['intent','event','local','phase','receipt','handoff','owner','unclosed','stopped','hold']){
+  const f=fixture();f.add('j');f.start({mode:'prepare_only',auto_submit:false});failBeforeSubmit(f,{message,closed:marker!=='unclosed'});
+  if(marker==='intent')f.db.exec("INSERT INTO autonomous_attempts VALUES('j','hosted-worker','2026')");
+  if(marker==='event')f.db.exec("INSERT INTO events VALUES('j','2026','submission_started','Possible attempt')");
+  if(marker==='local')f.db.exec("UPDATE jobs SET local_attempt_at='2026' WHERE id='j'");
+  if(marker==='phase')f.db.exec("UPDATE jobs SET local_phase='uncertain' WHERE id='j'");
+  if(marker==='receipt')f.db.exec("UPDATE jobs SET confirmation='Recorded receipt' WHERE id='j'");
+  if(marker==='handoff')f.db.exec("UPDATE jobs SET handoff_available=1 WHERE id='j'");
+  if(marker==='owner')f.db.exec("UPDATE jobs SET local_owner='browser' WHERE id='j'");
+  if(marker==='stopped')stopAutomaticCampaign(f.db,'u');
+  if(marker==='hold')f.db.exec("INSERT INTO employer_limits VALUES('u','p','lever:j','9999','Employer hold')");
+  const before=f.get('j');populateAutomaticCampaign(f.db,'u');assert.deepEqual(f.get('j'),before,marker);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM automatic_preparation_recovery').get().n,0,marker);f.db.close();
+ }
+});
+
 test('automatic preparation recovery waits, respects Stop, preserves history and exhausts two durable retries',()=>{
  const f=fixture();f.add('j');f.add('other');f.start();failBeforeSubmit(f);
  const before=Date.now();let c=populateAutomaticCampaign(f.db,'u');

@@ -5,6 +5,25 @@ const {Handoffs,isFinalSubmitControl}=await import('./handoff.js');
 
 const descriptor=(text,type='submit')=>({text,value:'',ariaLabel:'',title:'',type,disabled:false});
 
+test('a retained screenshot crash retires the failed context, while a transient view error does not',async()=>{
+ for(const [failure,retired] of [['page.screenshot: Target crashed\nCall log:',true],['page.screenshot: Timeout 10000ms exceeded',false]]){
+  const actions=[],frame={url:()=> 'https://jobs.lever.co/example/role',locator:()=>({innerText:async()=> 'Application form'})};
+  const page={frames:()=>[frame],url:frame.url,isClosed:()=>false,screenshot:async()=>{throw Error(failure);}};
+  const context={pages:()=>[page],close:async()=>actions.push('close')};
+  const h=new Handoffs({onClose:(_job,_message,details)=>{assert.deepEqual(details,{crashed:true,attempted:false});actions.push('persist');}});
+  await h.hold({id:'j',user_id:'u',url:frame.url(),challenge:'Ready to submit'},context,page);
+  await assert.rejects(h.command('u','j','view'),/page.screenshot/);assert.deepEqual(actions,retired?['close','persist']:[]);assert.equal(h.sessions.has('j'),!retired);
+ }
+});
+test('crash events are retired without a dashboard and failed closure cannot grant recovery',async()=>{
+ const actions=[],listeners={},frame={url:()=> 'https://jobs.lever.co/example/role',locator:()=>({innerText:async()=> 'Application form'})};
+ const page={frames:()=>[frame],url:frame.url,isClosed:()=>false,on:(name,fn)=>listeners[name]=fn};let failClose=true;
+ const context={pages:()=>[page],close:async()=>{if(failClose)throw Error('Close failed');actions.push('close');}};
+ const h=new Handoffs({onClose:(_j,_m,details)=>{assert.equal(details.attempted,true);actions.push('persist uncertain');}});
+ await h.hold({id:'j',user_id:'u',url:frame.url(),challenge:'Unconfirmed submission'},context,page);listeners.crash();await h.expire();assert.equal(h.sessions.size,1);assert.deepEqual(actions,[]);
+ failClose=false;await h.expire();assert.equal(h.sessions.size,0);assert.deepEqual(actions,['close','persist uncertain']);
+});
+
 function interactiveHarness(){
  let pointControl=null,enterState=null;
  const actions=[];

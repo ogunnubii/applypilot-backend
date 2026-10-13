@@ -39,8 +39,30 @@ function failBeforeSubmit(f,{message='Worker stopped: locator.evaluate: Target c
  if(closed)f.db.prepare("INSERT INTO events VALUES('j',?,'handoff_closed','Failed context closed before submission')").run(new Date().toISOString());
 }
 
+test('lost retained manual-batch forms recover after restart only before submission, with Stop and retry budget preserved',()=>{
+ for(const marker of ['ready','stopped','event','intent','receipt','phase','old-batch','budget']){
+  const f=fixture();f.db.exec('ALTER TABLE jobs ADD COLUMN lease_at');f.add('j');f.start({mode:'prepare_only',auto_submit:false});
+  f.db.exec("UPDATE jobs SET status='needs_review',challenge='Ready to submit',handoff_available=1;UPDATE automatic_members SET outcome='ready'");
+  if(marker==='stopped')stopAutomaticCampaign(f.db,'u');
+  if(marker==='event')f.db.exec("INSERT INTO events VALUES('j','2026','submission_started','Possible Submit')");
+  if(marker==='intent')f.db.exec("INSERT INTO autonomous_attempts VALUES('j','hosted-worker','2026')");
+  if(marker==='receipt')f.db.exec("UPDATE jobs SET confirmation='Existing receipt'");
+  if(marker==='phase')f.db.exec("UPDATE jobs SET local_phase='uncertain'");
+  if(marker==='old-batch')f.db.exec('UPDATE automatic_campaigns SET current_batch=2');
+  if(marker==='budget')f.db.exec("INSERT INTO automatic_preparation_recovery VALUES('j',2,NULL,0)");
+  const source=readFileSync('local-state.js','utf8'),code=source.slice(source.indexOf('export function recoverWorkerJobs'),source.indexOf('export function rememberAnswers')).replace('export ','');
+  const recover=new Function('db','event','now',code+';return recoverWorkerJobs;')(f.db,(id,type,message)=>f.db.prepare('INSERT INTO events VALUES(?,?,?,?)').run(id,new Date().toISOString(),type,message),()=>new Date().toISOString());
+  recover();assert.equal(f.get('j').handoff_available,0);populateAutomaticCampaign(f.db,'u');populateAutomaticCampaign(f.db,'u');
+  f.db.exec("UPDATE automatic_preparation_recovery SET next_at='2000'");populateAutomaticCampaign(f.db,'u');
+  assert.equal(f.get('j').status,marker==='ready'?'queued':'needs_review',marker);assert.equal(focusAllowsSubmit(f.db,f.get('j')),false);
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE type='human_assistance'").get().n,0);f.db.close();
+ }
+});
+
 const preparationTimeouts=[
  'Worker stopped: locator.evaluate: Timeout 5000ms exceeded.\nCall log:\n - waiting for locator(\'input:not([role="combobox"]):visible\').nth(1)',
+ 'Worker stopped: locator.blur: Timeout 5000ms exceeded.\nCall log:\n - waiting for locator(\'input:not([role="combobox"]):visible\').nth(1)',
+ "Worker stopped: locator.click: Timeout 5000ms exceeded.\nCall log:\n - waiting for getByRole('button', { name: /^(apply|apply now|apply for this job)$/i })",
  "Worker stopped: locator.click: Timeout 5000ms exceeded.\nCall log:\n - waiting for getByRole('link', { name: /^apply for this job$/i }).first()"
 ];
 test('observed pre-submit read/open-link timeouts recover autonomously while manual batch Submit remains disabled',()=>{
@@ -52,7 +74,7 @@ test('observed pre-submit read/open-link timeouts recover autonomously while man
   assert.equal(f.db.prepare("SELECT COUNT(*) n FROM events WHERE type='human_assistance'").get().n,0);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM autonomous_attempts').get().n,0);
   assert.equal(f.get('next').status,'queued');f.db.close();
  }
- for(const message of ["Worker stopped: locator.click: Timeout 5000ms exceeded.\nCall log:\n - waiting for getByRole('button', { name: /^submit application$/i })",'Worker stopped: locator.fill: Timeout 5000ms exceeded.','Worker stopped: locator.evaluate: Unrecognized page error'])assert.equal(transientPreparationFailure(message),'');
+ for(const message of ["Worker stopped: locator.click: Timeout 5000ms exceeded.\nCall log:\n - waiting for getByRole('button', { name: /^submit application$/i })",'Worker stopped: locator.fill: Timeout 5000ms exceeded.','Worker stopped: locator.blur: Timeout 5000ms exceeded.\nCall log:\n - waiting for an unknown control','Worker stopped: locator.evaluate: Unrecognized page error'])assert.equal(transientPreparationFailure(message),'');
 });
 test('read/open-link timeout recovery never overrides attempts, employer holds, Stop or a live browser',()=>{
  for(const message of preparationTimeouts)for(const marker of ['intent','event','local','phase','receipt','handoff','owner','unclosed','stopped','hold']){

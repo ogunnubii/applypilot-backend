@@ -19,11 +19,15 @@ export function installHistory(db){
  const columns=new Set(db.prepare('PRAGMA table_info(external_application_history)').all().map(r=>r.name));
  if(!columns.has('interview_stage'))db.exec("ALTER TABLE external_application_history ADD COLUMN interview_stage TEXT NOT NULL DEFAULT 'scheduled'");
 }
-export function importHistory(db,uid,rows){
+export function normalizeHistoryRows(rows){
  if(!Array.isArray(rows)||!rows.length||rows.length>500)throw Error('Import 1–500 application records');
  const clean=rows.map(r=>{if(r.interview_stage!==undefined&&!['scheduled','completed','needs_scheduling'].includes(r.interview_stage))throw Error('Choose a valid interview stage');const company=String(r.company||'').trim(),title=String(r.title||'').trim(),status=r.status||'applied';
  if(!company||!title||company.length>200||title.length>300||!['applied','interview','screening','rejected','offer'].includes(status))throw Error('Each record needs company, title and a valid status');
  return {company,title,status,interview_stage:r.interview_stage,notes:String(r.notes||'').slice(0,2000),source:String(r.source||'Tsenta — applicant supplied').slice(0,200),work_mode:['remote','hybrid','on-site'].includes(r.work_mode)?r.work_mode:'unknown',country:String(r.country||'').trim().slice(0,100),interview_at:String(r.interview_at||'').trim().slice(0,100)};});
+ return clean;
+}
+export function importHistory(db,uid,rows){
+ const clean=normalizeHistoryRows(rows);
  let added=0,updated=0,blocked=0;const active=[];const at=new Date().toISOString();
  db.exec('BEGIN IMMEDIATE');try{
  for(const r of clean){const ck=companyKey(r.company),tk=historyKey(r.title);if(!ck||!tk)throw Error('Company and title must contain letters or numbers');

@@ -19,6 +19,8 @@ import {installCompanyApplicationPolicy} from '../../company-application-policy.
 const identity=(id='1234',employer='Example Labs',title='Platform Engineer')=>({url:`https://job-boards.greenhouse.io/example/jobs/${id}`,employer,title,location:'Canada'});
 const request=(revision,id='request_example_0001',job=identity())=>({schema_version:2,request_id:id,expected_revision:revision,identity:job});
 const context={owner:'synthetic-owner',applicantId:'synthetic-applicant'};
+// Raw-DML fixtures deliberately use a recent past time; SQL keeps its strict no-future rule.
+const recentTime=()=>new Date(Date.now()-1000).toISOString();
 async function fixture(t,{file=false}={}){
  let url=':memory:';
  if(file){
@@ -42,6 +44,18 @@ async function hold(raw,{id='hold',job=identity(),applicant='different-owner-pro
  await raw.execute({sql:'INSERT INTO guard_identities VALUES(?,?,?,?,?)',args:[id,'u',job.employer,job.title,job.url]});
  await raw.execute({sql:'INSERT INTO guard_holds VALUES(?,?,?,?,?)',args:[id,'u',id,applicant,reason]});
 }
+
+test('default preparation timestamps use the database clock even when the client clock is ahead',async t=>{
+ const {db}=await fixture(t),NativeDate=globalThis.Date;
+ globalThis.Date=class extends NativeDate {constructor(...args){super(...(args.length?args:[NativeDate.now()+60000]));}static now(){return NativeDate.now()+60000;}};
+ try{
+  const snapshot=await exportPreparationLedger(db,'u');
+  assert(NativeDate.parse(snapshot.generated_at)<=NativeDate.now());
+  const reserved=await reservePreparation(db,'u',request(snapshot.revision),context);
+  assert.equal(reserved.decision,'reserved');assert(NativeDate.parse(reserved.checked_at)<=NativeDate.now());
+  await assert.rejects(exportPreparationLedger(db,'u',{at:new Date().toISOString()}),/future_snapshot_time/);
+ }finally{globalThis.Date=NativeDate;}
+});
 
 test('complete isolated export retains every guard protection and hold, isolates users and advances immutable revisions',async t=>{
  const {db,raw}=await fixture(t);
@@ -79,7 +93,7 @@ test('canonical requests reserve atomically; replay always requires a fresh snap
 });
 
 test('five-minute age, nonfuture time, revision and current digest are checked even for replay',async t=>{
- const {db,raw}=await fixture(t),at=new Date().toISOString();
+ const {db,raw}=await fixture(t),at=recentTime();
  await assert.rejects(reservePreparation(db,'u',request(1),{...context,at}),/fresh_snapshot_required/);
  const s=await exportPreparationLedger(db,'u',{at});
  await assert.rejects(reservePreparation(db,'u',request(s.revision),{...context,at:new Date(Date.parse(at)-1).toISOString()}),/fresh_snapshot_required/);
@@ -202,12 +216,12 @@ async function rawCandidate(raw,{id='raw-candidate',job=identity()}={}){
  return {id,canonical};
 }
 function rawCheckArgs(snapshot,candidate,overrides={}){
- return Object.values({check_id:'raw-check',user_id:'u',request_id:'raw_request_00001',claim_id:'raw-claim',identity_id:candidate.id,applicant_id:context.applicantId,owner:context.owner,identity_json:JSON.stringify(candidate.canonical),snapshot_revision:snapshot.revision,protection_digest:snapshot.protection_digest,projection_epoch:snapshot.projection_epoch,checked_at:new Date().toISOString(),...overrides});
+ return Object.values({check_id:'raw-check',user_id:'u',request_id:'raw_request_00001',claim_id:'raw-claim',identity_id:candidate.id,applicant_id:context.applicantId,owner:context.owner,identity_json:JSON.stringify(candidate.canonical),snapshot_revision:snapshot.revision,protection_digest:snapshot.protection_digest,projection_epoch:snapshot.projection_epoch,checked_at:recentTime(),...overrides});
 }
 const insertCheck=(raw,args)=>raw.execute({sql:'INSERT INTO guard_preparation_checks VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',args});
 const rawClaimArgs=q=>[q[3],q[1],q[2],q[4],q[5],q[6],'preparation',q[11]];
 const insertClaim=(raw,args,verb='INSERT')=>raw.execute({sql:verb+' INTO guard_claims VALUES(?,?,?,?,?,?,?,?)',args});
-const beginSyntheticImport=(raw,user='u')=>raw.execute({sql:'INSERT INTO guard_history_imports VALUES(?,?,?,?,?,?)',args:['pending-'+user,user,'1'.repeat(64),'2'.repeat(64),new Date().toISOString(),new Date().toISOString()]});
+const beginSyntheticImport=(raw,user='u')=>raw.execute({sql:'INSERT INTO guard_history_imports VALUES(?,?,?,?,?,?)',args:['pending-'+user,user,'1'.repeat(64),'2'.repeat(64),recentTime(),recentTime()]});
 
 test('pending import blocks raw preparation checks, claims, and snapshots including a once-valid check',async t=>{
  const {db,raw}=await fixture(t),s=await exportPreparationLedger(db,'u'),candidate=await rawCandidate(raw),q=rawCheckArgs(s,candidate);
@@ -215,7 +229,7 @@ test('pending import blocks raw preparation checks, claims, and snapshots includ
  assert.equal(Number((await raw.execute("SELECT epoch FROM guard_preparation_epochs WHERE user_id='u'")).rows[0].epoch),s.projection_epoch+1);
  await assert.rejects(insertClaim(raw,rawClaimArgs(q)),/history_import_incomplete/);
  await assert.rejects(insertCheck(raw,rawCheckArgs(s,candidate,{check_id:'after-import'})),/history_import_incomplete/);
- await assert.rejects(raw.execute({sql:'INSERT INTO guard_preparation_snapshots VALUES(?,?,?,?,?)',args:['u',s.revision+1,new Date().toISOString(),'0'.repeat(64),s.projection_epoch+1]}),/history_import_incomplete/);
+ await assert.rejects(raw.execute({sql:'INSERT INTO guard_preparation_snapshots VALUES(?,?,?,?,?)',args:['u',s.revision+1,recentTime(),'0'.repeat(64),s.projection_epoch+1]}),/history_import_incomplete/);
  const submission=rawClaimArgs(q);submission[6]='submission';
  await assert.rejects(insertClaim(raw,submission),/history_import_incomplete/);
  await assert.rejects(exportPreparationLedger(db,'u'),/history_import_incomplete/);
@@ -291,9 +305,9 @@ test('raw INSERT, REPLACE and upsert cannot create a preparation claim without a
 test('raw snapshot time, revision and epoch and raw check bindings cannot be forged',async t=>{
  const {db,raw}=await fixture(t),s=await exportPreparationLedger(db,'u'),candidate=await rawCandidate(raw);
  const insertSnapshot=args=>raw.execute({sql:'INSERT INTO guard_preparation_snapshots VALUES(?,?,?,?,?)',args});
- await assert.rejects(insertSnapshot(['u',99,new Date().toISOString(),'0'.repeat(64),0]),/invalid_snapshot_revision/);
+ await assert.rejects(insertSnapshot(['u',99,recentTime(),'0'.repeat(64),0]),/invalid_snapshot_revision/);
  await assert.rejects(insertSnapshot(['u',2,'2999-01-01T00:00:00.000Z','0'.repeat(64),0]),/future_snapshot_time/);
- await assert.rejects(insertSnapshot(['u',2,new Date().toISOString(),'0'.repeat(64),10]),/snapshot_epoch_changed/);
+ await assert.rejects(insertSnapshot(['u',2,recentTime(),'0'.repeat(64),10]),/snapshot_epoch_changed/);
  for(const overrides of [
   {snapshot_revision:s.revision+1},{projection_epoch:s.projection_epoch+1},{protection_digest:'0'.repeat(64)},
   {checked_at:'2999-01-01T00:00:00.000Z'},{checked_at:'2000-01-01T00:00:00.000Z'},
@@ -313,7 +327,7 @@ test('a fabricated matching digest never bypasses live SQL protection, hold or S
   if(scenario==='stop')await raw.execute("UPDATE guard_accounts SET stopped=1 WHERE user_id='u'");
   const epoch=Number((await raw.execute("SELECT epoch FROM guard_preparation_epochs WHERE user_id='u'")).rows[0].epoch);
   const s={revision:1,protection_digest:'0'.repeat(64),projection_epoch:epoch};
-  await raw.execute({sql:'INSERT INTO guard_preparation_snapshots VALUES(?,?,?,?,?)',args:['u',1,new Date().toISOString(),s.protection_digest,epoch]});
+  await raw.execute({sql:'INSERT INTO guard_preparation_snapshots VALUES(?,?,?,?,?)',args:['u',1,recentTime(),s.protection_digest,epoch]});
   await assert.rejects(insertCheck(raw,rawCheckArgs(s,candidate)),/application_already_protected|employer_hold|account_stopped_or_missing/);
   assert.equal(await count(raw,'guard_claims'),0);
  });
@@ -351,14 +365,14 @@ test('append-only epoch and check records resist UPDATE, DELETE, REPLACE and ups
 
 test('a raw snapshot rejects an invalid protected ID and the conservative SQL projection byte bound',async t=>{
  const bad=await fixture(t);await protect(bad.raw,{id:'bad\nid'});
- await assert.rejects(bad.raw.execute({sql:'INSERT INTO guard_preparation_snapshots VALUES(?,?,?,?,?)',args:['u',1,new Date().toISOString(),'0'.repeat(64),3]}),/incomplete_projection/);
+ await assert.rejects(bad.raw.execute({sql:'INSERT INTO guard_preparation_snapshots VALUES(?,?,?,?,?)',args:['u',1,recentTime(),'0'.repeat(64),3]}),/incomplete_projection/);
  const large=await fixture(t);
  await large.raw.execute({sql:'INSERT INTO guard_identities VALUES(?,?,?,?,?)',args:['large','u','Example','Engineer','https://example.test/'+'x'.repeat(2800)]});
  await large.raw.execute("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000) INSERT INTO guard_protections SELECT 'large:'||x,'u','large','uncertain','synthetic' FROM n");
  // Exact JSON is below 10 MiB; the documented conservative SQL estimate is
  // intentionally stricter so forged snapshots cannot skip bounded projection.
  await assert.rejects(exportPreparationLedger(large.db,'u'),/incomplete_projection/);
- await assert.rejects(large.raw.execute({sql:'INSERT INTO guard_preparation_snapshots VALUES(?,?,?,?,?)',args:['u',1,new Date().toISOString(),'0'.repeat(64),1002]}),/incomplete_projection/);
+ await assert.rejects(large.raw.execute({sql:'INSERT INTO guard_preparation_snapshots VALUES(?,?,?,?,?)',args:['u',1,recentTime(),'0'.repeat(64),1002]}),/incomplete_projection/);
 });
 
 test('native differential fixture agrees for URL-less history, different roles, canonical URLs and fresh replay',async t=>{

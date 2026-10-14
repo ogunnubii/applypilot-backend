@@ -1,6 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {HANDOFF_SOURCE,handoffIdentity,matches,protectionCondition,validateRequest} from '../preparation-handoff.js';
 import {companyKey} from '../application-history.js';
+import {appendImportedProjection,importedPreparationProblem} from '../database/imported-history-boundary.js';
 import {quotaStateFromJobs} from '../employer-limits.js';
 
 // Native-schema vertical slice. Each projection, quota refresh and reservation
@@ -67,7 +68,7 @@ async function projection(tx,uid,at){
  const employer_holds=[...new Map(holds.map(row=>[JSON.stringify(row),row])).values()].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
  const data={records,employer_holds};
  if(employer_holds.length>MAX_ROWS||Buffer.byteLength(JSON.stringify(data))>MAX_BYTES)fail('incomplete_projection');
- return data;
+ return appendImportedProjection(tx,uid,data);
 }
 export async function exportPreparationLedger(database,uid,{at=new Date().toISOString()}={}){
  return database.write(async tx=>{
@@ -75,7 +76,7 @@ export async function exportPreparationLedger(database,uid,{at=new Date().toISOS
   const data=await projection(tx,uid,at),previous=await tx.get('SELECT revision FROM preparation_handoff_snapshots WHERE user_id=?',uid),revision=(previous?.revision||0)+1;
   if(!Number.isSafeInteger(revision)||revision<1)fail('invalid_snapshot_revision');
   await tx.run('INSERT INTO preparation_handoff_snapshots VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET revision=excluded.revision,generated_at=excluded.generated_at,protection_digest=excluded.protection_digest',uid,revision,at,digest(data));
-  return {schema_version:2,source_project:HANDOFF_SOURCE,revision,generated_at:at,complete:true,...data};
+  return {schema_version:2,source_project:HANDOFF_SOURCE,revision,generated_at:at,complete:true,records:data.records,employer_holds:data.employer_holds};
  });
 }
 export async function reservePreparation(database,uid,input,{at=new Date().toISOString()}={}){
@@ -88,6 +89,8 @@ export async function reservePreparation(database,uid,input,{at=new Date().toISO
   if(!snapshot||!Number.isFinite(age)||age<0||age>300000)fail('fresh_snapshot_required');
   const data=await projection(tx,uid,at);
   if(input.expected_revision!==snapshot.revision||digest(data)!==snapshot.protection_digest)fail('snapshot_changed');
+  const importedProblem=await importedPreparationProblem(tx,{user_id:uid,company:identity.employer,title:identity.title,url:identity.url});
+  if(importedProblem)return {schema_version:2,source_project:HANDOFF_SOURCE,request_id:input.request_id,identity,revision:snapshot.revision,checked_at:at,submission_allowed:false,decision:'blocked',reason_code:importedProblem,reservation_id:previous?.reservation_id||null};
   const record=data.records.find(row=>row.record_id!=='reservation:'+previous?.reservation_id&&matches(row.identity,identity));
   const names=[identity.employer,...identity.employer_aliases].map(companyKey),hold=data.employer_holds.find(row=>[row.employer,...row.aliases].map(companyKey).some(n=>names.includes(n)));
   const base={schema_version:2,source_project:HANDOFF_SOURCE,request_id:input.request_id,identity,revision:snapshot.revision,checked_at:at,submission_allowed:false};

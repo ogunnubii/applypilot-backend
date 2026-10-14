@@ -2,7 +2,8 @@ import {resolveResumePath} from './storage-paths.js';
 import {resolvePendingAnswers} from './pending-answers.js';
 import {exportPreparationLedger,reservePreparation} from './api/preparation-handoff.js';
 import {parkUnresolvedAttempt,unresolvedAttemptState,unresolvedAttemptMarker} from './unresolved-attempts.js';
-import {installReceiptSync,syncLocalReceipt} from './receipt-sync.js';
+import {installReceiptSync,validatedReceiptText} from './receipt-sync.js';
+import {syncLocalReceipt} from './api/receipt-reconciliation.js';
 import {automaticCampaign,automaticMember,automaticSnapshot,startManualBatch,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,recoverAutomaticPreparation} from './automatic-campaign.js';
 import {preparationCampaign,preparationMember,startPreparationCampaign,populatePreparationCampaign,preparationSnapshot,preparationClaimProblem,recordPreparationProgress} from './preparation-campaign.js';
 import {searchInstruction,normalizeSearchScope,setSearchRemotePreference} from './search-scope.js';
@@ -37,7 +38,8 @@ import {operationSnapshot} from './operation-evidence.js';
 import {splitApplicationCooldowns,hideCooldownActions} from './application-cooldowns.js';
 import {officialCareers} from './official-careers.js';
 import {extensionArchive} from './extension-package.js';
-import {importHistory} from './application-history.js';
+import {applicationHistory} from './api/application-history.js';
+import {authorizePreparationStep,importedPreparationAccess} from './api/preparation-authorization.js';
 import {installArchive,archiveApplications,restoreApplication} from './application-archive.js';
 import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse,reusableAnswers} from './answer-library.js';
 import {installDrafts,draftForJob,draftAnswer} from './answer-drafts.js';
@@ -140,8 +142,10 @@ if(path==='/api/ai-facts-test'&&req.method==='POST'){
 }
 if(path==='/api/ai-test'&&req.method==='POST'){try{return send(res,200,await testPublicDrafting(db,uid));}catch(e){return send(res,400,{error:e.message});}}
 
-if(path==='/api/application-history'&&req.method==='GET')return send(res,200,{records:db.prepare('SELECT id,company,title,status,source,notes,imported_at,work_mode,country,interview_at,interview_stage FROM external_application_history WHERE user_id=? ORDER BY company,title').all(uid)});
-if(path==='/api/application-history'&&req.method==='POST'){try{const x=JSON.parse(await body(req,1500000));return send(res,200,importHistory(db,uid,x.rows));}catch(e){return send(res,400,{error:e.message});}}
+if(path==='/api/application-history'&&['GET','POST'].includes(req.method)){
+ let input;try{if(req.method==='POST')input=JSON.parse(await body(req,1500000));}catch{return send(res,400,{error:'Import valid application history JSON.'});}
+ const result=await applicationHistory(asyncDatabase,{uid,method:req.method,input});return send(res,result.status,result.body);
+}
 if(path==='/api/application-archive'&&req.method==='GET')return send(res,200,{jobs:db.prepare("SELECT j.id,j.title,j.company,j.url,a.archived_at FROM jobs j JOIN application_archive a ON a.job_id=j.id WHERE j.user_id=? AND j.status='archived' ORDER BY a.archived_at DESC").all(uid)});
 if(path==='/api/application-archive'&&req.method==='POST'){try{const x=JSON.parse(await body(req));return send(res,200,archiveApplications(db,uid,x.ids));}catch(e){return send(res,400,{error:e.message});}}
 const restoreArchiveRoute=path.match(/^\/api\/application-archive\/([a-f0-9-]+)\/restore$/);
@@ -296,6 +300,8 @@ if(letterRoute&&req.method==='GET'){
 }
 let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|answer|cover-letter|research-answer|research-used|step|attempt|submitted|capture|assistance)$/);
 if(localRoute){
+ if(localRoute[2]==='step'&&req.method==='POST'){const result=await authorizePreparationStep(asyncDatabase,{uid,jobId:localRoute[1],owner:req.headers['x-applypilot-device']});return send(res,result.status,result.body);}
+ if(localRoute[2]!=='submitted'){const denied=await importedPreparationAccess(asyncDatabase,{uid,jobId:localRoute[1]});if(denied)return send(res,denied.status,denied.body);}
  const j=ownJob(uid,localRoute[1]);if(!j)return send(res,404,{error:'Job not found'});
  const focus=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(uid);if(focus&&focus.job_id!==j.id&&['claim','packet','step'].includes(localRoute[2]))return send(res,409,{error:'This application is parked while you work on one job at a time.'});
  if(!inActiveBatch(db,j)&&['claim','packet','step','answer','cover-letter'].includes(localRoute[2]))return send(res,409,{error:'This application is outside your active batch.'});
@@ -377,14 +383,6 @@ if(localRoute){
   if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
   return send(res,200,{marked});
  }
- if(action==='step'&&req.method==='POST'){
-  const campaign=preparationCampaign(db,uid),member=preparationMember(db,j);
-  if(member&&(!campaign?.enabled||member.excluded_at||member.campaign_id!==campaign.id))return send(res,409,{error:'This preparation campaign is paused or this form is outside its current selection.'});
-  const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
-  if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
-  if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
-  return send(res,200,{ok:true});
- }
  if(action==='attempt'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
   if(typeof x.before!=='string'||!sameApplication(x.url,j.url))return send(res,409,{error:'Application identity requires review before recording an employer limit or submission.'});
@@ -413,10 +411,11 @@ if(localRoute){
   if(message!==previous){event(j.id,'local_browser',message);if(Number.isInteger(x.filled)&&x.filled>0&&x.filled<=150)event(j.id,'filled','Filled '+x.filled+' saved fields in the employer browser');}return send(res,200,{ok:true});
  }
  if(action==='submitted'&&req.method==='POST'){
-  const x=JSON.parse(await body(req)),receipt=text(x.receipt,300);
+  const x=JSON.parse(await body(req));
   if(applicationLimit(x.receipt)){recordEmployerLimit(db,uid,j.id,x.receipt,{source:'Employer response reported by browser helper'});return send(res,409,{error:'The employer limit message is not a submission receipt.'});}
+  let receipt;try{receipt=validatedReceiptText(x.receipt);}catch{return send(res,400,{error:'An affirmative full employer receipt is required'});}
   if(!j.local_attempt_at||!sameApplication(x.url,j.url)||x.afterSubmit!==true||!employerReceipt(receipt))return send(res,400,{error:'An employer receipt after submission is required'});
-  try{const result=syncLocalReceipt(db,j.id,uid,owner,x);confirmLibrary(db,j);return send(res,200,result);}catch(error){return send(res,409,{error:error.message});}
+  try{const result=await syncLocalReceipt(asyncDatabase,j.id,uid,owner,x);confirmLibrary(db,j);return send(res,200,result);}catch(error){return send(res,409,{error:error.message});}
  }
  return send(res,405,{error:'Method not allowed'});
 }

@@ -1,5 +1,11 @@
 # Verified protected-history projection
 
+The later [native runtime integration](../IMPORTED-RUNTIME-CHECKPOINT.md) wraps
+this installer in a new offline full-image copy with stopped accounts and native
+writer fences. It preserves private native tables separately from this allowlist;
+it does not restore resumes or qualify a remote runtime. This document describes
+the inner protected-history projection.
+
 `importNativeHistory({client,databasePath,manifest,userId,batchSize})` is a trusted
 offline installer for this inactive guard schema. It accepts a completed native
 SQLite image and independently retained format-1 snapshot manifest. It must never

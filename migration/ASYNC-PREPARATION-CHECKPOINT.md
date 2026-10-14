@@ -1,5 +1,9 @@
 # Async preparation and mandatory history checkpoint
 
+Historical checkpoint. [IMPORTED-RUNTIME-CHECKPOINT.md](IMPORTED-RUNTIME-CHECKPOINT.md)
+records the subsequent native import integration, history/Next/receipt API wiring
+and updated verification counts.
+
 The isolated server now awaits both preparation handoff operations through the
 shared async database adapter. Native SQLite remains the startup database. This
 is the third complete API slice, following preferences and professional facts;

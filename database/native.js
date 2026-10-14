@@ -1,12 +1,14 @@
 import {DatabaseSync} from 'node:sqlite';
 import {statSync} from 'node:fs';
 import {createAsyncDatabase} from './async-database.js';
+import {registerNativeFunctions} from './native-functions.js';
 
 // Open an existing database only, using a dedicated connection. Never pass the
 // legacy app's shared DatabaseSync through an async transaction boundary.
 export function openNativeDatabase(path) {
   if (!statSync(path).isFile()) throw Error('database_existing_file_required');
   const connection = new DatabaseSync(path, {enableForeignKeyConstraints: true});
+  registerNativeFunctions(connection);
   connection.exec('PRAGMA busy_timeout=0'); // fail contention; never block the event loop waiting for itself
   return createAsyncDatabase({
     async begin(mode) {

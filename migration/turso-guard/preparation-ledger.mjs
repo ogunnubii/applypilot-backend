@@ -178,9 +178,11 @@ export async function historyImportState(tx,userId){
  return {native_history_imported:imported,source_verified:imported,source_snapshot_sha:imported?status.source_snapshot_sha:null,history_import_scope:imported?'protected_history_projection':null};
 }
 
-export async function exportPreparationLedger(db,userId,{at=new Date().toISOString()}={}){
- required(userId,'account');timestamp(at);
+export async function exportPreparationLedger(db,userId,{at}={}){
+ required(userId,'account');if(at!==undefined)timestamp(at);
  return db.write(async tx=>{
+  // Use the enforcing database's clock, not a possibly faster client clock.
+  at??=(await tx.get("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS at")).at;
   const importState=await historyImportState(tx,userId);
   const data=await projection(tx,userId),previous=await tx.get('SELECT max(revision) AS revision FROM guard_preparation_snapshots WHERE user_id=?',userId);
   const revision=(previous?.revision||0)+1;
@@ -195,10 +197,11 @@ export async function exportPreparationLedger(db,userId,{at=new Date().toISOStri
 // owner/applicantId and the optional clock belong to the trusted calling
 // context, not the external request payload. Freshness is rechecked inside the
 // write transaction, including every replay; claims/stop fences remain SQL-owned.
-export async function reservePreparation(db,userId,input,{owner,applicantId,at=new Date().toISOString()}={}){
- required(userId,'account');required(owner,'owner');required(applicantId,'applicant');timestamp(at);
+export async function reservePreparation(db,userId,input,{owner,applicantId,at}={}){
+ required(userId,'account');required(owner,'owner');required(applicantId,'applicant');if(at!==undefined)timestamp(at);
  const identity=validateRequest(input),identityJSON=JSON.stringify(identity);
  return db.write(async tx=>{
+  at??=(await tx.get("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS at")).at;
   const importState=await historyImportState(tx,userId);
   const previous=await tx.get('SELECT * FROM guard_preparation_reservations WHERE user_id=? AND request_id=?',userId,input.request_id);
   if(previous&&(previous.identity_json!==identityJSON||previous.owner!==owner||previous.applicant_id!==applicantId))fail('request_identity_conflict');

@@ -1,0 +1,34 @@
+Γ£ö public signup, existing owner preservation, tenant boundaries and durable logout (1876.1475ms)
+Γ£ö local claim distinguishes hosted members from outsiders without changing applications or receipt evidence (1183.4912ms)
+Γ£ö real API autosaves drafts, learns completed factual answers, resumes once and archives without losing outcomes (1320.6404ms)
+Γ£ö cover-letter API enforces owner/browser, preserves the paused application and deduplication, and requires manual submission (1162.5955ms)
+Γ£ö real campaign API gives Chrome manual preparation packets, prevents other queue execution and measures filled evidence (1503.6387ms)
+Γ£ö handoff requires existing authentication, isolates accounts and preserves same-origin policy (871.2632ms)
+Γ£ö browser bridge needs explicit connection, exact opener/origin and stops sharing during in-flight work (113.9413ms)
+Γ£ö Role variants and Canadian cities match without accepting US-only remote (3.8942ms)
+Γ£ö Discovery queues only eligible direct matches and deduplicates repeated runs (69.1272ms)
+Γ£ö Ashby discovery saves comparable roles but queues only strong profile matches (35.7045ms)
+Γ£ö Expanded roles preserve CI/CD and the requested location priority (0.8265ms)
+Γ£ö Comparable infrastructure titles are discovered but only strong, location-compatible roles auto-queue (0.3647ms)
+Γ£ö Conflicting occupation and function titles are never strong auto-queue matches (0.644ms)
+Γ£ö Shared role suffixes and local-plus-remote location lists stay specific (0.344ms)
+Γ£ö Mixed local and remote-country constraints are order-independent (0.3065ms)
+Γ£ö Remote-country and free-text city clauses never fall open to worldwide matches (0.277ms)
+Γ£ö Resume discovery prefers explicit profile roles and carries the saved Canadian location (0.4117ms)
+Γ£ö Saved profile roles expand discovery without weakening level or location checks (0.2463ms)
+Γ£ö Old auto-generated searches refresh location from the current profile on every run (0.2502ms)
+Γ£ö Ashby employer boards and direct application links are accepted without broadening arbitrary hosts (0.3969ms)
+Γ£ö HTTP: ownership, companion UI, heartbeat and uncertain submission guard (801.7679ms)
+Γ£ö Canonical URLs collapse Lever apply aliases; upload selection rejects ambiguity (1.2759ms)
+Γ£ö Radio choices require an exact approved question and unambiguous option (0.3833ms)
+Γ£ö Live handoff isolates owners, preserves context on resume and expires idle sessions (6.6468ms)
+Γ£ö Full handoff slots preserve the existing browser and reject the newcomer (0.4939ms)
+Γ£ö Fast handoff acknowledges input without screenshots and still verifies receipts on view (1.1004ms)
+Γä╣ tests 26
+Γä╣ suites 0
+Γä╣ pass 26
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 0
+Γä╣ todo 0
+Γä╣ duration_ms 1966.1178

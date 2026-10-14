@@ -1,5 +1,11 @@
 # Render + Turso implementation checkpoint
 
+Latest checkpoint: [GUARD-IMPLEMENTATION.md](GUARD-IMPLEMENTATION.md) records the
+182-test SQL guard and protected-history import prototype. [RECOVERY-CHECKPOINT.md](RECOVERY-CHECKPOINT.md)
+supersedes the earlier console-backup memory assumptions and records its current
+resource blocker. The sections below preserve the earlier two-API-slice results;
+they do not imply the later guard prototype is integrated or production-ready.
+
 The isolated `migration/render-turso-async` branch now has a shared asynchronous
 database interface and two complete API slices wired into `server.js`:
 

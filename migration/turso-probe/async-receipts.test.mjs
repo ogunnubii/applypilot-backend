@@ -84,3 +84,25 @@ test('integer conversion refuses silent precision loss',async t=>{
  const {client}=await fixture(t);
  await assert.rejects(writeTransaction(client,tx=>tx.get('SELECT 9007199254740993 AS unsafe')),/integer_out_of_safe_range/);
 });
+
+for(const mode of ['local','hosted'])test(`async ${mode} receipt validates full text and matches native storage/replay`,async t=>{
+ const {client,source}=await fixture(t);
+ if(mode==='hosted'){
+  const setup="UPDATE jobs SET local_owner=NULL,status='needs_review'; INSERT INTO autonomous_attempts VALUES('j','hosted-worker','2026-01-01T00:00:00Z')";
+  await client.executeMultiple(setup);source.exec(setup);
+ }
+ const original=value=>mode==='local'?originalLocal(source,'j','u','owner',value):originalHosted(source,'j','u',value);
+ const migrated=value=>mode==='local'?syncLocalReceipt(client,'j','u','owner',value):syncHostedReceipt(client,'j','u',value);
+ const receipt='Your application has been received. '+'Additional details. '.repeat(30),before=await state(client);
+ const invalid=[receipt+'Your application was not submitted.',receipt+'Application limit has been reached.',receipt+'Placeholder confirmation.',receipt+'Your application is pending.',receipt+'\0',receipt+'\ud800',receipt+'é'.repeat(4096),null,3,{}];
+ for(const text of invalid){assert.throws(()=>original({...input,receipt:text}));await assert.rejects(migrated({...input,receipt:text}));}
+ assert.deepEqual(await state(client),before);assert.deepEqual(await state(client),originalState(source));
+ assert.deepEqual(await migrated({...input,receipt}),original({...input,receipt}));
+ assert.equal((await state(client)).employer_receipts[0].receipt_text,receipt);
+ await client.execute("UPDATE jobs SET status='offer'");source.exec("UPDATE jobs SET status='offer'");
+ const recorded=await state(client);
+ for(const text of invalid){assert.throws(()=>original({...input,receipt:text}));await assert.rejects(migrated({...input,receipt:text}));}
+ assert.equal((await migrated({...input,receipt,receiptId:'changed'})).alreadySynced,true);
+ assert.equal(original({...input,receipt,receiptId:'changed'}).alreadySynced,true);
+ assert.deepEqual(await state(client),recorded);assert.deepEqual(await state(client),originalState(source));
+});

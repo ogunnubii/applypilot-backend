@@ -1,0 +1,33 @@
+Γ£ö assistant-client.js never advertises completed or attempted manual-review jobs as ready to apply again (331.0655ms)
+Γ£ö web/progress.js never advertises completed or attempted manual-review jobs as ready to apply again (95.7114ms)
+Γ£ö content monitor recovers transient state and receipt failures without filling or submitting again (172.6405ms)
+Γ£ö retained receipt monitor runs without a view or Submit and persists the matching reserved attempt once (6.1702ms)
+Γ£ö background observation rejects unattempted, preexisting, unrelated, changed and negative receipts (0.9443ms)
+Γ£ö a failed receipt callback does not stop another session and observer failures are retried safely (1.2886ms)
+Γ£ö background observation records employer refusal once and never converts it to a receipt (0.6331ms)
+Γ£ö worker schedules background observation independently of dashboard requests (1.2999ms)
+Γ£ö expiry checks one last receipt, retains persistence failures and protects unresolved attempts (0.8478ms)
+Γ£ö a stopped hosted attempt can stay unresolved without losing counts or permitting retries (4.9065ms)
+Γ£ö hosted unresolved parking refuses an active browser, missing reservation or unfinished worker (1.8051ms)
+Γ£ö explicit owner-bound marker preserves uncertain outcome and job evidence, pauses only owner and never repeats execution (1.8416ms)
+Γ£ö atomic idempotency across connections never clears a later different focus or creates duplicate park events (57.1702ms)
+Γ£ö unknown/live states and stale evidence fail closed, including changed evidence after parking (4.4574ms)
+Γ£ö a genuine later receipt reconciles the outcome without removing the future-execution fence (2.8935ms)
+Γ£ö receipt retry persists original evidence exactly once and preserves later interview status (5.1757ms)
+Γ£ö hosted receipt requires its reserved attempt, is atomic and reconciles exactly once after a restart (1.4694ms)
+Γ£ö local: full receipt validation rejects late contradictions before first write and replay (5.4696ms)
+Γ£ö local: long valid evidence is retained exactly and later outcomes survive safe replay (3.0779ms)
+Γ£ö local: input cap uses UTF-8 bytes and rejects invalid encodings without truncation (1.3675ms)
+Γ£ö local: full receipt, outcome and event roll back together on storage failure (1.3321ms)
+Γ£ö hosted: full receipt validation rejects late contradictions before first write and replay (3.4014ms)
+Γ£ö hosted: long valid evidence is retained exactly and later outcomes survive safe replay (3.1683ms)
+Γ£ö hosted: input cap uses UTF-8 bytes and rejects invalid encodings without truncation (0.8773ms)
+Γ£ö hosted: full receipt, outcome and event roll back together on storage failure (1.7629ms)
+Γä╣ tests 25
+Γä╣ suites 0
+Γä╣ pass 25
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 0
+Γä╣ todo 0
+Γä╣ duration_ms 2354.4994

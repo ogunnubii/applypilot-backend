@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url';
 // Own fixture cleanup in the parent, after the test process has fully exited.
 const root = mkdtempSync(join(tmpdir(), 'applypilot-async-suite-'));
 try {
-  const result = spawnSync(process.execPath, ['--import', './migration/test-network-guard.mjs', '--test', 'database/*.test.js', 'api/*.test.js'], {
+  const result = spawnSync(process.execPath, ['--import', './migration/test-network-guard.mjs', '--test', 'database/*.test.js', 'api/*.test.js', 'migration/turso-guard/*.test.mjs'], {
     cwd: fileURLToPath(new URL('../', import.meta.url)),
     env: {...process.env, APPLYPILOT_ASYNC_TEST_ROOT: root},
     stdio: 'inherit', windowsHide: true

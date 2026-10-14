@@ -1,10 +1,11 @@
 // First complete async repository slice. This remains disconnected from server.js
 // until all installers, trigger functions, callers and claims are ported/tested.
 import {sameApplication,receipt as employerReceipt} from '../../local-policy.js';
+import {validatedReceiptText} from '../../receipt-sync.js';
 import {writeTransaction} from './async-transactions.mjs';
 
 export async function syncLocalReceipt(client,jobId,uid,owner,input){
- const text=String(input.receipt||'').slice(0,300),now=new Date().toISOString();
+ const text=validatedReceiptText(input.receipt),now=new Date().toISOString();
  return writeTransaction(client,async tx=>{
   const j=await tx.get('SELECT * FROM jobs WHERE id=? AND user_id=?',jobId,uid);
   if(!j||j.local_owner!==owner||!j.local_attempt_at||!sameApplication(input.url,j.url)||input.afterSubmit!==true||!employerReceipt(text))throw Error('An attributable employer receipt after this submission is required.');
@@ -21,7 +22,7 @@ export async function syncLocalReceipt(client,jobId,uid,owner,input){
 }
 
 export async function syncHostedReceipt(client,jobId,uid,input){
- const text=String(input.receipt||'').slice(0,300),now=new Date().toISOString();
+ const text=validatedReceiptText(input.receipt),now=new Date().toISOString();
  return writeTransaction(client,async tx=>{
   const j=await tx.get('SELECT * FROM jobs WHERE id=? AND user_id=?',jobId,uid);
   const attempt=await tx.get("SELECT created_at FROM autonomous_attempts WHERE job_id=? AND owner='hosted-worker'",jobId);

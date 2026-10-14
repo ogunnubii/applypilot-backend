@@ -1,0 +1,7 @@
+{
+  "name": "applypilot-turso-compatibility-probe",
+  "private": true,
+  "type": "module",
+  "scripts": {"test": "node --test compatibility.test.mjs"},
+  "dependencies": {"@libsql/client": "0.18.0"}
+}

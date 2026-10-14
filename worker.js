@@ -1,3 +1,4 @@
+import {resolveResumePath} from './storage-paths.js';
 import {hostedFormState} from './hosted-form-state.js';
 import {syncHostedReceipt} from './receipt-sync.js';
 import {automaticCampaign,automaticMember,populateAutomaticCampaign} from './automatic-campaign.js';
@@ -240,7 +241,7 @@ async function attachHostedResume(page,p){
  const file=files.nth(fields[selected].index);
  if(await file.evaluate(e=>!!e.files?.length||e.dataset.applypilotUploadAttempted==='true'))return {attached:false};
  await file.evaluate(e=>e.dataset.applypilotUploadAttempted='true');
- await file.setInputFiles(p.resume_path);
+ await file.setInputFiles(resolveResumePath(p.resume_path));
  const retained=await file.evaluate(e=>!!e.files?.length&&[...e.files].every(f=>f.size>0)).catch(()=>false);
  if(!retained)return {issue:'The employer did not retain the resume attachment. Review the upload before continuing.'};
  return {attached:true};

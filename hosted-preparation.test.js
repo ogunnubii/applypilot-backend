@@ -7,13 +7,14 @@ import * as hosted from './hosted-form.js';
 import {fillHostedText,typeHostedSearch} from './hosted-input.js';
 import {pickResumeField} from './form-policy.js';
 import {savedAnswer,savedOptionSelections,sameApplication} from './local-policy.js';
+import {resolveResumePath} from './storage-paths.js';
 
 const worker=readFileSync(new URL('./worker.js',import.meta.url),'utf8');
 const source=worker.slice(worker.indexOf('async function fieldDescriptor('),worker.indexOf('async function recordFormProgress('));
-const helpers=new Function(...Object.keys(hosted),'hostedFormState','fillHostedText','typeHostedSearch','pickResumeField','savedOptionSelections','sameApplication','automaticTextAnswer','prepareHostedDropdown','researchConsentWithdrawn','hasResearchDraftForQuestion','markResearchDraftUsed','fillHostedButtonGroups','event','db',source+';return {fill,custom,selections,radios,checkboxes,customControls,attachHostedResume,prepareHostedFields};')(
+const helpers=new Function(...Object.keys(hosted),'hostedFormState','fillHostedText','typeHostedSearch','pickResumeField','savedOptionSelections','sameApplication','automaticTextAnswer','prepareHostedDropdown','researchConsentWithdrawn','hasResearchDraftForQuestion','markResearchDraftUsed','fillHostedButtonGroups','event','db','resolveResumePath',source+';return {fill,custom,selections,radios,checkboxes,customControls,attachHostedResume,prepareHostedFields};')(
  ...Object.values(hosted),hostedFormState,fillHostedText,typeHostedSearch,pickResumeField,savedOptionSelections,sameApplication,
  async({question,answers})=>({answer:savedAnswer(question,answers),source:'saved'}),
- async(_db,_j,p,d,options,answers)=>hosted.hostedOptionChoice(d,options,p,answers),()=>false,()=>false,()=>{},async()=>{},()=>{},null);
+ async(_db,_j,p,d,options,answers)=>hosted.hostedOptionChoice(d,options,p,answers),()=>false,()=>false,()=>{},async()=>{},()=>{},null,resolveResumePath);
 
 function fixture(html){
  const dom=new JSDOM(html,{runScripts:'outside-only',url:'https://jobs.lever.co/fixture/role'}),w=dom.window,d=w.document;

@@ -1,0 +1,49 @@
+Γ£ö distinct roles at the same company are not subject to a blanket quota (5.5881ms)
+Γ£ö upgrade removes legacy quota triggers while preserving exact duplicate and employer limit enforcement (4.871ms)
+Γ£ö pipeline restores all unaffected distinct jobs and holds only the reported employer (10.7112ms)
+Γ£ö pipeline marks a rediscovered exact requisition duplicate after its started job was deleted (2.468ms)
+Γ£ö legacy queue reconciliation keeps every distinct role and marks an exact alias duplicate (2.9082ms)
+Γ£ö legacy started work and untouched distinct reservations are both retained (2.5121ms)
+Γ£ö a manually confirmed application immediately enters durable history and survives deletion (2.0249ms)
+Γ£ö recording a manual confirmation retains its durable identity alongside queued work (1.3175ms)
+Γ£ö a started application cannot be repointed to a different requisition (1.1106ms)
+Γ£ö an old requisition remains deduplicated while distinct roles stay available (1.085ms)
+Γ£ö deleting an untouched reservation preserves separation between different ATS tenants (1.3478ms)
+Γ£ö quota notice is not a refusal; Camunda 2/30 refusal is recognized and never a receipt (4.0243ms)
+Γ£ö policy notice alone does not block; only distinct receipts exhaust the rolling quota (6.7922ms)
+Γ£ö known receipts shorten an explicit hold; missing history retains the original conservative date (4.8472ms)
+Γ£ö attempts, placeholders, queued jobs and other applicants cannot consume confirmed places (2.6778ms)
+Γ£ö sent-to employer receipts require an affirmative completed sentence (4.0879ms)
+Γ£ö ATS allowlist and job identity reject lookalikes and other applications (1.7206ms)
+Γ£ö Saved memory is exact, unambiguous and never invents sensitive facts (0.7564ms)
+Γ£ö failure, hypothetical and quoted receipt text never count as employer confirmation (0.2022ms)
+Γ£ö adjacent application failures override polite receipts without rejecting unrelated footer negation (0.2149ms)
+Γ£ö standalone dashboard and extension use identical receipt policy (2.5449ms)
+Γ£ö WAL-aware snapshot and offline restore preserve every table, schema, upload and protected state (207.7498ms)
+Γ£ö never overwrites a snapshot or an existing restore destination (147.4575ms)
+Γ£ö rejects upload files outside the resume allowlist (70.0458ms)
+∩╣ú rejects hard-linked upload files when the sandbox permits fixture creation (61.4997ms) # Windows sandbox denies hard-link fixture creation; no escalation attempted
+Γ£ö tampered database bytes and resume bytes fail verification and cannot restore (149.4485ms)
+Γ£ö incomplete marker and missing manifest fail closed (116.1644ms)
+Γ£ö CLI errors do not print private paths or input contents (140.5697ms)
+Γ£ö rejects inconsistent foreign keys and a snapshot placed inside uploads (65.2799ms)
+Γ£ö minimal export retains URL-less history, exclusions, attempts and deleted tombstones; no personal content (9.1566ms)
+Γ£ö atomic reservation fences original queue/attempt paths and survives restart with no release or expiry (83.9375ms)
+Γ£ö stale/missing snapshots and changed protected state fail closed; valid replay needs fresh recheck (3.4334ms)
+Γ£ö company/title history and ATS aliases block reposts, but employer limits never block all platforms (9.8079ms)
+Γ£ö candidate URLs are real supported identities and cannot smuggle credentials or claim another requisition (0.6423ms)
+Γ£ö uncertain phases, independent attempt events and edited then deleted identities remain protected (2.4529ms)
+Γ£ö an unexportable protected record fails the whole snapshot rather than silently omitting protection (1.7863ms)
+Γ£ö two simultaneous preparations sharing one snapshot produce one durable reservation (110.3178ms)
+Γ£ö receipt retry persists original evidence exactly once and preserves later interview status (4.0693ms)
+Γ£ö hosted receipt requires its reserved attempt, is atomic and reconciles exactly once after a restart (1.1673ms)
+Γ£ö crashed prepared browser clears stale readiness and records failure before closure (1.8478ms)
+Γ£ö crashed retained browsers preserve every submission marker and completed or excluded records (2.0213ms)
+Γä╣ tests 41
+Γä╣ suites 0
+Γä╣ pass 40
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 1
+Γä╣ todo 0
+Γä╣ duration_ms 1109.7673

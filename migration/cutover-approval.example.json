@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "source_manifest_sha256": "REQUIRED_VERIFIED_MANIFEST_SHA256",
+  "target_origin": "http://localhost:8080",
+  "source_writers_frozen": false,
+  "backup_verified": false,
+  "same_extension_transition_reviewed": false,
+  "chrome_helper_stopped": false,
+  "ap2_stopped": false,
+  "secrets_provisioning_approved": false,
+  "cutover_approved": false
+}

@@ -1,0 +1,64 @@
+{
+  "recorded_at_utc": "2026-10-14T01:28:02Z",
+  "original_source_commit": "659d4c77cba5bca13cfbefbfa22574108d9ed16b",
+  "original_source_tree": "37117bb8a6d7d215a5cf01523c8aa481fa2c0d58",
+  "verified_remote_main": "fa7ab0f2ff61d53f7fb14f00ac9d7f1768a30a73",
+  "implemented_target": "Inactive native Windows Node/SQLite service on persistent local disk",
+  "turso_port_completed": false,
+  "turso_probe": {
+    "client": "@libsql/client@0.18.0",
+    "passed": 3,
+    "failed": 0,
+    "remote_account_called": false,
+    "observed_guard_error": "no such function: same_application",
+    "remote_function_registration_api": false,
+    "local_foreign_keys_rollback_and_unique_request_ids": "passed"
+  },
+  "full_existing_suite": {
+    "command": "npm test with migration/test-network-guard.mjs preloaded",
+    "tests": 635,
+    "passed": 635,
+    "failed": 0,
+    "follow_on_ui_checks_passed": 4,
+    "external_network_fetches": "blocked",
+    "loopback_test_access": "approved scoped sandbox escalation"
+  },
+  "deployment_suite": {
+    "tests": 17,
+    "passed": 16,
+    "failed": 0,
+    "skipped": 1,
+    "skip_reason": "Windows sandbox denies synthetic hard-link fixture creation; no workaround attempted"
+  },
+  "synthetic_startup": {
+    "passed": 1,
+    "health_http_status": 200,
+    "bind_address": "127.0.0.1",
+    "provider_calls": 0,
+    "worker_launches": 0,
+    "paused_background_database_changes": 0,
+    "child_process_stopped": true
+  },
+  "railway_evidence_source": "Parent task's supported authenticated browser audit; no production file read by this task",
+  "verified_railway_mount": "/app/data",
+  "verified_railway_database_path": "/app/data/applypilot.sqlite",
+  "verified_railway_upload_dir": "/app/data/resumes",
+  "supported_backup_route": "Existing Railway web Console and Files Download, subject to full-state-copy and transfer approval",
+  "archive_classification": "Credential-bearing private data: password verifiers, revoked-token fingerprints, application data and resumes",
+  "production_backup_created": false,
+  "production_archive_downloaded": false,
+  "real_credentials_read_or_copied": false,
+  "production_cutover": false,
+  "installed_extension_changed": false,
+  "held_extension_candidate_built": true,
+  "original_checkout": "Clean at the original commit, reverified read-only",
+  "remaining_gates": [
+    "Confirm PC-hosted fallback and uptime tradeoff",
+    "Explicit approval to create and transfer complete credential-bearing backup",
+    "Secure provisioning of existing identity/provider configuration without chat or Git exposure",
+    "Reviewed Poppler and local PDF-rendering browser runtime",
+    "Verified Chrome helper Stop state and reviewed same-installation release",
+    "Coordinated AP2 exact-origin update",
+    "Explicit source freeze, activation and origin-transition approval"
+  ]
+}

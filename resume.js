@@ -1,3 +1,4 @@
+import {resolveResumePath} from './storage-paths.js';
 import {readFile} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -41,6 +42,7 @@ function extractDocx(bytes){
 }
 
 export async function resumeText(path,kind){
+  path=resolveResumePath(path);
   let text;
   if(kind==='.pdf')({stdout:text}=await run('pdftotext',['-layout',path,'-'],{timeout:10000,maxBuffer:1_000_000}));
   else text=extractDocx(await readFile(path));

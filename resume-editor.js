@@ -1,3 +1,5 @@
+import {resolveResumePath} from './storage-paths.js';
+const readResume=path=>readFile(resolveResumePath(path));
 import {createHash,randomUUID} from 'node:crypto';
 import {mkdir,mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -54,7 +56,7 @@ export async function renderResume(input){
 const previews=new Map();let rendering=0;
 function purge(){for(const [id,p]of previews)if(p.expires<Date.now())previews.delete(id);}
 export function installResumeEditor(db){db.exec('CREATE TABLE IF NOT EXISTS resume_previous(applicant_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,path TEXT NOT NULL,saved_at TEXT NOT NULL)');}
-export async function prepareResumeEdit(db,uid,id,input,{render=renderResume,read=readFile}={}){
+export async function prepareResumeEdit(db,uid,id,input,{render=renderResume,read=readResume}={}){
  const applicant=db.prepare('SELECT name,resume_path FROM applicants WHERE id=? AND user_id=?').get(id,uid);
  if(!applicant)throw Error('Applicant not found');
  if(typeof input!=='string')throw Error('Resume text is required');
@@ -71,7 +73,7 @@ export async function prepareResumeEdit(db,uid,id,input,{render=renderResume,rea
   return {draftId,name,pages:result.images,text:result.text,bytes:result.pdf.length};
  }finally{rendering--;}
 }
-export async function saveResumeEdit(db,uid,id,draftId,uploadDir,{read=readFile,write=writeFile,makeDir=mkdir}={}){
+export async function saveResumeEdit(db,uid,id,draftId,uploadDir,{read=readResume,write=writeFile,makeDir=mkdir}={}){
  purge();const draft=previews.get(draftId);
  if(!draft||draft.uid!==uid||draft.applicantId!==id)throw Error('Preview expired. Preview this resume again before saving.');
  const current=db.prepare('SELECT resume_path FROM applicants WHERE id=? AND user_id=?').get(id,uid);

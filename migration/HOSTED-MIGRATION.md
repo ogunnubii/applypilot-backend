@@ -1,5 +1,10 @@
 # Public hosting migration: implementation checkpoint
 
+**Superseded checkpoint:** current implementation is the isolated Render + Turso
+async port described in [RENDER-TURSO-ASYNC.md](RENDER-TURSO-ASYNC.md). Oracle is
+excluded and alwaysdata was not qualified. The native-host candidate discussion
+below is retained as history, not an active hosting recommendation or approval.
+
 No production changes or credential transmission have occurred. The Windows-only
 candidate is not a completed migration. This branch now contains an asynchronous
 receipt repository for the Turso investigation and an inactive public Linux host

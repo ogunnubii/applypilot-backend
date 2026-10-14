@@ -9,6 +9,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
 const location=resolve(process.env.DATABASE_PATH||'./data/applypilot.sqlite');mkdirSync(dirname(location),{recursive:true});
+export const databasePath=location;
 export const db=new DatabaseSync(location);db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
 db.exec(`CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS applicants(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,email TEXT NOT NULL DEFAULT '',phone TEXT NOT NULL DEFAULT '',location TEXT NOT NULL DEFAULT '',focus TEXT NOT NULL DEFAULT '',answers_json TEXT NOT NULL DEFAULT '{}',resume_path TEXT,consent INTEGER NOT NULL DEFAULT 0,ai_consent INTEGER NOT NULL DEFAULT 0,google_research_consent INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);

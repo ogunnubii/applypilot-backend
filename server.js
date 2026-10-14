@@ -6,7 +6,10 @@ import {installReceiptSync,syncLocalReceipt} from './receipt-sync.js';
 import {automaticCampaign,automaticMember,automaticSnapshot,startManualBatch,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,recoverAutomaticPreparation} from './automatic-campaign.js';
 import {preparationCampaign,preparationMember,startPreparationCampaign,populatePreparationCampaign,preparationSnapshot,preparationClaimProblem,recordPreparationProgress} from './preparation-campaign.js';
 import {searchInstruction,normalizeSearchScope,setSearchRemotePreference} from './search-scope.js';
-import {canEmailAccount} from './account-policy.js';
+import {openNativeDatabase} from './database/native.js';
+import {notificationPreferences} from './api/notification-preferences.js';
+import {professionalExperience} from './api/professional-experience.js';
+import {databasePath} from './db.js';
 import {servePublicSite} from './public-site.js';
 import {populateBatch,batchSnapshot,resetSupportBatch,nextBatch,inActiveBatch,batchPreferences} from './application-batches.js';
 import {canCapture} from './answer-library.js';
@@ -14,7 +17,6 @@ import {submissionDeclaration} from './local-policy.js';
 import {ensureFocusedJob,focusSnapshot,setWorkFocus,startOneApplication,useSavedSearchQueue,savedSearchQueueState,savedSearchClaimProblem,focusAllowsSubmit,saveFormProgress,reserveAutonomousAttempt} from './single-application.js';
 import {installFunnel,createFunnelBatch,funnelStatus,retryFunnelItem,processFunnel,enableWorldwideDiscovery} from './job-funnel.js';
 import {loadManualApplication} from './manual-applications.js';
-import {experienceFor,saveExperience,deleteExperience} from './experience-library.js';
 import {installLanguagePolicy,excludesFrench,frenchApplication,archiveFrench,setFrenchExclusion} from './language-policy.js';
 import {installManualSubmitRecords,recordManualSubmit,recordReportedSubmission} from './manual-submit-record.js';
 import {fillPendingFactQuestions} from './paused-fact-fill.js';
@@ -54,6 +56,7 @@ import {parseBoards,parseIntent,profileSearchInstruction,runSearch,SEARCH_INTERV
 import {resumeRoles,resumeText} from './resume.js';
 installNotifications(db);installLibrary(db);installDrafts(db);installResearch(db);db.exec('CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT)');
 installArchive(db);installLanguagePolicy(db);installManualSubmitRecords(db);installContinuations(db);installPublicFill(db);installResumeEditor(db);installSavedRecovery(db);installReceiptSync(db);installCoverLetters(db);
+const asyncDatabase=openNativeDatabase(databasePath);
 installFunnel(db);const backgroundEnabled=process.env.APPLYPILOT_BACKGROUND_TASKS!=='paused';let funnelBusy=false;async function funnelTick(){if(!backgroundEnabled||funnelBusy)return;funnelBusy=true;try{await processFunnel(db);}catch(error){console.error('Job funnel:',error.message);}finally{funnelBusy=false}}
 const funnelTimer=setInterval(funnelTick,30000);funnelTimer.unref();setTimeout(funnelTick,2000).unref();
 const savedRecoveryTick=()=>{if(!backgroundEnabled)return;try{recoverSavedAnswers(db);}catch(error){console.error('Saved-answer recovery:',error.message);}};
@@ -147,18 +150,14 @@ if(restoreArchiveRoute&&req.method==='POST'){try{return send(res,200,restoreAppl
 const deleteRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)$/);
 if(deleteRoute&&req.method==='DELETE'){const x=JSON.parse(await body(req));if(x.confirm!==deleteRoute[1])return send(res,400,{error:'Confirm permanent deletion of this application'});try{if(unresolvedAttemptMarker(db,uid,deleteRoute[1]))return send(res,409,{error:'This unresolved application is protected. Its attempt history and duplicate barrier must be retained.'});return send(res,200,deleteApplication(db,uid,deleteRoute[1]));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/notifications'&&['GET','PUT'].includes(req.method)){
- const emailAllowed=canEmailAccount(db,uid);
- if(req.method==='PUT'){const x=JSON.parse(await body(req));if(typeof x.enabled!=='boolean')return send(res,400,{error:'Choose whether to enable blocker emails'});if(x.enabled&&!emailAllowed)return send(res,403,{error:'Email notifications are unavailable until mailbox ownership can be verified.'});db.prepare('INSERT INTO notification_preferences(user_id,enabled) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled').run(uid,x.enabled?1:0);}
- const enabled=!!db.prepare('SELECT enabled FROM notification_preferences WHERE user_id=?').get(uid)?.enabled;
- return send(res,200,{enabled:emailAllowed&&enabled,configured:emailAllowed&&emailConfigured(),emailVerificationRequired:!emailAllowed,failed:db.prepare("SELECT COUNT(*) AS n FROM blocker_emails b JOIN jobs j ON j.id=b.job_id WHERE j.user_id=? AND b.last_error IS NOT NULL").get(uid).n});
+ const result=await notificationPreferences(asyncDatabase,{uid,method:req.method,input:req.method==='PUT'?JSON.parse(await body(req)):undefined,configured:emailConfigured()});
+ return send(res,result.status,result.body);
 }
 const experienceRoute=path.match(/^\/api\/applicants\/([a-f0-9-]+)\/experience(?:\/([a-f0-9-]+))?$/);
-if(experienceRoute){try{const [,applicant,id]=experienceRoute;if(!db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(applicant,uid))return send(res,404,{error:'Profile not found.'});
- if(req.method==='GET'&&!id)return send(res,200,{facts:experienceFor(db,uid,applicant)});
- if(req.method==='DELETE'&&id){deleteExperience(db,uid,applicant,id);return send(res,200,{ok:true});}
- if(req.method==='POST'&&!id||req.method==='PUT'&&id){const result=saveExperience(db,uid,applicant,JSON.parse(await body(req)),id);db.prepare("UPDATE public_fill_attempts SET attempted_at='1970-01-01' WHERE state='needs_review' AND job_id IN (SELECT id FROM jobs WHERE user_id=? AND applicant_id=? AND local_attempt_at IS NULL)").run(uid,applicant);return send(res,200,result);}
- return send(res,405,{error:'Unsupported operation.'});
-}catch(error){return send(res,400,{error:error.message});}}
+if(experienceRoute){const [,applicant,id]=experienceRoute;
+ const result=await professionalExperience(asyncDatabase,{uid,applicant,id,method:req.method,input:['POST','PUT'].includes(req.method)?JSON.parse(await body(req)):undefined});
+ return send(res,result.status,result.body);
+}
 const draftRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/draft-answer$/);
 if(draftRoute&&req.method==='POST'){try{const x=JSON.parse(await body(req));return send(res,200,await draftForJob(db,uid,draftRoute[1],x.question));}catch(e){return send(res,400,{error:e.message});}}
 const researchRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/research-answer$/);

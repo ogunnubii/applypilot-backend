@@ -1,0 +1,44 @@
+
+> applypilot-worker@0.2.0 test:async
+> node checks/run-async-tests.mjs
+
+Γ£ö native: full GET/PUT preference slice is tenant-scoped and preserves protected job state (40.3796ms)
+Γ£ö native: unverified users cannot enable mail; missing accounts and malformed input cannot write (54.5797ms)
+Γ£ö native: failure after preference write rolls it back and does not leak driver details (58.7726ms)
+Γ£ö libsql: full GET/PUT preference slice is tenant-scoped and preserves protected job state (49.5166ms)
+Γ£ö libsql: unverified users cannot enable mail; missing accounts and malformed input cannot write (53.2925ms)
+Γ£ö libsql: failure after preference write rolls it back and does not leak driver details (47.482ms)
+Γ£ö uncertain response is not reported as success and asks for readback without automatic retry (0.1515ms)
+Γ£ö native: complete experience CRUD matches native facts and preserves attempted/other-profile drafts (59.3068ms)
+Γ£ö native: ownership, approved facts and cardinality checks precede writes (66.0613ms)
+Γ£ö native: failure refreshing drafts rolls back the professional fact as one operation (57.8647ms)
+Γ£ö libsql: complete experience CRUD matches native facts and preserves attempted/other-profile drafts (62.6569ms)
+Γ£ö libsql: ownership, approved facts and cardinality checks precede writes (54.4769ms)
+Γ£ö libsql: failure refreshing drafts rolls back the professional fact as one operation (35.9405ms)
+Γ£ö native: scoped reads/writes preserve rows, binary and integer results (48.9978ms)
+Γ£ö native: rollback covers FK violations, callback failure and caught SQL errors (34.6071ms)
+Γ£ö native: serialized callers cannot bleed into another transaction; handles expire (44.7909ms)
+Γ£ö native: nested, parallel, read-scope writes and transaction SQL fail closed (33.4277ms)
+Γ£ö native: two adapter instances cannot simultaneously claim the same writer lock (43.4902ms)
+Γ£ö libsql: scoped reads/writes preserve rows, binary and integer results (44.876ms)
+Γ£ö libsql: rollback covers FK violations, callback failure and caught SQL errors (31.6317ms)
+Γ£ö libsql: serialized callers cannot bleed into another transaction; handles expire (31.6681ms)
+Γ£ö libsql: nested, parallel, read-scope writes and transaction SQL fail closed (20.7155ms)
+Γ£ö libsql: two adapter instances cannot simultaneously claim the same writer lock (21.7188ms)
+Γ£ö lost commit acknowledgement returns uncertainty after one attempt, without rollback or retry (0.4178ms)
+Γ£ö a pending unawaited write is drained then rolled back, never committed (0.2137ms)
+Γ£ö rollback failure quarantines the adapter; a later request cannot reuse the connection (0.1614ms)
+Γ£ö foreign keys must be enabled on the actual transaction connection before any work (0.1434ms)
+Γ£ö remote factory rejects file replicas and embedded credentials before importing or connecting (0.195ms)
+Γ£ö official HTTP driver preserves one scoped connection through successful async reads/writes (24.98ms)
+Γ£ö official HTTP driver rolls back a partial write when a later foreign key fails (3.7378ms)
+Γ£ö official HTTP driver loses a commit response after durable write: uncertain, one insert, no retry (2.0783ms)
+Γ£ö official HTTP driver transaction expiration never commits work outside the failed transaction (1.7236ms)
+Γä╣ tests 32
+Γä╣ suites 0
+Γä╣ pass 32
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 0
+Γä╣ todo 0
+Γä╣ duration_ms 604.3683

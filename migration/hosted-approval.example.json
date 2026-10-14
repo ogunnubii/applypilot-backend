@@ -1,0 +1,15 @@
+{
+  "format": 1,
+  "config_digest": "REPLACE_WITH_PREFLIGHT_CONFIG_DIGEST",
+  "source_writers_frozen": false,
+  "backup_verified": false,
+  "same_extension_transition_reviewed": false,
+  "chrome_helper_stopped": false,
+  "ap2_stopped": false,
+  "secrets_provisioning_approved": false,
+  "cutover_approved": false,
+  "host_account_approved": false,
+  "durable_local_filesystem_verified": false,
+  "host_pdf_and_memory_test_passed": false,
+  "public_tls_and_proxy_verified": false
+}

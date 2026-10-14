@@ -84,6 +84,13 @@ function quotaState(db,row,at){
  const jobs=db.prepare(`SELECT j.*, (SELECT MIN(e.at) FROM events e WHERE e.job_id=j.id AND e.type IN ('submitted','manual_confirmation')) AS receipt_at,
  (SELECT MIN(e.at) FROM events e WHERE e.job_id=j.id AND e.type IN ('submission_started','applicant_reported_submission')) AS attempt_at
  FROM jobs j WHERE j.user_id=? AND j.applicant_id=?`).all(row.user_id,row.applicant_id);
+ const state=quotaStateFromJobs(row,at,jobs);
+ if(state.hold_until!==row.hold_until)db.prepare('UPDATE employer_limits SET hold_until=? WHERE user_id=? AND applicant_id=? AND employer_key=?').run(state.hold_until,row.user_id,row.applicant_id,row.employer_key);
+ return state;
+}
+// Shared pure policy: the async handoff uses the same evidence and time rules.
+export function quotaStateFromJobs(row,at,jobs){
+ if(!Object.hasOwn(row,'reached_at')||!row.limit_count||!row.window_days)return row;
  const unique=new Map(),windowMs=row.window_days*86400000,now=Date.parse(at);
  for(const job of jobs){
   if(employerKey(job)!==row.employer_key)continue;
@@ -109,7 +116,7 @@ function quotaState(db,row,at){
  if(Number.isFinite(reached)&&atReport.length<row.limit_count&&(row.reported_until===null||row.reported_until>at)){
   if(row.reported_until===null||!until||row.reported_until>until){until=row.reported_until;basis='reported-limit';}
  }
- if(until!==row.hold_until)db.prepare('UPDATE employer_limits SET hold_until=? WHERE user_id=? AND applicant_id=? AND employer_key=?').run(until,row.user_id,row.applicant_id,row.employer_key);
+
  return {...row,hold_until:until,basis,confirmed_in_window:current.length,uncertain_attempts:uncertain,remaining_from_records:until===null||until>at?0:Math.max(0,row.limit_count-current.length),next_review_at:until||null};
 }
 export function recordEmployerLimit(db,userId,jobId,value,{source='Applicant reported employer limit',at=new Date().toISOString()}={}){

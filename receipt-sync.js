@@ -1,4 +1,13 @@
 import {sameApplication,receipt as employerReceipt} from './local-policy.js';
+import {applicationEvidence} from './operation-evidence.js';
+
+// Validate and retain every character. A truncated prefix can conceal a later
+// failure, pending notice or placeholder. Bound the complete input instead.
+export function validatedReceiptText(value){
+ if(typeof value!=='string'||!value.isWellFormed()||value.includes('\0')||Buffer.byteLength(value,'utf8')>8192)throw Error('Valid full receipt text of at most 8192 bytes is required.');
+ if(!applicationEvidence({confirmation:value,receipt_event:true}).confirmed)throw Error('An affirmative non-placeholder employer receipt is required.');
+ return value;
+}
 
 export function installReceiptSync(db){
  db.exec(`CREATE TABLE IF NOT EXISTS employer_receipts(job_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,owner TEXT NOT NULL,application_url TEXT NOT NULL,receipt_url TEXT NOT NULL,attempt_at TEXT NOT NULL,receipt_text TEXT NOT NULL,observed_at TEXT NOT NULL,synced_at TEXT NOT NULL,receipt_id TEXT);`);
@@ -7,7 +16,7 @@ export function installReceiptSync(db){
 // Hosted receipts use the reservation written before the one permitted click.
 // Receipt, outcome and event commit together, including after worker recovery.
 export function syncHostedReceipt(db,jobId,uid,input){
- const text=String(input.receipt||'').slice(0,300),now=new Date().toISOString();
+ const text=validatedReceiptText(input.receipt),now=new Date().toISOString();
  db.exec('BEGIN IMMEDIATE');try{
   const j=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,uid);
   const attempt=db.prepare("SELECT created_at FROM autonomous_attempts WHERE job_id=? AND owner='hosted-worker'").get(jobId);
@@ -26,7 +35,7 @@ export function syncHostedReceipt(db,jobId,uid,input){
 // One durable receipt per application. Retrying a lost response cannot alter
 // the original receipt time, overwrite a later outcome, or add another event.
 export function syncLocalReceipt(db,jobId,uid,owner,input){
- const text=String(input.receipt||'').slice(0,300),now=new Date().toISOString();
+ const text=validatedReceiptText(input.receipt),now=new Date().toISOString();
  db.exec('BEGIN IMMEDIATE');try{
   const j=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(jobId,uid);
   if(!j||j.local_owner!==owner||!j.local_attempt_at||!sameApplication(input.url,j.url)||input.afterSubmit!==true||!employerReceipt(text))throw Error('An attributable employer receipt after this submission is required.');

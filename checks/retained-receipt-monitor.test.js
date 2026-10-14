@@ -65,7 +65,8 @@ test('background observation records employer refusal once and never converts it
 test('worker schedules background observation independently of dashboard requests',()=>{
  const worker=readFileSync(new URL('../worker.js',import.meta.url),'utf8');
  assert(worker.includes('await handoffs.observeReceipts()'));assert(worker.includes('setInterval(()=>receiptTick().catch(()=>{}),5000)'));
- assert(worker.includes('syncHostedReceipt(db,job.id,job.user_id,{...observed,receipt:receiptText})'));
+ assert(worker.includes('onSubmitted:async(job,receiptText,observed)=>'));
+ assert(worker.includes('await syncHostedReceipt(asyncDatabase,job.id,job.user_id,{...observed,receipt:receiptText})'));
 });
 
 test('expiry checks one last receipt, retains persistence failures and protects unresolved attempts',async()=>{

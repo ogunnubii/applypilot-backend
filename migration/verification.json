@@ -1,0 +1,49 @@
+{
+  "recorded_at_utc": "2026-10-14T01:02:32Z",
+  "scope": "Isolated offline migration support and existing SQLite guard regressions; synthetic fixtures only",
+  "base_commit": "659d4c77cba5bca13cfbefbfa22574108d9ed16b",
+  "base_tree": "37117bb8a6d7d215a5cf01523c8aa481fa2c0d58",
+  "runtime": {
+    "platform": "Windows",
+    "powershell": "7.6.5",
+    "node": "24.21.0",
+    "windows_execution_verified": true,
+    "browser_control": "Last CUA attempt failed before control: missing Windows platform directory, HRESULT 0x80070003"
+  },
+  "command": "node --test migration/state-snapshot.test.mjs preparation-handoff.test.js employer-limits.test.js company-application-policy.test.js receipt-sync.test.js retained-state.test.js local-policy.test.js",
+  "exit_code": 0,
+  "tests": 41,
+  "passed": 40,
+  "failed": 0,
+  "skipped": 1,
+  "skip_reason": "Windows sandbox denied creation of a synthetic hard-link fixture; no escalation or workaround attempted",
+  "coverage": [
+    "SQLite online backup retains committed WAL content",
+    "Schema and every table, including future tables and 64-bit/blob values, survive restore",
+    "Current and previous synthetic resume bytes and stored path strings remain intact",
+    "Uncertain submission intent, attempt count and absent receipt remain unchanged",
+    "Restored cross-app reservations still block original queue and attempt paths",
+    "Restored employer security holds still block queueing",
+    "Incomplete, tampered and foreign-key-inconsistent snapshots fail closed",
+    "Existing destinations are never overwritten",
+    "CLI errors omit private input names and row values",
+    "Existing duplicate, history, employer, receipt-recovery, crash-retention and concurrent-reservation regressions"
+  ],
+  "limits": [
+    "Production database and volume paths not inspected or exported",
+    "No live provider, employer form or submission calls",
+    "No cloud deployment, remote-database adapter or origin cutover validated",
+    "No full application test suite or browser UI run for this migration package",
+    "Hard-link rejection implementation remains unexercised in this sandbox"
+  ],
+  "preservation": {
+    "original_checkout_status": "clean, verified by read-only git status after migration tests",
+    "original_checkout_branch": "fix/extension-ready-forms",
+    "original_checkout_head": "659d4c77cba5bca13cfbefbfa22574108d9ed16b",
+    "production_changed": false,
+    "credentials_read_or_copied": false,
+    "accounts_or_credentials_created": false,
+    "provider_calls": false,
+    "employer_submissions": false
+  }
+}

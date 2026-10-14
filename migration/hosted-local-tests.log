@@ -1,0 +1,33 @@
+Γ£ö the standalone console command creates a WAL-consistent archive without printing row values (275.9125ms)
+Γ£ö held extension preserves records, pending receipts, environment and device identity while stopping work (2.4385ms)
+Γ£ö public-host review copy changes exact origin permissions and remains held (26.5067ms)
+Γ£ö public-host preflight preserves all rows and both legacy resume paths (150.4199ms)
+Γ£ö missing, incomplete or changed data cannot become a new hosted ledger (134.7371ms)
+Γ£ö public host configuration rejects non-HTTPS, arbitrary URLs and execution changes (111.5792ms)
+Γ£ö approval is bound to all target settings and supplies no new identity or credentials (141.5878ms)
+Γ£ö a restart retains operational state but cannot silently switch public origin (146.3709ms)
+Γ£ö candidate host probe uses synthetic data and verifies WAL, guard and restart semantics (337.5609ms)
+Γ£ö Windows runtime cannot activate a public Linux candidate (85.7881ms)
+Γ£ö local preflight verifies unchanged ledger and resolves both current and previous legacy resume paths (172.2587ms)
+Γ£ö absent or incomplete restored data cannot initialize a new ledger (114.259ms)
+Γ£ö changed protected data, manifest and resume bytes block first activation (166.7519ms)
+Γ£ö loopback, paused background work and independent backup are required (127.987ms)
+Γ£ö activation requires all cutover attestations and existing identity configuration (140.3131ms)
+Γ£ö a second writer and a stale lock both require operator review (121.1857ms)
+Γ£ö resume alias rejects traversal, unrelated roots, URLs and prefix lookalikes (0.4872ms)
+Γ£ö WAL-aware snapshot and offline restore preserve every table, schema, upload and protected state (204.3364ms)
+Γ£ö never overwrites a snapshot or an existing restore destination (141.9292ms)
+Γ£ö rejects upload files outside the resume allowlist (89.3113ms)
+∩╣ú rejects hard-linked upload files when the sandbox permits fixture creation (97.6774ms) # Windows sandbox denies hard-link fixture creation; no escalation attempted
+Γ£ö tampered database bytes and resume bytes fail verification and cannot restore (186.5004ms)
+Γ£ö incomplete marker and missing manifest fail closed (126.1144ms)
+Γ£ö CLI errors do not print private paths or input contents (161.6051ms)
+Γ£ö rejects inconsistent foreign keys and a snapshot placed inside uploads (73.1748ms)
+Γä╣ tests 25
+Γä╣ suites 0
+Γä╣ pass 24
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 1
+Γä╣ todo 0
+Γä╣ duration_ms 1241.8447

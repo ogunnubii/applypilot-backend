@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "provider": "alwaysdata",
+  "data_dir": "/home/REPLACE/private/applypilot/runtime",
+  "source_bundle": "/home/REPLACE/private/applypilot/verified-source",
+  "source_manifest_sha256": "REPLACE_WITH_VERIFIED_MANIFEST_SHA256",
+  "legacy_upload_dir": "/app/data/resumes",
+  "public_origin": "https://REPLACE.alwaysdata.net",
+  "bind_host": "127.0.0.1",
+  "port": 8080,
+  "local_browser_only": true,
+  "background_work": false
+}

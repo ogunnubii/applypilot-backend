@@ -1,11 +1,16 @@
+import {resolveResumePath} from './storage-paths.js';
 import {resolvePendingAnswers} from './pending-answers.js';
-import {exportPreparationLedger,reservePreparation} from './preparation-handoff.js';
+import {exportPreparationLedger,reservePreparation} from './api/preparation-handoff.js';
 import {parkUnresolvedAttempt,unresolvedAttemptState,unresolvedAttemptMarker} from './unresolved-attempts.js';
-import {installReceiptSync,syncLocalReceipt} from './receipt-sync.js';
+import {installReceiptSync,validatedReceiptText} from './receipt-sync.js';
+import {syncLocalReceipt} from './api/receipt-reconciliation.js';
 import {automaticCampaign,automaticMember,automaticSnapshot,startManualBatch,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,recoverAutomaticPreparation} from './automatic-campaign.js';
 import {preparationCampaign,preparationMember,startPreparationCampaign,populatePreparationCampaign,preparationSnapshot,preparationClaimProblem,recordPreparationProgress} from './preparation-campaign.js';
 import {searchInstruction,normalizeSearchScope,setSearchRemotePreference} from './search-scope.js';
-import {canEmailAccount} from './account-policy.js';
+import {openNativeDatabase} from './database/native.js';
+import {notificationPreferences} from './api/notification-preferences.js';
+import {professionalExperience} from './api/professional-experience.js';
+import {databasePath} from './db.js';
 import {servePublicSite} from './public-site.js';
 import {populateBatch,batchSnapshot,resetSupportBatch,nextBatch,inActiveBatch,batchPreferences} from './application-batches.js';
 import {canCapture} from './answer-library.js';
@@ -13,7 +18,6 @@ import {submissionDeclaration} from './local-policy.js';
 import {ensureFocusedJob,focusSnapshot,setWorkFocus,startOneApplication,useSavedSearchQueue,savedSearchQueueState,savedSearchClaimProblem,focusAllowsSubmit,saveFormProgress,reserveAutonomousAttempt} from './single-application.js';
 import {installFunnel,createFunnelBatch,funnelStatus,retryFunnelItem,processFunnel,enableWorldwideDiscovery} from './job-funnel.js';
 import {loadManualApplication} from './manual-applications.js';
-import {experienceFor,saveExperience,deleteExperience} from './experience-library.js';
 import {installLanguagePolicy,excludesFrench,frenchApplication,archiveFrench,setFrenchExclusion} from './language-policy.js';
 import {installManualSubmitRecords,recordManualSubmit,recordReportedSubmission} from './manual-submit-record.js';
 import {fillPendingFactQuestions} from './paused-fact-fill.js';
@@ -34,7 +38,8 @@ import {operationSnapshot} from './operation-evidence.js';
 import {splitApplicationCooldowns,hideCooldownActions} from './application-cooldowns.js';
 import {officialCareers} from './official-careers.js';
 import {extensionArchive} from './extension-package.js';
-import {importHistory} from './application-history.js';
+import {applicationHistory} from './api/application-history.js';
+import {authorizePreparationStep,importedPreparationAccess} from './api/preparation-authorization.js';
 import {installArchive,archiveApplications,restoreApplication} from './application-archive.js';
 import {installLibrary,captureAnswers,updateLibrary,deleteLibrary,confirmLibrary,canReuse,reusableAnswers} from './answer-library.js';
 import {installDrafts,draftForJob,draftAnswer} from './answer-drafts.js';
@@ -53,16 +58,17 @@ import {parseBoards,parseIntent,profileSearchInstruction,runSearch,SEARCH_INTERV
 import {resumeRoles,resumeText} from './resume.js';
 installNotifications(db);installLibrary(db);installDrafts(db);installResearch(db);db.exec('CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT)');
 installArchive(db);installLanguagePolicy(db);installManualSubmitRecords(db);installContinuations(db);installPublicFill(db);installResumeEditor(db);installSavedRecovery(db);installReceiptSync(db);installCoverLetters(db);
-installFunnel(db);let funnelBusy=false;async function funnelTick(){if(funnelBusy)return;funnelBusy=true;try{await processFunnel(db);}catch(error){console.error('Job funnel:',error.message);}finally{funnelBusy=false}}
+const asyncDatabase=openNativeDatabase(databasePath);
+installFunnel(db);const backgroundEnabled=process.env.APPLYPILOT_BACKGROUND_TASKS!=='paused';let funnelBusy=false;async function funnelTick(){if(!backgroundEnabled||funnelBusy)return;funnelBusy=true;try{await processFunnel(db);}catch(error){console.error('Job funnel:',error.message);}finally{funnelBusy=false}}
 const funnelTimer=setInterval(funnelTick,30000);funnelTimer.unref();setTimeout(funnelTick,2000).unref();
-const savedRecoveryTick=()=>{try{recoverSavedAnswers(db);}catch(error){console.error('Saved-answer recovery:',error.message);}};
+const savedRecoveryTick=()=>{if(!backgroundEnabled)return;try{recoverSavedAnswers(db);}catch(error){console.error('Saved-answer recovery:',error.message);}};
 const savedRecoveryTimer=setInterval(savedRecoveryTick,60000);savedRecoveryTimer.unref();setTimeout(savedRecoveryTick,2000).unref();
-const pipelineTimer=setInterval(()=>{try{queueEnabledPipelines(db);}catch(error){console.error('Application pipeline:',error.message);}},60000);pipelineTimer.unref();
+const pipelineTimer=setInterval(()=>{if(!backgroundEnabled)return;try{queueEnabledPipelines(db);}catch(error){console.error('Application pipeline:',error.message);}},60000);pipelineTimer.unref();
 let publicFillBusy=false;
-async function publicFillTick(){if(publicFillBusy)return;publicFillBusy=true;try{await resolvePendingAnswers(db);await fillPendingPublicQuestions(db);await fillPendingFactQuestions(db);}catch(error){console.error('Public answer drafting:',error.message);}finally{publicFillBusy=false;}}
+async function publicFillTick(){if(!backgroundEnabled||publicFillBusy)return;publicFillBusy=true;try{await resolvePendingAnswers(db);await fillPendingPublicQuestions(db);await fillPendingFactQuestions(db);}catch(error){console.error('Public answer drafting:',error.message);}finally{publicFillBusy=false;}}
 const publicFillTimer=setInterval(publicFillTick,60000);publicFillTimer.unref();setTimeout(publicFillTick,1500).unref();
 let emailBusy=false;
-const emailTimer=setInterval(async()=>{if(emailBusy)return;emailBusy=true;try{await sendBlockerEmails(db)}catch{console.error('Blocker notification delivery failed')}finally{emailBusy=false}},60000);emailTimer.unref();
+const emailTimer=setInterval(async()=>{if(!backgroundEnabled||emailBusy)return;emailBusy=true;try{await sendBlockerEmails(db)}catch{console.error('Blocker notification delivery failed')}finally{emailBusy=false}},60000);emailTimer.unref();
 const factsDiagnosticRuns=new Map();
 const origin=process.env.PUBLIC_ORIGIN;if(!origin)throw Error('Set PUBLIC_ORIGIN');const uploadDir=resolve(process.env.UPLOAD_DIR||'./data/resumes');const limit=6*1024*1024;
 const send=(res,status,data)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});res.end(JSON.stringify(data))};
@@ -121,10 +127,10 @@ let uid=readToken(authToken,db);if(!uid)return send(res,401,{error:'Sign in requ
 if(path==='/api/me'&&req.method==='GET')return send(res,200,{user:{...db.prepare('SELECT id,email FROM users WHERE id=?').get(uid),emailVerified:false}});
 if(path==='/api/logout'&&req.method==='POST'){revokeToken(db,authToken);return send(res,200,{ok:true});}
 if(path==='/api/preparation-handoff/ledger'&&req.method==='GET'){
- try{return send(res,200,exportPreparationLedger(db,uid));}catch(error){return send(res,409,{error:'Protected history could not be exported completely. Preparation remains blocked.',code:error.code||'incomplete_projection'});}
+ try{return send(res,200,await exportPreparationLedger(asyncDatabase,uid));}catch(error){return send(res,409,{error:'Protected history could not be exported completely. Preparation remains blocked.',code:error.code||'incomplete_projection'});}
 }
 if(path==='/api/preparation-handoff/reserve'&&req.method==='POST'){
- try{return send(res,200,reservePreparation(db,uid,JSON.parse(await body(req,10000))));}catch(error){return send(res,409,{error:'Preparation reservation requires a fresh protection check.',code:error.code||'reservation_failed'});}
+ try{return send(res,200,await reservePreparation(asyncDatabase,uid,JSON.parse(await body(req,10000))));}catch(error){return send(res,409,{error:'Preparation reservation requires a fresh protection check.',code:error.code||'reservation_failed'});}
 }
 
 
@@ -136,8 +142,10 @@ if(path==='/api/ai-facts-test'&&req.method==='POST'){
 }
 if(path==='/api/ai-test'&&req.method==='POST'){try{return send(res,200,await testPublicDrafting(db,uid));}catch(e){return send(res,400,{error:e.message});}}
 
-if(path==='/api/application-history'&&req.method==='GET')return send(res,200,{records:db.prepare('SELECT id,company,title,status,source,notes,imported_at,work_mode,country,interview_at,interview_stage FROM external_application_history WHERE user_id=? ORDER BY company,title').all(uid)});
-if(path==='/api/application-history'&&req.method==='POST'){try{const x=JSON.parse(await body(req,1500000));return send(res,200,importHistory(db,uid,x.rows));}catch(e){return send(res,400,{error:e.message});}}
+if(path==='/api/application-history'&&['GET','POST'].includes(req.method)){
+ let input;try{if(req.method==='POST')input=JSON.parse(await body(req,1500000));}catch{return send(res,400,{error:'Import valid application history JSON.'});}
+ const result=await applicationHistory(asyncDatabase,{uid,method:req.method,input});return send(res,result.status,result.body);
+}
 if(path==='/api/application-archive'&&req.method==='GET')return send(res,200,{jobs:db.prepare("SELECT j.id,j.title,j.company,j.url,a.archived_at FROM jobs j JOIN application_archive a ON a.job_id=j.id WHERE j.user_id=? AND j.status='archived' ORDER BY a.archived_at DESC").all(uid)});
 if(path==='/api/application-archive'&&req.method==='POST'){try{const x=JSON.parse(await body(req));return send(res,200,archiveApplications(db,uid,x.ids));}catch(e){return send(res,400,{error:e.message});}}
 const restoreArchiveRoute=path.match(/^\/api\/application-archive\/([a-f0-9-]+)\/restore$/);
@@ -146,18 +154,14 @@ if(restoreArchiveRoute&&req.method==='POST'){try{return send(res,200,restoreAppl
 const deleteRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)$/);
 if(deleteRoute&&req.method==='DELETE'){const x=JSON.parse(await body(req));if(x.confirm!==deleteRoute[1])return send(res,400,{error:'Confirm permanent deletion of this application'});try{if(unresolvedAttemptMarker(db,uid,deleteRoute[1]))return send(res,409,{error:'This unresolved application is protected. Its attempt history and duplicate barrier must be retained.'});return send(res,200,deleteApplication(db,uid,deleteRoute[1]));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/notifications'&&['GET','PUT'].includes(req.method)){
- const emailAllowed=canEmailAccount(db,uid);
- if(req.method==='PUT'){const x=JSON.parse(await body(req));if(typeof x.enabled!=='boolean')return send(res,400,{error:'Choose whether to enable blocker emails'});if(x.enabled&&!emailAllowed)return send(res,403,{error:'Email notifications are unavailable until mailbox ownership can be verified.'});db.prepare('INSERT INTO notification_preferences(user_id,enabled) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled').run(uid,x.enabled?1:0);}
- const enabled=!!db.prepare('SELECT enabled FROM notification_preferences WHERE user_id=?').get(uid)?.enabled;
- return send(res,200,{enabled:emailAllowed&&enabled,configured:emailAllowed&&emailConfigured(),emailVerificationRequired:!emailAllowed,failed:db.prepare("SELECT COUNT(*) AS n FROM blocker_emails b JOIN jobs j ON j.id=b.job_id WHERE j.user_id=? AND b.last_error IS NOT NULL").get(uid).n});
+ const result=await notificationPreferences(asyncDatabase,{uid,method:req.method,input:req.method==='PUT'?JSON.parse(await body(req)):undefined,configured:emailConfigured()});
+ return send(res,result.status,result.body);
 }
 const experienceRoute=path.match(/^\/api\/applicants\/([a-f0-9-]+)\/experience(?:\/([a-f0-9-]+))?$/);
-if(experienceRoute){try{const [,applicant,id]=experienceRoute;if(!db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(applicant,uid))return send(res,404,{error:'Profile not found.'});
- if(req.method==='GET'&&!id)return send(res,200,{facts:experienceFor(db,uid,applicant)});
- if(req.method==='DELETE'&&id){deleteExperience(db,uid,applicant,id);return send(res,200,{ok:true});}
- if(req.method==='POST'&&!id||req.method==='PUT'&&id){const result=saveExperience(db,uid,applicant,JSON.parse(await body(req)),id);db.prepare("UPDATE public_fill_attempts SET attempted_at='1970-01-01' WHERE state='needs_review' AND job_id IN (SELECT id FROM jobs WHERE user_id=? AND applicant_id=? AND local_attempt_at IS NULL)").run(uid,applicant);return send(res,200,result);}
- return send(res,405,{error:'Unsupported operation.'});
-}catch(error){return send(res,400,{error:error.message});}}
+if(experienceRoute){const [,applicant,id]=experienceRoute;
+ const result=await professionalExperience(asyncDatabase,{uid,applicant,id,method:req.method,input:['POST','PUT'].includes(req.method)?JSON.parse(await body(req)):undefined});
+ return send(res,result.status,result.body);
+}
 const draftRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/draft-answer$/);
 if(draftRoute&&req.method==='POST'){try{const x=JSON.parse(await body(req));return send(res,200,await draftForJob(db,uid,draftRoute[1],x.question));}catch(e){return send(res,400,{error:e.message});}}
 const researchRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/research-answer$/);
@@ -281,11 +285,11 @@ if(m&&req.method==='GET'){
  const p=db.prepare('SELECT name,resume_path FROM applicants WHERE id=? AND user_id=?').get(m[1],uid);
  if(!p)return send(res,404,{error:'Applicant not found'});
  if(!p.resume_path)return send(res,404,{error:'No resume has been uploaded for this profile'});
- const bytes=await readFile(p.resume_path),ext=extname(p.resume_path).toLowerCase();if(bytes.length>limit)throw Error('Resume too large');
+ const bytes=await readFile(resolveResumePath(p.resume_path)),ext=extname(p.resume_path).toLowerCase();if(bytes.length>limit)throw Error('Resume too large');
  let extracted='',previewNotice='';try{extracted=(await resumeText(p.resume_path,ext)).slice(0,100000);}catch{previewNotice='Text preview is unavailable. Download the original file to inspect it.';}
  return send(res,200,{name:'resume'+ext,applicant:p.name,mime:ext==='.pdf'?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document',bytes:bytes.length,base64:bytes.toString('base64'),text:extracted,hasPrevious:!!previousResumePath(db,uid,m[1]),previewNotice});
 }
-if(m&&req.method==='POST'){let p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(m[1],uid);if(!p)return send(res,404,{error:'Applicant not found'});let kind=req.headers['content-type'],ext=kind==='application/pdf'?'.pdf':kind==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'?'.docx':null;if(!ext)return send(res,415,{error:'Use PDF or DOCX'});let bytes=await body(req,limit);if(bytes.length<100)return send(res,400,{error:'Resume appears empty'});if(ext==='.pdf'&&!bytes.subarray(0,5).equals(Buffer.from('%PDF-')))return send(res,400,{error:'Invalid PDF'});if(ext==='.docx'&&!bytes.subarray(0,2).equals(Buffer.from('PK')))return send(res,400,{error:'Invalid DOCX'});await mkdir(uploadDir,{recursive:true,mode:0o700});let file=join(uploadDir,randomUUID()+ext);await writeFile(file,bytes,{mode:0o600});db.prepare('UPDATE applicants SET resume_path=? WHERE id=?').run(file,p.id);if(p.resume_path)await unlink(p.resume_path).catch(()=>{});let roles=[],instruction='',resumeNotice='';try{roles=await resumeRoles(file,ext);if(roles.length)instruction=createResumeSearch(uid,p,roles);else resumeNotice='No clear role titles found in the resume. Add a search manually.'}catch(e){console.error('Resume parsing:',e.message);resumeNotice='Resume saved, but its text could not be read. Add a search manually.'}return send(res,200,{ok:true,roles,instruction,resumeNotice})}
+if(m&&req.method==='POST'){let p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(m[1],uid);if(!p)return send(res,404,{error:'Applicant not found'});let kind=req.headers['content-type'],ext=kind==='application/pdf'?'.pdf':kind==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'?'.docx':null;if(!ext)return send(res,415,{error:'Use PDF or DOCX'});let bytes=await body(req,limit);if(bytes.length<100)return send(res,400,{error:'Resume appears empty'});if(ext==='.pdf'&&!bytes.subarray(0,5).equals(Buffer.from('%PDF-')))return send(res,400,{error:'Invalid PDF'});if(ext==='.docx'&&!bytes.subarray(0,2).equals(Buffer.from('PK')))return send(res,400,{error:'Invalid DOCX'});await mkdir(uploadDir,{recursive:true,mode:0o700});let file=join(uploadDir,randomUUID()+ext);await writeFile(file,bytes,{mode:0o600});db.prepare('UPDATE applicants SET resume_path=? WHERE id=?').run(file,p.id);if(p.resume_path)await unlink(resolveResumePath(p.resume_path)).catch(()=>{});let roles=[],instruction='',resumeNotice='';try{roles=await resumeRoles(file,ext);if(roles.length)instruction=createResumeSearch(uid,p,roles);else resumeNotice='No clear role titles found in the resume. Add a search manually.'}catch(e){console.error('Resume parsing:',e.message);resumeNotice='Resume saved, but its text could not be read. Add a search manually.'}return send(res,200,{ok:true,roles,instruction,resumeNotice})}
 if(path==='/api/jobs'&&req.method==='GET'){const automatic=populateAutomaticCampaign(db,uid);const preparation=populatePreparationCampaign(db,uid);const memberMap=new Map((preparation.members||[]).map(m=>[m.job_id,m]));const batch=populateBatch(db,uid);const focused=ensureFocusedJob(db,uid);const rows=db.prepare(`SELECT id,applicant_id,normalized_url,title,company,url,status,notes,confirmation,challenge,created_at,updated_at,required_fields_json,answers_json,handoff_available,local_phase,local_attempt_at,attempts,match_score,job_metadata_json,metadata_attempt_at,(SELECT COUNT(*) FROM manual_submit_clicks c WHERE c.job_id=jobs.id) AS manual_submit_clicks,(SELECT execution_mode FROM applicants WHERE id=jobs.applicant_id AND user_id=jobs.user_id) AS execution_mode,(SELECT message FROM events WHERE job_id=jobs.id AND type IN ('paused','needs_review') ORDER BY id DESC LIMIT 1) AS blocker_message,(SELECT message FROM events WHERE job_id=jobs.id ORDER BY id DESC LIMIT 1) AS last_message FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived') AND (NOT EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1) OR id=(SELECT job_id FROM work_focus f WHERE f.user_id=jobs.user_id) OR EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.enabled=1 AND f.skip_blocked=1) AND (status IN ('paused','needs_review') OR status='local_browser' AND local_phase='blocked') OR EXISTS(SELECT 1 FROM work_focus f WHERE f.user_id=jobs.user_id AND f.search_queue_only=1) AND (local_attempt_at IS NOT NULL OR attempts>0 OR local_phase IN ('uncertain','verifying') OR challenge IN ('Unconfirmed submission','Submission in progress')) OR status IN ('submitted','interview','rejected','offer')) ORDER BY match_score DESC,discovery_priority,created_at DESC`).all(uid).filter(j=>!batch?.enabled||batch.job_ids.includes(j.id)||['submitted','interview','rejected','offer'].includes(j.status)).map(job=>{let questions=[];try{questions=JSON.parse(job.required_fields_json||'[]')}catch{}return {...job,preparation:memberMap.get(job.id)||null,...(preparation.enabled&&memberMap.has(job.id)?{execution_mode:'local'}:{}),automatic_member:!!automaticMember(db,{...job,user_id:uid}),has_cover_letter:hasCoverLetter(db,job.id),official_careers:officialCareers(job),employer_hold:employerHold(db,{...job,user_id:uid}),metadata:metadataFor(job),editing_questions:db.prepare('SELECT question FROM answer_save_state WHERE job_id=? AND editing=1').all(job.id).map(r=>r.question),draft_needs:Object.fromEntries(db.prepare("SELECT question,json_extract(result_json,'$.reason') AS reason FROM professional_draft_cache WHERE job_id=? AND json_extract(result_json,'$.answer')=''").all(job.id).map(row=>[row.question,row.reason])),application_only_questions:[...new Set(questions.filter(question=>typeof question==='string'&&!canReuse(question)))]};});const ranked=prioritizeApplications(db,uid,rows).map(j=>({...j,queue_position:preparation.enabled?(memberMap.get(j.id)?.position??100000+j.queue_position):j.queue_position}));return send(res,200,{...splitApplicationCooldowns(db,uid,ranked),focus:focused,batch,preparation,automatic});}
 if(path==='/api/jobs'&&req.method==='POST'){let x=JSON.parse(await body(req)),p=db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(x.applicant_id,uid);if(!p)return send(res,400,{error:'Select your applicant profile'});let url=normalizeURL(x.url),id=randomUUID(),date=now();if(!supported(url))return send(res,400,{error:'Use a supported direct employer application link. Aggregator listings are not accepted.'});try{db.prepare('INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,uid,p.id,text(x.title,200),text(x.company,200),url,url,text(x.notes,2000),date,date)}catch{return send(res,409,{error:'Job already tracked for this applicant'})}event(id,'saved','Job added');return send(res,201,{id})}
 // Local browser mode owns the application until a receipt is recorded.
@@ -296,6 +300,8 @@ if(letterRoute&&req.method==='GET'){
 }
 let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|answer|cover-letter|research-answer|research-used|step|attempt|submitted|capture|assistance)$/);
 if(localRoute){
+ if(localRoute[2]==='step'&&req.method==='POST'){const result=await authorizePreparationStep(asyncDatabase,{uid,jobId:localRoute[1],owner:req.headers['x-applypilot-device']});return send(res,result.status,result.body);}
+ if(localRoute[2]!=='submitted'){const denied=await importedPreparationAccess(asyncDatabase,{uid,jobId:localRoute[1]});if(denied)return send(res,denied.status,denied.body);}
  const j=ownJob(uid,localRoute[1]);if(!j)return send(res,404,{error:'Job not found'});
  const focus=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(uid);if(focus&&focus.job_id!==j.id&&['claim','packet','step'].includes(localRoute[2]))return send(res,409,{error:'This application is parked while you work on one job at a time.'});
  if(!inActiveBatch(db,j)&&['claim','packet','step','answer','cover-letter'].includes(localRoute[2]))return send(res,409,{error:'This application is outside your active batch.'});
@@ -343,7 +349,7 @@ if(localRoute){
   const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid);
   if(!p?.consent)return send(res,403,{error:'Applicant consent required'});
   if(researchConsentWithdrawn(db,j.id,p.id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
-  const bytes=await readFile(p.resume_path);if(bytes.length>limit)throw Error('Resume too large');
+  const bytes=await readFile(resolveResumePath(p.resume_path));if(bytes.length>limit)throw Error('Resume too large');
   const applicationAnswers=JSON.parse(j.answers_json||'{}');if(!p.google_research_consent)for(const [question,answer] of Object.entries(applicationAnswers))if(isResearchDraft(db,j.id,question,answer))delete applicationAnswers[question];
   const campaign=preparationCampaign(db,uid),member=preparationMember(db,j);
   return send(res,200,{prepareSteps:!!(campaign?.enabled&&member&&member.campaign_id===campaign.id&&!member.excluded_at),autonomousSubmit:metadataFor(j).manualReview||globalThis.ApplyPilotPolicy.customApplication(j.url)?false:focusAllowsSubmit(db,j),job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...reusableAnswers(db,p),...applicationAnswers},savedFactsAvailable:true,aiAssistance:!!((p.google_research_consent||p.gemini_facts_consent)&&process.env.GEMINI_API_KEY||p.ai_consent&&process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),applicationOnlyQuestions:db.prepare('SELECT question FROM research_drafts WHERE job_id=? UNION SELECT question FROM fact_drafts WHERE job_id=?').all(j.id,j.id).map(row=>row.question),excludeFrench:excludesFrench(db,uid),resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
@@ -377,14 +383,6 @@ if(localRoute){
   if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
   return send(res,200,{marked});
  }
- if(action==='step'&&req.method==='POST'){
-  const campaign=preparationCampaign(db,uid),member=preparationMember(db,j);
-  if(member&&(!campaign?.enabled||member.excluded_at||member.campaign_id!==campaign.id))return send(res,409,{error:'This preparation campaign is paused or this form is outside its current selection.'});
-  const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
-  if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
-  if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
-  return send(res,200,{ok:true});
- }
  if(action==='attempt'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
   if(typeof x.before!=='string'||!sameApplication(x.url,j.url))return send(res,409,{error:'Application identity requires review before recording an employer limit or submission.'});
@@ -413,10 +411,11 @@ if(localRoute){
   if(message!==previous){event(j.id,'local_browser',message);if(Number.isInteger(x.filled)&&x.filled>0&&x.filled<=150)event(j.id,'filled','Filled '+x.filled+' saved fields in the employer browser');}return send(res,200,{ok:true});
  }
  if(action==='submitted'&&req.method==='POST'){
-  const x=JSON.parse(await body(req)),receipt=text(x.receipt,300);
+  const x=JSON.parse(await body(req));
   if(applicationLimit(x.receipt)){recordEmployerLimit(db,uid,j.id,x.receipt,{source:'Employer response reported by browser helper'});return send(res,409,{error:'The employer limit message is not a submission receipt.'});}
+  let receipt;try{receipt=validatedReceiptText(x.receipt);}catch{return send(res,400,{error:'An affirmative full employer receipt is required'});}
   if(!j.local_attempt_at||!sameApplication(x.url,j.url)||x.afterSubmit!==true||!employerReceipt(receipt))return send(res,400,{error:'An employer receipt after submission is required'});
-  try{const result=syncLocalReceipt(db,j.id,uid,owner,x);confirmLibrary(db,j);return send(res,200,result);}catch(error){return send(res,409,{error:error.message});}
+  try{const result=await syncLocalReceipt(asyncDatabase,j.id,uid,owner,x);confirmLibrary(db,j);return send(res,200,result);}catch(error){return send(res,409,{error:error.message});}
  }
  return send(res,405,{error:'Method not allowed'});
 }

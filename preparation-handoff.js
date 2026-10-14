@@ -7,7 +7,7 @@ import {employerQuotas} from './employer-limits.js';
 export const HANDOFF_SOURCE='ogunnubii/applypilot-backend';
 export const HANDOFF_ORIGIN='http://127.0.0.1:17780';
 const MAX_AGE=300000;
-const protectionCondition=r=>`(${r}.status!='saved' OR ${r}.attempts>0 OR ${r}.local_attempt_at IS NOT NULL OR ${r}.confirmation IS NOT NULL OR ${r}.local_phase IN ('verifying','uncertain','submitted') OR ${r}.challenge IN ('Unconfirmed submission','Submission in progress'))`;
+export const protectionCondition=r=>`(${r}.status!='saved' OR ${r}.attempts>0 OR ${r}.local_attempt_at IS NOT NULL OR ${r}.confirmation IS NOT NULL OR ${r}.local_phase IN ('verifying','uncertain','submitted') OR ${r}.challenge IN ('Unconfirmed submission','Submission in progress'))`;
 const fail=code=>{throw Object.assign(Error(code),{code});};
 function text(value,max=500){if(typeof value!=='string'||!value.trim()||value.length>max||/[\x00-\x1f]/.test(value))fail('invalid_identity');return value.trim();}
 export function handoffURL(value){
@@ -34,7 +34,7 @@ export function handoffIdentity(value,{candidate=false}={}){
  const employer_aliases=[...new Set([companyKey(employer),ats?.tenant].filter(Boolean))].sort();
  return {url,employer,title,location,...ats,employer_aliases};
 }
-function matches(a,b){
+export function matches(a,b){
  if(a.url&&b.url&&a.url===b.url)return true;
  if(a.ats&&a.ats===b.ats&&a.tenant===b.tenant&&a.requisition_id===b.requisition_id)return true;
  const names=x=>[x.employer,...(x.employer_aliases||[])].map(companyKey).filter(Boolean);
@@ -72,8 +72,9 @@ export function installPreparationHandoff(db){
   INSERT INTO preparation_handoff_protections SELECT user_id,id,company,title,url,'uncertain' FROM jobs WHERE id=NEW.job_id ON CONFLICT(user_id,job_id) DO UPDATE SET protection=CASE WHEN protection='excluded' THEN 'excluded' ELSE 'uncertain' END; END;
  INSERT OR IGNORE INTO preparation_handoff_protections(user_id,job_id,company,title,url,protection) SELECT user_id,id,company,title,url,${protection('jobs')} FROM jobs WHERE ${protectedRow('jobs')};`);
  if(hasTable(db,'autonomous_attempts'))db.exec(`CREATE TRIGGER IF NOT EXISTS preparation_handoff_autonomous_fence BEFORE INSERT ON autonomous_attempts WHEN EXISTS(SELECT 1 FROM jobs j JOIN preparation_handoff_reservations r ON r.user_id=j.user_id WHERE j.id=NEW.job_id AND preparation_identity_match(r.identity_json,j.company,j.title,j.url)) BEGIN SELECT RAISE(ABORT,'Application reserved by ApplyPilot 2'); END;
- CREATE TRIGGER IF NOT EXISTS preparation_handoff_retain_attempt AFTER INSERT ON autonomous_attempts BEGIN INSERT OR IGNORE INTO preparation_handoff_protections SELECT user_id,id,company,title,url,'uncertain' FROM jobs WHERE id=NEW.job_id; END;
- INSERT OR IGNORE INTO preparation_handoff_protections SELECT user_id,id,company,title,url,'uncertain' FROM jobs WHERE EXISTS(SELECT 1 FROM autonomous_attempts a WHERE a.job_id=jobs.id);`);
+ DROP TRIGGER IF EXISTS preparation_handoff_retain_attempt;
+ CREATE TRIGGER preparation_handoff_retain_attempt AFTER INSERT ON autonomous_attempts BEGIN INSERT INTO preparation_handoff_protections SELECT user_id,id,company,title,url,'uncertain' FROM jobs WHERE id=NEW.job_id ON CONFLICT(user_id,job_id) DO UPDATE SET protection=CASE WHEN protection='excluded' THEN 'excluded' ELSE 'uncertain' END; END;
+ INSERT INTO preparation_handoff_protections SELECT user_id,id,company,title,url,'uncertain' FROM jobs WHERE EXISTS(SELECT 1 FROM autonomous_attempts a WHERE a.job_id=jobs.id) ON CONFLICT(user_id,job_id) DO UPDATE SET protection=CASE WHEN protection='excluded' THEN 'excluded' ELSE 'uncertain' END;`);
  db.exec("INSERT OR IGNORE INTO preparation_handoff_protections SELECT user_id,id,company,title,url,'uncertain' FROM jobs WHERE EXISTS(SELECT 1 FROM events e WHERE e.job_id=jobs.id AND e.type IN ('submission_started','manual_submission','automatic_submission','applicant_reported_submission','submitted','manual_confirmation'))");
 }
 function hasTable(db,name){return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);}
@@ -113,7 +114,7 @@ export function exportPreparationLedger(db,uid,{at=new Date().toISOString()}={})
   return {schema_version:2,source_project:HANDOFF_SOURCE,revision,generated_at:at,complete:true,...data};
  });
 }
-function validateRequest(input){
+export function validateRequest(input){
  if(!input||Object.keys(input).some(k=>!['schema_version','request_id','expected_revision','identity'].includes(k))||input.schema_version!==2||!Number.isSafeInteger(input.expected_revision)||input.expected_revision<1||typeof input.request_id!=='string'||!/^[a-zA-Z0-9_-]{16,100}$/.test(input.request_id))fail('invalid_request');
  return handoffIdentity(input.identity,{candidate:true});
 }

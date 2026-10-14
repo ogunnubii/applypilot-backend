@@ -1,0 +1,188 @@
+Γ£ö native: full GET/PUT preference slice is tenant-scoped and preserves protected job state (53.0754ms)
+Γ£ö native: unverified users cannot enable mail; missing accounts and malformed input cannot write (58.5717ms)
+Γ£ö native: failure after preference write rolls it back and does not leak driver details (57.8345ms)
+Γ£ö libsql: full GET/PUT preference slice is tenant-scoped and preserves protected job state (60.0892ms)
+Γ£ö libsql: unverified users cannot enable mail; missing accounts and malformed input cannot write (52.061ms)
+Γ£ö libsql: failure after preference write rolls it back and does not leak driver details (61.815ms)
+Γ£ö uncertain response is not reported as success and asks for readback without automatic retry (0.3235ms)
+Γ£ö native: complete experience CRUD matches native facts and preserves attempted/other-profile drafts (68.9061ms)
+Γ£ö native: ownership, approved facts and cardinality checks precede writes (63.664ms)
+Γ£ö native: failure refreshing drafts rolls back the professional fact as one operation (60.8089ms)
+Γ£ö libsql: complete experience CRUD matches native facts and preserves attempted/other-profile drafts (61.9769ms)
+Γ£ö libsql: ownership, approved facts and cardinality checks precede writes (69.7559ms)
+Γ£ö libsql: failure refreshing drafts rolls back the professional fact as one operation (49.2878ms)
+Γ£ö native: scoped reads/writes preserve rows, binary and integer results (52.1061ms)
+Γ£ö native: rollback covers FK violations, callback failure and caught SQL errors (41.9157ms)
+Γ£ö native: serialized callers cannot bleed into another transaction; handles expire (46.5964ms)
+Γ£ö native: nested, parallel, read-scope writes and transaction SQL fail closed (35.4556ms)
+Γ£ö native: two adapter instances cannot simultaneously claim the same writer lock (47.4121ms)
+Γ£ö libsql: scoped reads/writes preserve rows, binary and integer results (47.1917ms)
+Γ£ö libsql: rollback covers FK violations, callback failure and caught SQL errors (37.5801ms)
+Γ£ö libsql: serialized callers cannot bleed into another transaction; handles expire (42.442ms)
+Γ£ö libsql: nested, parallel, read-scope writes and transaction SQL fail closed (29.0922ms)
+Γ£ö libsql: two adapter instances cannot simultaneously claim the same writer lock (35.9496ms)
+Γ£ö lost commit acknowledgement returns uncertainty after one attempt, without rollback or retry (0.6302ms)
+Γ£ö a pending unawaited write is drained then rolled back, never committed (2.1794ms)
+Γ£ö rollback failure quarantines the adapter; a later request cannot reuse the connection (0.3983ms)
+Γ£ö foreign keys must be enabled on the actual transaction connection before any work (0.3994ms)
+Γ£ö remote factory rejects file replicas and embedded credentials before importing or connecting (0.6058ms)
+Γ£ö official HTTP driver preserves one scoped connection through successful async reads/writes (54.9158ms)
+Γ£ö official HTTP driver rolls back a partial write when a later foreign key fails (6.143ms)
+Γ£ö official HTTP driver loses a commit response after durable write: uncertain, one insert, no retry (4.5935ms)
+Γ£ö official HTTP driver transaction expiration never commits work outside the failed transaction (4.949ms)
+Γ£ö raw DML cannot mutate or replace durable guards with recursive triggers disabled (375.9946ms)
+Γ£ö account replacement cannot clear Stop and a stopped account cannot claim (116.3213ms)
+Γ£ö old claim replay after Stop never becomes a fresh claim or click permission (126.194ms)
+Γ£ö cross-account identities cannot be smuggled into protections, holds, claims or receipts (131.7866ms)
+Γ£ö an immutable old identity stays protected when an edited display identity is appended (170.9469ms)
+Γ£ö receipt attribution cannot use fuzzy employer and role match across requisitions (94.8192ms)
+Γ£ö preparation reservation cannot acquire a submission intent or receipt through raw SQL (68.6002ms)
+Γû╢ raw DML cannot synthesize receipt evidence from empty or explicitly unsuccessful text
+  Γ£ö empty text (73.3565ms)
+  Γ£ö Click Submit (75.4815ms)
+  Γ£ö Your application was not submitted. (85.7671ms)
+  Γ£ö Thank you for applying. Your application was not submitted. (65.8636ms)
+Γ£ö raw DML cannot synthesize receipt evidence from empty or explicitly unsuccessful text (301.3418ms)
+Γû╢ raw DML cannot create receipt chronology before the attempt or beyond sync time
+  Γ£ö not-a-date (63.7114ms)
+  Γ£ö 2000-01-01T00:00:00.000Z (68.8119ms)
+  Γ£ö 2999-01-01T00:00:00.000Z (70.1915ms)
+Γ£ö raw DML cannot create receipt chronology before the attempt or beyond sync time (203.2331ms)
+Γ£ö raw DML cannot forge receipt or intent lifecycle events (64.2088ms)
+Γ£ö one committed claim records durable protection, intent, and events; same request only reconciles (164.9397ms)
+Γ£ö uncertain/history protections match normalized company and role, while another role remains eligible (247.0975ms)
+Γ£ö same ATS posting across changed labels and US/EU Lever hosts stays protected (144.6306ms)
+Γ£ö unsupported protected identity blocks every claim for its account instead of disappearing (160.0381ms)
+Γ£ö preparation reservation cannot create a submission intent or receive an employer receipt (89.6877ms)
+Γ£ö two independent clients competing for the same identity cannot both claim, and restart keeps protection (116.2126ms)
+Γ£ö AP2-style preparation versus submission race leaves exactly one durable reservation (81.1575ms)
+Γ£ö lost response after committed intent is uncertain; retries and reconciliation never produce a fresh claim (87.3732ms)
+Γ£ö lost response without a commit produces no evidence or automatic retry (69.226ms)
+Γ£ö intent event failure rolls back the entire claim and every new identity (70.3522ms)
+Γ£ö receipt is attributable and atomic, preserves first evidence and later outcome, and cannot reopen a claim (117.1018ms)
+Γ£ö receipt event failure rolls back evidence and status together (87.2761ms)
+Γ£ö receipt validation covers full raw text before first write and idempotent reconciliation (98.0517ms)
+Γ£ö integrated receipt SQL accepts bounded native variants and preserves full evidence after character 300 (157.2122ms)
+Γ£ö receipt committed with lost response reconciles idempotently with one event (85.238ms)
+Γ£ö official HTTP driver commits the full SQL-enforced claim graph through the shared repository (127.616ms)
+Γ£ö official HTTP driver reports lost committed claim response as uncertain; replay cannot grant a fresh action (101.5465ms)
+Γ£ö official HTTP driver expiration after claim and triggers rolls the entire graph back (94.4679ms)
+Γ£ö official HTTP driver lost receipt commit response reconciles exactly once and preserves later outcome (139.485ms)
+Γ£ö native: indexed keys match the independent SQL view and native algorithms; insertion rollback is atomic (323.7419ms)
+Γ£ö native: indexed cache verifies every supplied field against raw identity, including nullable equality (237.8879ms)
+Γ£ö native: indexed source/cache replacement and deletion are rejected with recursive triggers both off and on (186.8134ms)
+Γ£ö native: cache bootstrap backfills existing raw identities through verified normalization (28.8199ms)
+Γ£ö libsql: indexed keys match the independent SQL view and native algorithms; insertion rollback is atomic (229.7538ms)
+Γ£ö libsql: indexed cache verifies every supplied field against raw identity, including nullable equality (196.7804ms)
+Γ£ö libsql: indexed source/cache replacement and deletion are rejected with recursive triggers both off and on (237.5733ms)
+Γ£ö libsql: cache bootstrap backfills existing raw identities through verified normalization (32.3666ms)
+Γ£ö local libSQL: 10,000 indexed identities use a primary-key search for a single-id lookup (5803.68ms)
+Γä╣ {"identities":10000,"insert_ms":5677.989,"single_id_ms":0.155,"all_ms":86.597,"query_plan":["SEARCH guard_derived_keys USING PRIMARY KEY (id=?)"]}
+Γ£ö pinned mapping exhaustively covers every Unicode scalar under the declared Node Unicode version (967.6077ms)
+Γ£ö native: company and title SQL normalization matches native algorithms on Unicode and suffix corpus (109.0091ms)
+Γä╣ 2039 whole-string Unicode/suffix identities compared to native functions
+Γ£ö native: role annotation stripping preserves functional distinctions and exact native en/em dash semantics (20.4067ms)
+Γä╣ 103 annotation variants compared
+Γ£ö native: ATS posting, tenant aliases and canonical URLs match supported native identities (46.5777ms)
+Γ£ö native: supported SQL repeat predicates agree with native pairwise duplicate oracle (19.5061ms)
+Γä╣ 144 pairwise duplicate comparisons
+Γ£ö native: unsupported identities fail closed and null historical URL remains usable (44.0327ms)
+Γ£ö native: immutable mapping rejects direct mutations and replacement; normalized view has no writable keys (9.7122ms)
+Γ£ö libsql: company and title SQL normalization matches native algorithms on Unicode and suffix corpus (240.5428ms)
+Γä╣ 2039 whole-string Unicode/suffix identities compared to native functions
+Γ£ö libsql: role annotation stripping preserves functional distinctions and exact native en/em dash semantics (47.172ms)
+Γä╣ 103 annotation variants compared
+Γ£ö libsql: ATS posting, tenant aliases and canonical URLs match supported native identities (53.0137ms)
+Γ£ö libsql: supported SQL repeat predicates agree with native pairwise duplicate oracle (38.1754ms)
+Γä╣ 144 pairwise duplicate comparisons
+Γ£ö libsql: unsupported identities fail closed and null historical URL remains usable (86.3497ms)
+Γ£ö libsql: immutable mapping rejects direct mutations and replacement; normalized view has no writable keys (20.2179ms)
+Γ£ö complete isolated export retains every guard protection and hold, isolates users and advances immutable revisions (365.8714ms)
+Γ£ö canonical requests reserve atomically; replay always requires a fresh snapshot and never grants submission (161.4868ms)
+Γ£ö five-minute age, nonfuture time, revision and current digest are checked even for replay (76.0319ms)
+Γ£ö stopped account invalidates the snapshot and blocks new reservations after refresh (48.2671ms)
+Γ£ö employer holds from another applicant apply account-wide and recheck an existing reservation (138.8721ms)
+Γ£ö invalid protected identities and excessive projection counts fail the whole export (204.6429ms)
+Γ£ö projection byte limit fails closed before any snapshot is recorded (238.3516ms)
+Γ£ö projection bounds raw IDs and invalid identity payloads before returning them, and excludes irrelevant metadata (651.0388ms)
+Γ£ö snapshot and reservation raw UPDATE, DELETE, REPLACE and upsert cannot weaken retained history (69.4822ms)
+Γ£ö reservation metadata failure rolls back the new claim, identity, protection and event together (52.3533ms)
+Γ£ö independent clients sharing a snapshot produce one winner; loser cannot reuse stale revision (91.9809ms)
+Γ£ö lost committed response never replays as fresh; reconciliation still requires a current projection (63.1492ms)
+Γ£ö generic preparation claims require snapshot digest and current replay checks (62.9471ms)
+Γ£ö preparation reconciliation requires a fresh snapshot and reports new holds without permission (77.8228ms)
+Γ£ö raw INSERT, REPLACE and upsert cannot create a preparation claim without a snapshot check (62.9206ms)
+Γ£ö raw snapshot time, revision and epoch and raw check bindings cannot be forged (56.3259ms)
+Γû╢ a fabricated matching digest never bypasses live SQL protection, hold or Stop checks
+  Γ£ö protection (63.0266ms)
+  Γ£ö hold (76.0505ms)
+  Γ£ö stop (55.9961ms)
+Γ£ö a fabricated matching digest never bypasses live SQL protection, hold or Stop checks (195.665ms)
+Γû╢ a separately committed once-valid check is fenced after every live projection transition
+  Γ£ö protection (81.799ms)
+  Γ£ö hold (88.7104ms)
+  Γ£ö stop (51.5738ms)
+  Γ£ö stop-and-resume (59.9537ms)
+  Γ£ö external-import-event (51.3667ms)
+  Γ£ö new-snapshot (51.2334ms)
+Γ£ö a separately committed once-valid check is fenced after every live projection transition (385.6656ms)
+Γ£ö append-only epoch and check records resist UPDATE, DELETE, REPLACE and upsert with recursive triggers off (63.24ms)
+Γ£ö a raw snapshot rejects an invalid protected ID and the conservative SQL projection byte bound (174.0388ms)
+Γ£ö native differential fixture agrees for URL-less history, different roles, canonical URLs and fresh replay (83.0113ms)
+Γ£ö installer accepts only trusted identifiers/numbered bindings; policy bound is explicit (2.2351ms)
+Γ£ö non-Unicode native case folding and word boundaries have no hidden non-ASCII Latin aliases (60.4416ms)
+Γ£ö native receipt and placeholder policy changes require explicit SQL-port review (1.0043ms)
+Γ£ö native: every affirmative grammar variant, prefix and word boundary agrees with native (898.8905ms)
+Γä╣ 941 bounded inputs compared with native applicationEvidence; SQL 889 ms
+Γ£ö native: failures, adjacent pronouns, sentence boundaries and unrelated footers match native (1064.3691ms)
+Γä╣ 2469 bounded inputs compared with native applicationEvidence; SQL 1060 ms
+Γ£ö native: spam, quota and placeholder vetoes override polite confirmation anywhere (40.447ms)
+Γä╣ 212 bounded inputs compared with native applicationEvidence; SQL 34 ms
+Γ£ö native: Unicode whitespace and case lookalikes preserve exact native semantics (106.4613ms)
+Γä╣ 235 bounded inputs compared with native applicationEvidence; SQL 102 ms
+Γ£ö native: sent-to receipts use physical lines, first matching candidate and UTF-16 employer lengths (248.6773ms)
+Γä╣ 486 bounded inputs compared with native applicationEvidence; SQL 246 ms
+Γ£ö native: bounds/type/NUL fail closed; late contradictions must be checked before truncation (80.8834ms)
+Γ£ö native: raw SQL cannot smuggle malformed UTF-8 through a TEXT cast (29.4041ms)
+Γ£ö native: full scalar sweep verifies the only unicode()/char() roundtrip exceptions (186.0355ms)
+Γ£ö native: raw direct INSERT and caller flags cannot bypass SQL, with both recursive trigger settings (47.4919ms)
+Γ£ö native: deterministic adversarial sentence mixtures agree with the native oracle (573.6805ms)
+Γä╣ 1044 bounded inputs compared with native applicationEvidence; SQL 568 ms
+Γ£ö native: maximum-size single-receipt validation stays bounded for long text and many sentences (670.9606ms)
+Γä╣ 8192 bytes / 1 physical lines: 74.0 ms
+Γä╣ 7535 bytes / 5001 physical lines: 297.5 ms
+Γä╣ 7575 bytes / 5001 physical lines: 294.2 ms
+Γ£ö libsql: every affirmative grammar variant, prefix and word boundary agrees with native (3577.0424ms)
+Γä╣ 941 bounded inputs compared with native applicationEvidence; SQL 3573 ms
+Γ£ö libsql: failures, adjacent pronouns, sentence boundaries and unrelated footers match native (9955.7935ms)
+Γä╣ 2469 bounded inputs compared with native applicationEvidence; SQL 9953 ms
+Γ£ö libsql: spam, quota and placeholder vetoes override polite confirmation anywhere (841.2654ms)
+Γä╣ 212 bounded inputs compared with native applicationEvidence; SQL 833 ms
+Γ£ö libsql: Unicode whitespace and case lookalikes preserve exact native semantics (971.1962ms)
+Γä╣ 235 bounded inputs compared with native applicationEvidence; SQL 970 ms
+Γ£ö libsql: sent-to receipts use physical lines, first matching candidate and UTF-16 employer lengths (1971.5926ms)
+Γä╣ 486 bounded inputs compared with native applicationEvidence; SQL 1970 ms
+Γ£ö libsql: bounds/type/NUL fail closed; late contradictions must be checked before truncation (196.7395ms)
+Γ£ö libsql: raw SQL cannot smuggle malformed UTF-8 through a TEXT cast (71.3085ms)
+Γ£ö libsql: full scalar sweep verifies the only unicode()/char() roundtrip exceptions (472.3834ms)
+Γ£ö libsql: raw direct INSERT and caller flags cannot bypass SQL, with both recursive trigger settings (72.6592ms)
+Γ£ö libsql: deterministic adversarial sentence mixtures agree with the native oracle (4271.3993ms)
+Γä╣ 1044 bounded inputs compared with native applicationEvidence; SQL 4270 ms
+Γ£ö libsql: maximum-size single-receipt validation stays bounded for long text and many sentences (1231.2357ms)
+Γä╣ 8192 bytes / 1 physical lines: 167.1 ms
+Γä╣ 7535 bytes / 5001 physical lines: 542.3 ms
+Γä╣ 7575 bytes / 5001 physical lines: 520.0 ms
+Γ£ö native: receipt query comparison preserves native retained keys and duplicate ordering (81.8214ms)
+Γä╣ 225 retained-query pairs checked against native strict receipt identity
+Γ£ö libsql: receipt query comparison preserves native retained keys and duplicate ordering (153.351ms)
+Γä╣ 225 retained-query pairs checked against native strict receipt identity
+Γ£ö raw receipt SQL cannot use handoff tracking removal to bypass native attribution (232.3195ms)
+Γ£ö receipt query generator accepts only fixed qualified column names (0.207ms)
+Γä╣ tests 149
+Γä╣ suites 0
+Γä╣ pass 149
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 0
+Γä╣ todo 0
+Γä╣ duration_ms 28708.6329

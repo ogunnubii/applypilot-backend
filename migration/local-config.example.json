@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "data_dir": "REQUIRED_ABSOLUTE_PRIVATE_RESTORE_DIRECTORY",
+  "source_bundle": "REQUIRED_ABSOLUTE_VERIFIED_PRIVATE_BACKUP_DIRECTORY",
+  "source_manifest_sha256": "REQUIRED_SHA256_OF_VERIFIED_MANIFEST",
+  "legacy_upload_dir": "/app/data/resumes",
+  "public_origin": "http://localhost:8080",
+  "bind_host": "127.0.0.1",
+  "port": 8080,
+  "local_browser_only": true,
+  "background_work": false
+}

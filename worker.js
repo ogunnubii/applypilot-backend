@@ -1,5 +1,8 @@
+import {resolveResumePath} from './storage-paths.js';
 import {hostedFormState} from './hosted-form-state.js';
-import {syncHostedReceipt} from './receipt-sync.js';
+import {syncHostedReceipt} from './api/receipt-reconciliation.js';
+import {openNativeDatabase} from './database/native.js';
+import {databasePath} from './db.js';
 import {automaticCampaign,automaticMember,populateAutomaticCampaign} from './automatic-campaign.js';
 import {employmentContext} from './employment-answers.js';
 import {currentSearchScope} from './search-scope.js';
@@ -30,6 +33,7 @@ installLibrary(db);
 installDrafts(db);
 installCoverLetters(db);
 installResearch(db);
+let asyncDatabase;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function set(job,status,message,challenge=null,confirmation=null){if(db.prepare('SELECT status FROM jobs WHERE id=?').get(job.id)?.status==='archived')return;db.prepare('UPDATE jobs SET status=?,challenge=?,confirmation=?,updated_at=? WHERE id=?').run(status,challenge,confirmation,now(),job.id);event(job.id,status,message)}
 function claim(){
@@ -240,7 +244,7 @@ async function attachHostedResume(page,p){
  const file=files.nth(fields[selected].index);
  if(await file.evaluate(e=>!!e.files?.length||e.dataset.applypilotUploadAttempted==='true'))return {attached:false};
  await file.evaluate(e=>e.dataset.applypilotUploadAttempted='true');
- await file.setInputFiles(p.resume_path);
+ await file.setInputFiles(resolveResumePath(p.resume_path));
  const retained=await file.evaluate(e=>!!e.files?.length&&[...e.files].every(f=>f.size>0)).catch(()=>false);
  if(!retained)return {issue:'The employer did not retain the resume attachment. Review the upload before continuing.'};
  return {attached:true};
@@ -369,7 +373,7 @@ if(await submit.count()!==1||await next.count()>0)return set(job,'needs_review',
   recordRejection:text=>recordEmployerRejection(db,job.user_id,job.id,text,{source:'Employer response after automatic attempt'}),
   recordDiagnostic:message=>event(job.id,'submission_diagnostic',message)});
  if(result.status==='submitted'){
-  syncHostedReceipt(db,job.id,job.user_id,{url:page.url(),receipt:result.confirmation,observedAt:now()});
+  await syncHostedReceipt(asyncDatabase,job.id,job.user_id,{url:page.url(),receipt:result.confirmation,observedAt:now()});
   confirmLibrary(db,job);return;
  }
  return set(job,result.status,result.message,result.challenge||null,result.confirmation||null);
@@ -389,14 +393,14 @@ return set(job,'needs_review','Application exceeded the 15-step limit','Step lim
   if(focus?.skip_blocked&&!attempted&&['paused','needs_review'].includes(state?.status))event(job.id,'handoff_closed','Blocked before submission. Browser closed so other jobs can continue; resolve saved blockers before preparing again.');
  }
 }}
-async function main(){recoverWorkerJobs();let browser=await chromium.launch({headless:true});console.log('ApplyPilot worker running');
+async function main(){asyncDatabase=openNativeDatabase(databasePath);recoverWorkerJobs();let browser=await chromium.launch({headless:true});console.log('ApplyPilot worker running');
  db.prepare('UPDATE jobs SET handoff_available=0').run();
  handoffs=new Handoffs({
   onDiagnostic:(job,message)=>event(job.id,'submission_diagnostic',message),
   onRejection:(job,text)=>recordEmployerRejection(db,job.user_id,job.id,text,{source:'Employer response in retained browser'}),
   onClose:(job,message,details)=>closeRetainedBrowser(db,job.id,message,details),
   onPossibleSubmit:job=>{if(!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('manual_submission','submission_started') LIMIT 1").get(job.id)){event(job.id,'manual_submission','Applicant clicked the employer submit control.');event(job.id,'submission_started','Submission intent saved before the employer action.');}db.prepare("UPDATE jobs SET challenge='Unconfirmed submission',updated_at=? WHERE id=?").run(now(),job.id)},
-  onSubmitted:(job,receiptText,observed)=>{if(db.prepare("SELECT 1 FROM autonomous_attempts WHERE job_id=? AND owner='hosted-worker'").get(job.id))syncHostedReceipt(db,job.id,job.user_id,{...observed,receipt:receiptText});else set(job,'submitted','Employer confirmed receipt during human handoff',null,receiptText);confirmLibrary(db,job);db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id)},
+  onSubmitted:async(job,receiptText,observed)=>{if(db.prepare("SELECT 1 FROM autonomous_attempts WHERE job_id=? AND owner='hosted-worker'").get(job.id))await syncHostedReceipt(asyncDatabase,job.id,job.user_id,{...observed,receipt:receiptText});else set(job,'submitted','Employer confirmed receipt during human handoff',null,receiptText);confirmLibrary(db,job);db.prepare('UPDATE jobs SET handoff_available=0 WHERE id=?').run(job.id)},
   onResume:async(job,session)=>{
    const current=db.prepare('SELECT * FROM jobs WHERE id=?').get(job.id);
    if(!['paused','needs_review'].includes(current?.status)||['Unconfirmed submission','Submission in progress'].includes(current.challenge))throw Error('Check the employer receipt before resuming. A submission may already have occurred.');

@@ -1,0 +1,25 @@
+Γ£ö the standalone console command creates a WAL-consistent archive without printing row values (295.9731ms)
+Γ£ö held extension preserves records, pending receipts, environment and device identity while stopping work (6.6568ms)
+Γ£ö local preflight verifies unchanged ledger and resolves both current and previous legacy resume paths (183.5156ms)
+Γ£ö absent or incomplete restored data cannot initialize a new ledger (102.3865ms)
+Γ£ö changed protected data, manifest and resume bytes block first activation (148.9618ms)
+Γ£ö loopback, paused background work and independent backup are required (107.3704ms)
+Γ£ö activation requires all cutover attestations and existing identity configuration (130.492ms)
+Γ£ö a second writer and a stale lock both require operator review (127.1751ms)
+Γ£ö resume alias rejects traversal, unrelated roots, URLs and prefix lookalikes (3.3896ms)
+Γ£ö WAL-aware snapshot and offline restore preserve every table, schema, upload and protected state (221.0213ms)
+Γ£ö never overwrites a snapshot or an existing restore destination (138.7789ms)
+Γ£ö rejects upload files outside the resume allowlist (65.731ms)
+∩╣ú rejects hard-linked upload files when the sandbox permits fixture creation (74.3522ms) # Windows sandbox denies hard-link fixture creation; no escalation attempted
+Γ£ö tampered database bytes and resume bytes fail verification and cannot restore (158.0618ms)
+Γ£ö incomplete marker and missing manifest fail closed (127.4021ms)
+Γ£ö CLI errors do not print private paths or input contents (122.441ms)
+Γ£ö rejects inconsistent foreign keys and a snapshot placed inside uploads (59.0648ms)
+Γä╣ tests 17
+Γä╣ suites 0
+Γä╣ pass 16
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 1
+Γä╣ todo 0
+Γä╣ duration_ms 1108.2244

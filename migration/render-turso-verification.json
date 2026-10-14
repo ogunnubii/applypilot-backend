@@ -1,0 +1,40 @@
+{
+  "stage": "async foundation and two complete API slices",
+  "date_utc": "2026-10-14",
+  "local_branch": "migration/render-turso-async",
+  "baseline_local_commit": "d2c7063133e3a4b72a1793337cf8fc0b8e1b1864",
+  "baseline_remote_commit": "5779ae11afae9e5549ae8d88faa313391547377b",
+  "runtime": {"platform": "win32", "architecture": "x64", "node": "24.21.0", "libsql_client": "0.18.0"},
+  "scope": {
+    "selected_slices_completed": 2,
+    "selected_slices_total": 2,
+    "http_methods_implemented": 6,
+    "scoped_async_sql_sites": 13,
+    "baseline_synchronous_modules": 49,
+    "remaining_synchronous_modules": 49,
+    "baseline_direct_synchronous_calls": 852,
+    "remaining_direct_synchronous_calls": 847,
+    "remaining_existing_transaction_sites": 41,
+    "remaining_custom_function_interfaces": 10,
+    "warning": "Lexical counts are not total migration completion percentages; original native consumers remain."
+  },
+  "validation": {
+    "existing_native_tests": {"passed": 635, "failed": 0},
+    "existing_ui_checks": {"passed": 4, "failed": 0},
+    "async_suite": {"passed": 32, "failed": 0, "skipped": 0},
+    "official_http_driver_fault_tests_in_async_suite": 4,
+    "receipt_compatibility_and_native_http_restart": {"passed": 12, "failed": 0},
+    "git_diff_check": "passed",
+    "cloud_service_tests": 0,
+    "original_checkout": {"head": "659d4c77cba5bca13cfbefbfa22574108d9ed16b", "clean": true, "read_only_verified": true}
+  },
+  "limitations": [
+    "Native server startup remains in use; no remote activation switch exists.",
+    "Official HTTP driver uses a synthetic fetch transport, not a live Turso account.",
+    "Unchanged duplicate triggers still fail with no such function: same_application under libSQL; the compatibility test asserts that fail-closed result.",
+    "Async installers, account/session flows, remaining call graph, protected guard redesign, claims/recovery, durable resumes and full runtime integration are unfinished.",
+    "Existing dev-only source-map-js 1.2.1 audit advisory remains unchanged."
+  ],
+  "production_actions": {"provisioned": false, "copied": false, "credentials_accessed": false, "merged": false, "activated": false, "cutover": false, "employer_actions": false},
+  "logs": ["render-turso-full-regression.log", "render-turso-async-tests.log", "render-turso-integration.log"]
+}

@@ -1,5 +1,12 @@
 node_modules/
 .env
 .env.local
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.private.json
+*.private/
 web/applypilot-local.zip
 data/

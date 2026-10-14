@@ -1,0 +1,12 @@
+Γ£ö documented remote SDK lacks the connection-local JavaScript function API required by installers (3.4227ms)
+Γ£ö retained original duplicate trigger fails rather than authorizing a repeat through the local libSQL SDK (22.6539ms)
+Γä╣ no such function: same_application
+Γ£ö foreign keys, explicit rollback and durable uniqueness work in the local libSQL client (4.5094ms)
+Γä╣ tests 3
+Γä╣ suites 0
+Γä╣ pass 3
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 0
+Γä╣ todo 0
+Γä╣ duration_ms 298.7516

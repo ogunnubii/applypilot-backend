@@ -1,0 +1,314 @@
+{
+  "method": "Source lexical inventory; direct db.prepare/db.exec calls, not transitive callers or SQL statements.",
+  "modules": 49,
+  "direct_calls": 847,
+  "explicit_write_transactions": 41,
+  "custom_functions": [
+    "application_company_keys",
+    "application_employer_key",
+    "company_keys_overlap",
+    "company_policy_cutoff",
+    "company_policy_limit",
+    "history_company",
+    "history_title",
+    "preparation_identity_key",
+    "preparation_identity_match",
+    "same_application"
+  ],
+  "files": [
+    {
+      "file": "account-policy.js",
+      "direct_calls": 2,
+      "explicit_write_transactions": 0,
+      "sha256": "f1aea30302b09443f14f40d734d9a99698c46bf2e2eabcc6ceae09fbc275bfb0"
+    },
+    {
+      "file": "account-security.js",
+      "direct_calls": 12,
+      "explicit_write_transactions": 1,
+      "sha256": "ee422c537be38f4c91f622b2e50d86106aadfb7ba5b179e49feafaecec4a785b"
+    },
+    {
+      "file": "answer-drafts.js",
+      "direct_calls": 9,
+      "explicit_write_transactions": 0,
+      "sha256": "4626b9b31cc1ae4d8055ee73ab6b4ea21325564edbf5c85c1cd16acd668bae9e"
+    },
+    {
+      "file": "answer-library.js",
+      "direct_calls": 23,
+      "explicit_write_transactions": 2,
+      "sha256": "d8ce1bc682feae21d7221fdf31c12a4bb31c234b67a9de52fd9c6f2391ad0d13"
+    },
+    {
+      "file": "application-archive.js",
+      "direct_calls": 16,
+      "explicit_write_transactions": 2,
+      "sha256": "cfeecb24d7bd9a2e370b9c744421bd07e227d157412cd18c365c90bb72b62c16"
+    },
+    {
+      "file": "application-batches.js",
+      "direct_calls": 30,
+      "explicit_write_transactions": 2,
+      "sha256": "1333032869b5737f371d289b8f54368e067720cf5bb6cd4e0a46e24d43e30b86"
+    },
+    {
+      "file": "application-dedup.js",
+      "direct_calls": 4,
+      "explicit_write_transactions": 0,
+      "sha256": "6e5fb1acfe0478ce1a796aaf453214e9f282beb0c30b85b1aacb177baf110ea2"
+    },
+    {
+      "file": "application-diversity.js",
+      "direct_calls": 2,
+      "explicit_write_transactions": 0,
+      "sha256": "0add0f9f0a9ade2484846a050e6f01263838b501d7835f6b051b725ee76899c1"
+    },
+    {
+      "file": "application-history.js",
+      "direct_calls": 13,
+      "explicit_write_transactions": 1,
+      "sha256": "cc4b832e078aef9e5f6ca9c7dd8002933207de1f015dfaf1b9fbd3bb0f5f4e4c"
+    },
+    {
+      "file": "application-pipeline.js",
+      "direct_calls": 19,
+      "explicit_write_transactions": 1,
+      "sha256": "aa3989d7893668ed5493429c06570809ece7eb2bffcaa4b7ac13a7b9f01641a6"
+    },
+    {
+      "file": "assistant.js",
+      "direct_calls": 3,
+      "explicit_write_transactions": 0,
+      "sha256": "d78abc29304153b5db9f485d188b694383cb7a5e81c397bd76d2318a19e3e5cf"
+    },
+    {
+      "file": "auth.js",
+      "direct_calls": 5,
+      "explicit_write_transactions": 0,
+      "sha256": "3f0c0972ce28e1ad63a4746944a32d224bfe453196117633516d5d1317106f08"
+    },
+    {
+      "file": "automatic-answer.js",
+      "direct_calls": 2,
+      "explicit_write_transactions": 0,
+      "sha256": "8238ad9e0e361744a81199f35ba092547e6fa430736d79587dd96956701e8362"
+    },
+    {
+      "file": "automatic-campaign.js",
+      "direct_calls": 71,
+      "explicit_write_transactions": 4,
+      "sha256": "332891ae6428a308e2d19ac93ec9aab574e1aaa6f0f345372144df19628e30d9"
+    },
+    {
+      "file": "company-application-policy.js",
+      "direct_calls": 17,
+      "explicit_write_transactions": 1,
+      "sha256": "881b73384b9bce4b447643fd376c9c3d5f1dacddbaf86772fb630050bac4a9a7"
+    },
+    {
+      "file": "continuation-queue.js",
+      "direct_calls": 28,
+      "explicit_write_transactions": 1,
+      "sha256": "99b7a33928012fcf815135126c05b8b3901d92e29cdb6bcc0e4e7df6dd0c19bf"
+    },
+    {
+      "file": "cover-letter.js",
+      "direct_calls": 8,
+      "explicit_write_transactions": 0,
+      "sha256": "e429d1ecc82767c607b56c80aa5a6b96e85048b720f0e8e6f744db74acefcd0c"
+    },
+    {
+      "file": "db.js",
+      "direct_calls": 37,
+      "explicit_write_transactions": 1,
+      "sha256": "18d5d140cdce57ca975e3ceddf59363ba057c7adac9ccd077d9732655616e750"
+    },
+    {
+      "file": "delete-application.js",
+      "direct_calls": 9,
+      "explicit_write_transactions": 1,
+      "sha256": "c1fac5581170d308f68f046b952667ec5ebbffff5e81270138bc0096b6ee1872"
+    },
+    {
+      "file": "discovery.js",
+      "direct_calls": 18,
+      "explicit_write_transactions": 0,
+      "sha256": "30874e487bb356837c24ba61534960932c66d770b189ba17b7b1f4d9b991aa58"
+    },
+    {
+      "file": "draft-provenance.js",
+      "direct_calls": 4,
+      "explicit_write_transactions": 0,
+      "sha256": "7a821aed29eba5bfde8635c1ed82149752cf60b26a62d80e439053b9c8e2e40b"
+    },
+    {
+      "file": "dropdown-answer.js",
+      "direct_calls": 3,
+      "explicit_write_transactions": 0,
+      "sha256": "37d318e805a209915c1415f177dec7c63c231b6b324f4c8ee4270c7f1fbdbdf7"
+    },
+    {
+      "file": "employer-limits.js",
+      "direct_calls": 34,
+      "explicit_write_transactions": 2,
+      "sha256": "bdc8268971175ac1d6bbc8389feccf13e85ad41ca98fa3d9e2ec6c0a342abed0"
+    },
+    {
+      "file": "experience-library.js",
+      "direct_calls": 7,
+      "explicit_write_transactions": 0,
+      "sha256": "8812f51394849f9a28c1581af0de4acfdc8d2f7ecc84ca603895c11c11c758b5"
+    },
+    {
+      "file": "form-answer.js",
+      "direct_calls": 5,
+      "explicit_write_transactions": 0,
+      "sha256": "c769a65d2559259523c415a178589e050d5fc0956077b928f0ecd8c00d0ced9b"
+    },
+    {
+      "file": "google-research.js",
+      "direct_calls": 12,
+      "explicit_write_transactions": 0,
+      "sha256": "cffc6edba75028ae0ba5947f05fcddcf10f30e065cd06243cc90cdeb0e0c7bca"
+    },
+    {
+      "file": "job-funnel.js",
+      "direct_calls": 36,
+      "explicit_write_transactions": 2,
+      "sha256": "60b15e0746d06e91976c7f90e7ad04feaf04262f0f0c0a5fd1675ddfbd3c5f36"
+    },
+    {
+      "file": "language-policy.js",
+      "direct_calls": 11,
+      "explicit_write_transactions": 1,
+      "sha256": "5c75f874ce4efa3dfb1ec8d2874e206605c84b086c92712f35521d4f9635fd82"
+    },
+    {
+      "file": "local-state.js",
+      "direct_calls": 10,
+      "explicit_write_transactions": 1,
+      "sha256": "9d66c93a38c4f5b030adcc0bf15dd9611f30494c463fd846769d296ccce04567"
+    },
+    {
+      "file": "manual-applications.js",
+      "direct_calls": 15,
+      "explicit_write_transactions": 1,
+      "sha256": "bae805e60cdbb06b80265bd3d5074c72ec1aee559d3936707234ace304b93b23"
+    },
+    {
+      "file": "manual-submit-record.js",
+      "direct_calls": 17,
+      "explicit_write_transactions": 2,
+      "sha256": "6346f679e3871a3ebe8a6ccb248b190934ef5a4db631f7c2d578f942a2fdd3fe"
+    },
+    {
+      "file": "notifications.js",
+      "direct_calls": 8,
+      "explicit_write_transactions": 0,
+      "sha256": "77a551fe597cb392d1caf48a4bf4899ab7e700e8d06e51c77eb22e09f14727d9"
+    },
+    {
+      "file": "operation-evidence.js",
+      "direct_calls": 1,
+      "explicit_write_transactions": 0,
+      "sha256": "1623c55fddddc42db59b70ad7b20952990cf7e505aac1d33aa5955bd5cdad13a"
+    },
+    {
+      "file": "paused-fact-fill.js",
+      "direct_calls": 4,
+      "explicit_write_transactions": 0,
+      "sha256": "19cbb4d4eae1b5dd05a99c8a2bedf68d9d5faf959998f0a54138aa0e0a7cc47c"
+    },
+    {
+      "file": "pending-answers.js",
+      "direct_calls": 12,
+      "explicit_write_transactions": 0,
+      "sha256": "5e5d57215eff0c58f1e1fcf7b1dd81c7299e0892959e1d0f4865042663aaecd3"
+    },
+    {
+      "file": "preparation-campaign.js",
+      "direct_calls": 34,
+      "explicit_write_transactions": 2,
+      "sha256": "e3163c7ffebabe7e79dd9b2f0b78d3a393ef73ff8293b0e7e2a12fef4deeade4"
+    },
+    {
+      "file": "preparation-handoff.js",
+      "direct_calls": 20,
+      "explicit_write_transactions": 1,
+      "sha256": "d1da8342df5acb728c88e9227af81c9b8935062c02b60a25e0bb3764a7978622"
+    },
+    {
+      "file": "public-answer-fill.js",
+      "direct_calls": 10,
+      "explicit_write_transactions": 0,
+      "sha256": "4fa0bbf69349536a9925ecfbf806f107f56def47f5639cc184413f77610bbbf1"
+    },
+    {
+      "file": "receipt-sync.js",
+      "direct_calls": 24,
+      "explicit_write_transactions": 2,
+      "sha256": "1c2046fd5a4bc9c58b5f3f5221ec1229a581487117a55f9efce624f87b20ca8d"
+    },
+    {
+      "file": "research-consent.js",
+      "direct_calls": 2,
+      "explicit_write_transactions": 0,
+      "sha256": "881acc215061298dc0e58f8a97ccc5b86682467c3e2168d283933292f220415a"
+    },
+    {
+      "file": "resume-editor.js",
+      "direct_calls": 10,
+      "explicit_write_transactions": 1,
+      "sha256": "bd116302d0b7073e92187a0e02e8050f2256be913ca9a8ccc6f0f6ea959cd068"
+    },
+    {
+      "file": "retained-state.js",
+      "direct_calls": 12,
+      "explicit_write_transactions": 1,
+      "sha256": "66df6c59d780752759b44c3cd9393c929f84b68abb7d8ac234be9151b62eba82"
+    },
+    {
+      "file": "saved-answer-recovery.js",
+      "direct_calls": 13,
+      "explicit_write_transactions": 1,
+      "sha256": "a2376d825c8587772f1a546ac19a94d971a1b09d16de4562a713ed6188151537"
+    },
+    {
+      "file": "search-scope.js",
+      "direct_calls": 4,
+      "explicit_write_transactions": 0,
+      "sha256": "ca2adb4056d87af798b33d26f40dad47c8dc76900c9efbec4ee99caa3f84f4a4"
+    },
+    {
+      "file": "server.js",
+      "direct_calls": 73,
+      "explicit_write_transactions": 0,
+      "sha256": "0697ecd0b082c97aa0784afbd7349bdb9079defe7d90e6ba471c43fbbf247f06"
+    },
+    {
+      "file": "single-application.js",
+      "direct_calls": 79,
+      "explicit_write_transactions": 5,
+      "sha256": "16f8b3f6bbc58b1263b21b84f83dab2d72373a417026c7fbe7e3ad5ada147128"
+    },
+    {
+      "file": "support-career.js",
+      "direct_calls": 1,
+      "explicit_write_transactions": 0,
+      "sha256": "f7c9067c2e2e6694735c36b58913507ed5f67595f688390f87fcfd1b6729a964"
+    },
+    {
+      "file": "unresolved-attempts.js",
+      "direct_calls": 20,
+      "explicit_write_transactions": 1,
+      "sha256": "30329ddbd1a53310023c5f7252a65e24603ec03afac4462a1147ed5856a68ec5"
+    },
+    {
+      "file": "worker.js",
+      "direct_calls": 38,
+      "explicit_write_transactions": 1,
+      "sha256": "5596bec80c8624f846d31e0f18e17a5ced9684a3a8bd8ebd440c491f0392f857"
+    }
+  ]
+}

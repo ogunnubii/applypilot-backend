@@ -1,0 +1,89 @@
+Γ£ö old backup qualification pins the committed full console program without running the builder (115.9564ms)
+Γ£ö synthetic probe measures the full pinned backup subprocess without disclosing fixture contents (752.1453ms)
+Γ£ö the qualification matrix starts with urgent recovery cases and covers each mode/heap/shape exactly once (3.9146ms)
+Γ£ö generated recovery heredoc includes resume integration and rejects an independent synthetic 80 MiB fixture (1.3775ms)
+Γ£ö compact profile preserves the original matrix and adds a two-byte text fixture (21.5733ms)
+Γ£ö runtime validator does not silently qualify a different installed Node version (0.1382ms)
+Γ£ö small synthetic full and recovery snapshots emit bounded-format measurements on the exact requested runtime (1654.3752ms)
+Γ£ö exact inline program copies referenced resumes and verifies them offline after synthetic live-file removal (790.8003ms)
+Γ£ö full inline Node phase exits before archive and round-trips without printing row values (585.0482ms)
+Γ£ö recovery inline Node phase exits before archive and round-trips without printing row values (690.8906ms)
+Γ£ö inline recovery fails closed when a copied DB resume reference is missing (189.8302ms)
+Γ£ö generated shell retains memory rejection before Node and tar, with no overlapping archive child (0.6297ms)
+Γ£ö copies current and previous references, deduplicates paths, preserves relative paths and does not rewrite snapshot (289.0182ms)
+Γ£ö required reference tables and columns fail closed even when no files are referenced (85.0905ms)
+Γ£ö null current references are absent; empty current and null previous references are invalid (113.2714ms)
+Γ£ö missing current or previous referenced resume fails without changing the database (120.4345ms)
+Γ£ö parent traversal, sibling-prefix paths, extensions, relative roots and destination overlap fail closed (309.1331ms)
+Γ£ö does not overwrite or adopt a nonempty destination (44.9633ms)
+Γ£ö detects source delete after prehash while copying (105.2919ms)
+Γ£ö detects source replace after prehash while copying (127.078ms)
+Γ£ö detects source modify after prehash while copying (96.7333ms)
+∩╣ú rejects hard-linked source resumes when the sandbox permits creation (19.48ms) # Sandbox denies synthetic hard-link creation; no escalation attempted
+∩╣ú rejects a symlink or junction anywhere in a source parent path (18.2071ms) # Sandbox denies synthetic parent-link creation; no escalation attempted
+Γ£ö offline verification uses copied DB references and succeeds after live resume files disappear (137.7043ms)
+Γ£ö offline verification rejects missing, changed and extra copied files or directories (393.5524ms)
+Γ£ö offline verification rejects altered file lists, counts, timestamps, flags, digests and paths (176.4013ms)
+Γ£ö offline verification detects copied DB reference changes rather than trusting a manifest inventory (87.1717ms)
+Γ£ö malformed oversized and BLOB reference values fail before copying (145.5275ms)
+Γ£ö reviewed resource limits cannot be loosened and disk availability errors fail closed (44.3127ms)
+Γ£ö bounded recovery accepts exactly 52 KiB unique references and verifies after sources disappear (311.6158ms)
+Γ£ö full snapshot opts into the same envelope while ordinary offline defaults remain unchanged (161.9034ms)
+Γû╢ logical WAL image and physical source image are capped before destination writes
+  Γ£ö physical image (95.6897ms)
+  Γ£ö WAL logical image (247.0372ms)
+Γ£ö logical WAL image and physical source image are capped before destination writes (343.4115ms)
+Γû╢ oversized WAL and SHM sidecars are separate fail-closed resource gates
+  Γ£ö -wal (38.5928ms)
+  Γ£ö -shm (31.5411ms)
+Γ£ö oversized WAL and SHM sidecars are separate fail-closed resource gates (70.7263ms)
+Γ£ö backup progress throw rejects early and preserves an incomplete bundle (49.5204ms)
+Γ£ö final copied image is checked before expensive inspection even without progress evidence (61.5917ms)
+Γû╢ row counts, schema cardinality, columns and hard spool allocation reject independently
+  Γ£ö table-rows (44.5099ms)
+  Γ£ö total-rows (46.7686ms)
+  Γ£ö tables (31.8148ms)
+  Γ£ö objects (36.0034ms)
+  Γ£ö schema-bytes (31.026ms)
+  Γ£ö columns (27.1961ms)
+  Γ£ö spool (52.2104ms)
+Γ£ö row counts, schema cardinality, columns and hard spool allocation reject independently (270.8922ms)
+Γ£ö virtual/generated tables are outside the reviewed envelope and legal special names retain inventory (135.7356ms)
+Γ£ö all unique resume sizes are checked before first hash/copy, including aggregate overflow (89.6433ms)
+Γû╢ reference row, unique file, path metadata and depth limits fail before resume destination writes
+  Γ£ö rows (43.5634ms)
+  Γ£ö files (37.1555ms)
+  Γ£ö bytes (53.8233ms)
+  Γ£ö path (51.3369ms)
+  Γ£ö depth (43.8608ms)
+Γ£ö reference row, unique file, path metadata and depth limits fail before resume destination writes (230.8286ms)
+Γû╢ resume growth during its first hash or copy cannot stream past the observed size
+  Γ£ö first hash (90.3955ms)
+  Γ£ö copy (100.6329ms)
+Γ£ö resume growth during its first hash or copy cannot stream past the observed size (191.6487ms)
+Γû╢ disk free-space gates reject before destination and before spool creation
+  Γ£ö destination (22.0195ms)
+  Γ£ö spool (23.9072ms)
+Γ£ö disk free-space gates reject before destination and before spool creation (46.413ms)
+Γ£ö oversized verification manifest is refused before JSON parsing (83.4405ms)
+Γ£ö mixed dense/schema/reference shape remains bounded and keeps exact distinct bytes (8037.3186ms)
+Γ£ö WAL-aware snapshot and offline restore preserve every table, schema, upload and protected state (427.1508ms)
+Γ£ö never overwrites a snapshot or an existing restore destination (348.4681ms)
+Γ£ö rejects upload files outside the resume allowlist (117.808ms)
+∩╣ú rejects hard-linked upload files when the sandbox permits fixture creation (102.6567ms) # Windows sandbox denies hard-link fixture creation; no escalation attempted
+Γ£ö tampered database bytes and resume bytes fail verification and cannot restore (257.6496ms)
+Γ£ö incomplete marker and missing manifest fail closed (170.8754ms)
+Γ£ö CLI errors do not print private paths or input contents (148.2764ms)
+Γ£ö rejects inconsistent foreign keys and a snapshot placed inside uploads (104.9542ms)
+Γ£ö streaming row hashes exactly match legacy format1 across duplicate rows, chunks, blobs and Unicode (73.6233ms)
+Γ£ö recovery checkpoint snapshots active WAL, retains uncertain evidence, and makes no freeze/upload claim (112.2363ms)
+Γ£ö recovery snapshot leaves INCOMPLETE on integrity failure and never overwrites a destination (87.684ms)
+Γ£ö online backup remains transactionally consistent while an independent connection writes (239.6493ms)
+Γä╣ tests 75
+Γä╣ suites 0
+Γä╣ pass 72
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 3
+Γä╣ todo 0
+Γä╣ duration_ms 10307.9862

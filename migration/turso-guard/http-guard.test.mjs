@@ -8,7 +8,7 @@ const candidate={userId:'u',requestId:'synthetic-http-request',applicantId:'prof
 const count=(engine,table)=>engine.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n;
 
 test('official HTTP driver commits the full SQL-enforced claim graph through the shared repository',async t=>{
- const {db,engine,counts}=guardHttpFixture(t);
+ const {db,engine,counts}=await guardHttpFixture(t);
  const result=await claimCandidate(db,candidate);
  assert.equal(result.fresh,true);assert.equal(result.submission_allowed,false);assert.equal(result.state,'uncertain');
  for(const table of ['guard_identities','guard_claims','guard_intents','guard_protections'])assert.equal(count(engine,table),1,table);
@@ -20,7 +20,7 @@ test('official HTTP driver commits the full SQL-enforced claim graph through the
 });
 
 test('official HTTP driver reports lost committed claim response as uncertain; replay cannot grant a fresh action',async t=>{
- const fixture=guardHttpFixture(t),{db,engine,counts}=fixture;
+ const fixture=await guardHttpFixture(t),{db,engine,counts}=fixture;
  // The fixture commits actual SQL including intent/events/protection, then
  // throws from fetch instead of returning the COMMIT/close pipeline response.
  fixture.dropNextCommitResponse();
@@ -38,7 +38,7 @@ test('official HTTP driver reports lost committed claim response as uncertain; r
 });
 
 test('official HTTP driver expiration after claim and triggers rolls the entire graph back',async t=>{
- const fixture=guardHttpFixture(t),{db,engine,counts}=fixture;
+ const fixture=await guardHttpFixture(t),{db,engine,counts}=fixture;
  fixture.expireAfterStatement(/^INSERT INTO guard_claims\b/i);
  // This fixture models the old stream becoming unusable after expiry. Its
  // rollback also fails, so the shared adapter must poison that connection.
@@ -53,7 +53,7 @@ test('official HTTP driver expiration after claim and triggers rolls the entire 
 });
 
 test('official HTTP driver lost receipt commit response reconciles exactly once and preserves later outcome',async t=>{
- const fixture=guardHttpFixture(t),{db,engine,counts}=fixture;
+ const fixture=await guardHttpFixture(t),{db,engine,counts}=fixture;
  const claim=await claimCandidate(db,candidate);
  const intent=engine.prepare('SELECT created_at FROM guard_intents').get();
  const input={userId:candidate.userId,claimId:claim.claimId,owner:candidate.owner,url:candidate.url,afterSubmit:true,receipt:'Thank you for applying.',observedAt:intent.created_at,receiptId:'synthetic-receipt'};

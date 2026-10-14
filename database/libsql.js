@@ -15,13 +15,16 @@ export function createLibsqlDatabase(client) {
 }
 
 // Deliberately no file/syncUrl/offline mode or environment-reading factory.
-// Calling this connects to an explicitly provided remote target; startup has no
-// remote switch until the remaining schemas, guards and callers are ported.
+// Remote activation stays blocked until full runtime import, schema, guards and
+// callers are qualified. Validation never contacts the supplied target.
 export async function openRemoteDatabase({url, authToken}) {
   const target = new URL(url);
   if (!['https:', 'libsql:'].includes(target.protocol) || !target.hostname || target.username || target.password || target.search || target.hash || !['', '/'].includes(target.pathname))
     throw Error('database_remote_origin_required');
   if (typeof authToken !== 'string' || !authToken) throw Error('database_authentication_required');
-  const {createClient} = await import('@libsql/client');
-  return createLibsqlDatabase(createClient({url, authToken, intMode: 'bigint'}));
+  // Protected-history completion is not a full runtime import. Keep the sole
+  // remote runtime factory closed until every writer, schema, authorization,
+  // durable upload and full-import qualification is implemented and tested.
+  // There is intentionally no environment flag or caller-provided bypass.
+  throw Error('database_remote_runtime_not_qualified');
 }

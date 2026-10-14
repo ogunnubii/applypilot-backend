@@ -1,3 +1,4 @@
+import {importEmptyFixtureHistory} from './history-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -9,7 +10,7 @@ import {fileURLToPath} from 'node:url';
 import {createClient} from '@libsql/client';
 import {installGuardSchema} from './guard-schema.mjs';
 import {createLibsqlDatabase} from '../../database/libsql.js';
-import {claimCandidate,reconcileClaim} from './guard-repository.mjs';
+import {claimCandidate,reconcileClaim,recordReceipt} from './guard-repository.mjs';
 import {exportPreparationLedger} from './preparation-ledger.mjs';
 import {hashFile,inspectDatabase} from '../state-snapshot.mjs';
 import {registerCompanyApplicationPolicyFunctions,companyApplicationKeys} from '../../company-application-policy.js';
@@ -48,6 +49,32 @@ const status=async(raw,userId='u')=>(await raw.execute({sql:'SELECT * FROM guard
 const run=(raw,s,options={})=>importNativeHistory({client:raw,...s,userId:'u',...options});
 async function pending(raw){assert.equal(Number((await status(raw)).pending),1);assert.equal(Number((await status(raw)).completed),0);assert.equal((await status(raw)).source_snapshot_sha,null);}
 function wrap(raw,onExecute,onCommit){return {transaction:async mode=>{const tx=await raw.transaction(mode),statements=[];return {get closed(){return tx.closed;},execute:async input=>{const sql=typeof input==='string'?input:input.sql;statements.push(sql);await onExecute?.(input,tx);return tx.execute(input);},executeMultiple:async sql=>{statements.push(sql);return tx.executeMultiple(sql);},commit:async()=>onCommit?onCommit(tx,statements):tx.commit(),rollback:()=>tx.rollback(),close:()=>tx.close()};}};}
+
+test('zero imports blocks repositories and raw INSERT/REPLACE/upsert before any new action, even on an unstopped account',async t=>{
+ const {raw,db}=await target(t);
+ await assert.rejects(claimCandidate(db,candidate()),/history_import_incomplete/);
+ await assert.rejects(reconcileClaim(db,candidate()),/history_import_incomplete/);
+ await assert.rejects(exportPreparationLedger(db,'u'),/history_import_incomplete/);
+ await raw.execute({sql:'INSERT INTO guard_identities VALUES(?,?,?,?,?)',args:['candidate','u',candidate().company,candidate().title,candidate().url]});
+ const args=['unimported','u','request','candidate','a','browser','submission',at];
+ for(const verb of ['INSERT','INSERT OR REPLACE'])await assert.rejects(raw.execute({sql:verb+' INTO guard_claims VALUES(?,?,?,?,?,?,?,?)',args}),/history_import_incomplete/);
+ await assert.rejects(raw.execute({sql:'INSERT INTO guard_claims VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO UPDATE SET owner=excluded.owner',args}),/history_import_incomplete/);
+ await assert.rejects(raw.execute({sql:'INSERT INTO guard_preparation_snapshots VALUES(?,?,?,?,?)',args:['u',1,at,'0'.repeat(64),0]}),/history_import_incomplete/);
+ await assert.rejects(raw.execute("INSERT INTO guard_preparation_checks(user_id) VALUES('u')"),/history_import_incomplete/);
+ assert.equal(await count(raw,'guard_claims'),0);assert.equal(await count(raw,'guard_intents'),0);
+ await run(raw,source());assert.equal((await claimCandidate(db,candidate())).fresh,true);
+ await assert.rejects(claimCandidate(db,candidate({userId:'other'})),/history_import_incomplete/);
+});
+
+test('a new incomplete import blocks new work and replay without discarding an attributable receipt from an existing attempt',async t=>{
+ const {raw,db}=await target(t);await run(raw,source());const claim=await claimCandidate(db,candidate());
+ const broken=source(db=>db.exec('CREATE TABLE synthetic_new_source(id TEXT)'));broken.manifest.database.schema_digest='0'.repeat(64);
+ await assert.rejects(run(raw,broken),/history_snapshot_manifest_mismatch/);
+ await assert.rejects(claimCandidate(db,candidate()),/history_import_incomplete/);
+ await assert.rejects(reconcileClaim(db,candidate()),/history_import_incomplete/);
+ const result=await recordReceipt(db,{userId:'u',claimId:claim.claimId,owner:'browser',url:candidate().url,receipt:'Your application has been received.',afterSubmit:true});assert.equal(result.ok,true);
+ assert.equal(await count(raw,'guard_receipts'),1);assert.equal(await count(raw,'guard_claims'),1);assert.equal(await count(raw,'guard_protections'),1);
+});
 
 test('full native snapshot preserves all outcomes/evidence separately, with no inferred submission or sensitive payload copying',async t=>{
  const s=source(db=>{
@@ -90,7 +117,7 @@ test('deleted journal/activity identities, external outcomes, reservations and U
   insert(db,'preparation_handoff_snapshots',{user_id:'u',revision:7,generated_at:at,protection_digest:'a'.repeat(64)});
  });const {raw,db}=await target(t);await run(raw,s);
  for(const input of [{company:'Fictional LLC',title:'Engineer \u2014 Remote',url:url('elsewhere',20)},{company:'Renamed',title:'Different',url:url('activity').replace('jobs.lever.co','jobs.eu.lever.co')},{company:'Outside',title:'Support',url:url('outside',21)},{company:'New label',title:'Different',url:reserved.url}])await assert.rejects(claimCandidate(db,candidate(input)),/application_already_protected/,JSON.stringify(input));
- assert.equal((await claimCandidate(db,candidate({userId:'other',company:'Fictional',title:'Engineer',url:url('old-tenant')}))).fresh,true);
+ await importEmptyFixtureHistory(raw,'other');assert.equal((await claimCandidate(db,candidate({userId:'other',company:'Fictional',title:'Engineer',url:url('old-tenant')}))).fresh,true);
  const oracleDB=new DatabaseSync(s.databasePath);register(oracleDB);const native=nativeLedger(oracleDB,'u',{at});oracleDB.close();assert.equal(native.records.length,4);assert.equal(Number((await raw.execute("SELECT count(*) n FROM guard_protections WHERE user_id='u'")).rows[0].n),4);
 });
 
@@ -104,7 +131,7 @@ test('security/quota aliases retain applicant scope; expired evidence never rele
  await assert.rejects(claimCandidate(db,candidate({company:'Quota Display',url:url('new-tenant',81)})),/employer_hold/);
  await assert.rejects(claimCandidate(db,candidate({company:'Expired',url:url('expired',82)})),/employer_hold/);
  assert.equal((await claimCandidate(db,candidate({applicantId:'a2',url:url('security-tenant',83)}))).fresh,true);
- assert.equal((await claimCandidate(db,candidate({userId:'other',applicantId:'other-a',url:url('security-tenant',84)}))).fresh,true);
+ await importEmptyFixtureHistory(raw,'other');assert.equal((await claimCandidate(db,candidate({userId:'other',applicantId:'other-a',url:url('security-tenant',84)}))).fresh,true);
  const expired=(await raw.execute("SELECT plan_json FROM guard_history_rows WHERE source_table='employer_limits' AND raw_json LIKE '%Synthetic expired evidence%'")).rows[0];assert.equal(JSON.parse(expired.plan_json).hold_decision.active,false);assert.equal(await count(raw,'guard_holds'),5);
 });
 
@@ -193,12 +220,12 @@ test('one pinned source transaction supplies verification and all rows while a c
 });
 
 test('even an empty protected-history import advances the epoch twice and invalidates an earlier preparation snapshot',async t=>{
- const s=source(),{raw,db}=await target(t),before=await exportPreparationLedger(db,'u'),epoch=Number((await raw.execute("SELECT epoch FROM guard_preparation_epochs WHERE user_id='u'")).rows[0].epoch);
+ const s=source(db=>db.exec('CREATE TABLE synthetic_later_checkpoint(id TEXT)')),{raw,db}=await target(t);await importEmptyFixtureHistory(raw);const before=await exportPreparationLedger(db,'u'),epoch=Number((await raw.execute("SELECT epoch FROM guard_preparation_epochs WHERE user_id='u'")).rows[0].epoch);
  await run(raw,s);assert.equal(await count(raw,'guard_protections'),0);assert.equal(await count(raw,'guard_holds'),0);assert.equal(Number((await raw.execute("SELECT epoch FROM guard_preparation_epochs WHERE user_id='u'")).rows[0].epoch),epoch+2);
  await assert.rejects(claimCandidate(db,candidate({requestId:'stale-empty-check',kind:'preparation',preparationSnapshot:before})),/snapshot_epoch_changed|snapshot_changed|stale_snapshot/);
  const after=await exportPreparationLedger(db,'u');
- assert.equal(before.native_history_imported,false);assert.equal(before.source_verified,false);assert.equal(after.native_history_imported,true);assert.equal(after.source_verified,true);assert.equal(after.source_snapshot_sha,s.manifest.database_sha256);assert.equal(after.history_import_scope,'protected_history_projection');
- assert.equal(after.submission_allowed,false);assert.equal(Number((await status(raw)).completed),1);
+ assert.equal(before.native_history_imported,true);assert.equal(before.source_verified,true);assert.equal(after.native_history_imported,true);assert.equal(after.source_verified,true);assert.equal(after.source_snapshot_sha,s.manifest.database_sha256);assert.equal(after.history_import_scope,'protected_history_projection');
+ assert.equal(after.submission_allowed,false);assert.equal(Number((await status(raw)).completed),2);
 });
 
 test('successive verified source snapshots retain every original outcome; replaying an older source cannot overwrite later evidence',async t=>{

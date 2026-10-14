@@ -1,3 +1,4 @@
+import {importEmptyFixtureHistory} from './history-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -25,7 +26,7 @@ for(const driver of ['native','libsql'])test(`${driver}: receipt query compariso
 });
 
 test('raw receipt SQL cannot use handoff tracking removal to bypass native attribution',async t=>{
- const raw=createClient({url:':memory:',intMode:'number'});await raw.execute('PRAGMA foreign_keys=ON');await installGuardSchema(raw);await raw.execute("INSERT INTO guard_accounts VALUES('u',0)");
+ const raw=createClient({url:':memory:',intMode:'number'});await raw.execute('PRAGMA foreign_keys=ON');await installGuardSchema(raw);await raw.execute("INSERT INTO guard_accounts VALUES('u',0)");await importEmptyFixtureHistory(raw);
  const db=createLibsqlDatabase(raw);t.after(()=>db.close());
  const claim=await claimCandidate(db,{userId:'u',requestId:'query-request',applicantId:'p',owner:'browser',company:'Fictional',title:'Engineer',url:base+'?lever-source=original',kind:'submission'});
  const now=new Date().toISOString();

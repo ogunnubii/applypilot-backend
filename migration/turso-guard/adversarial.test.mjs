@@ -1,3 +1,4 @@
+import {importEmptyFixtureHistory} from './history-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createClient} from '@libsql/client';
@@ -13,7 +14,7 @@ async function fixture(t) {
  await raw.execute('PRAGMA foreign_keys=ON');
  await raw.execute('PRAGMA recursive_triggers=OFF');
  await installGuardSchema(raw);
- await raw.execute("INSERT INTO guard_accounts VALUES('u',0),('other',0)");
+ await raw.execute("INSERT INTO guard_accounts VALUES('u',0),('other',0)");await importEmptyFixtureHistory(raw);await importEmptyFixtureHistory(raw,'other');
  const db=createLibsqlDatabase(raw);t.after(()=>db.close());
  // Raw access is deliberate only in this adversarial fixture, to model a
  // different runtime SQL writer bypassing repository validation.

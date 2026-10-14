@@ -7,7 +7,7 @@ import {employerQuotas} from './employer-limits.js';
 export const HANDOFF_SOURCE='ogunnubii/applypilot-backend';
 export const HANDOFF_ORIGIN='http://127.0.0.1:17780';
 const MAX_AGE=300000;
-const protectionCondition=r=>`(${r}.status!='saved' OR ${r}.attempts>0 OR ${r}.local_attempt_at IS NOT NULL OR ${r}.confirmation IS NOT NULL OR ${r}.local_phase IN ('verifying','uncertain','submitted') OR ${r}.challenge IN ('Unconfirmed submission','Submission in progress'))`;
+export const protectionCondition=r=>`(${r}.status!='saved' OR ${r}.attempts>0 OR ${r}.local_attempt_at IS NOT NULL OR ${r}.confirmation IS NOT NULL OR ${r}.local_phase IN ('verifying','uncertain','submitted') OR ${r}.challenge IN ('Unconfirmed submission','Submission in progress'))`;
 const fail=code=>{throw Object.assign(Error(code),{code});};
 function text(value,max=500){if(typeof value!=='string'||!value.trim()||value.length>max||/[\x00-\x1f]/.test(value))fail('invalid_identity');return value.trim();}
 export function handoffURL(value){
@@ -34,7 +34,7 @@ export function handoffIdentity(value,{candidate=false}={}){
  const employer_aliases=[...new Set([companyKey(employer),ats?.tenant].filter(Boolean))].sort();
  return {url,employer,title,location,...ats,employer_aliases};
 }
-function matches(a,b){
+export function matches(a,b){
  if(a.url&&b.url&&a.url===b.url)return true;
  if(a.ats&&a.ats===b.ats&&a.tenant===b.tenant&&a.requisition_id===b.requisition_id)return true;
  const names=x=>[x.employer,...(x.employer_aliases||[])].map(companyKey).filter(Boolean);
@@ -113,7 +113,7 @@ export function exportPreparationLedger(db,uid,{at=new Date().toISOString()}={})
   return {schema_version:2,source_project:HANDOFF_SOURCE,revision,generated_at:at,complete:true,...data};
  });
 }
-function validateRequest(input){
+export function validateRequest(input){
  if(!input||Object.keys(input).some(k=>!['schema_version','request_id','expected_revision','identity'].includes(k))||input.schema_version!==2||!Number.isSafeInteger(input.expected_revision)||input.expected_revision<1||typeof input.request_id!=='string'||!/^[a-zA-Z0-9_-]{16,100}$/.test(input.request_id))fail('invalid_request');
  return handoffIdentity(input.identity,{candidate:true});
 }

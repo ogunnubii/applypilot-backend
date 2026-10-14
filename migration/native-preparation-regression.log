@@ -1,0 +1,30 @@
+Γ£ö quota notice is not a refusal; Camunda 2/30 refusal is recognized and never a receipt (3.4146ms)
+Γ£ö policy notice alone does not block; only distinct receipts exhaust the rolling quota (4.5999ms)
+Γ£ö known receipts shorten an explicit hold; missing history retains the original conservative date (3.0459ms)
+Γ£ö attempts, placeholders, queued jobs and other applicants cannot consume confirmed places (1.4281ms)
+Γ£ö minimal export retains URL-less history, exclusions, attempts and deleted tombstones; no personal content (8.9484ms)
+Γ£ö atomic reservation fences original queue/attempt paths and survives restart with no release or expiry (57.7802ms)
+Γ£ö stale/missing snapshots and changed protected state fail closed; valid replay needs fresh recheck (3.6502ms)
+Γ£ö company/title history and ATS aliases block reposts, but employer limits never block all platforms (28.7867ms)
+Γ£ö candidate URLs are real supported identities and cannot smuggle credentials or claim another requisition (0.945ms)
+Γ£ö uncertain phases, independent attempt events and edited then deleted identities remain protected (2.7518ms)
+Γ£ö an unexportable protected record fails the whole snapshot rather than silently omitting protection (1.4787ms)
+Γ£ö two simultaneous preparations sharing one snapshot produce one durable reservation (143.0708ms)
+Γ£ö receipt retry persists original evidence exactly once and preserves later interview status (4.218ms)
+Γ£ö hosted receipt requires its reserved attempt, is atomic and reconciles exactly once after a restart (1.585ms)
+Γ£ö local: full receipt validation rejects late contradictions before first write and replay (5.224ms)
+Γ£ö local: long valid evidence is retained exactly and later outcomes survive safe replay (2.9964ms)
+Γ£ö local: input cap uses UTF-8 bytes and rejects invalid encodings without truncation (0.9243ms)
+Γ£ö local: full receipt, outcome and event roll back together on storage failure (0.8727ms)
+Γ£ö hosted: full receipt validation rejects late contradictions before first write and replay (2.6729ms)
+Γ£ö hosted: long valid evidence is retained exactly and later outcomes survive safe replay (2.4695ms)
+Γ£ö hosted: input cap uses UTF-8 bytes and rejects invalid encodings without truncation (0.712ms)
+Γ£ö hosted: full receipt, outcome and event roll back together on storage failure (1.4129ms)
+Γä╣ tests 22
+Γä╣ suites 0
+Γä╣ pass 22
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 0
+Γä╣ todo 0
+Γä╣ duration_ms 360.9075

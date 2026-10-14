@@ -26,9 +26,8 @@ import {receipt,sameApplication} from '../../local-policy.js';
 // inspectable in the raw/plan ledger. Releasing a hold requires a separate design.
 // No historical receipt creates a new claim, intent, submission permission or
 // guard_receipts row. Native outcome/status and confirmed evidence stay separate.
-// Accounts with no import session are still isolated-model accounts: no pending
-// session does NOT mean history was imported. Production activation must require
-// completed>0 AND pending=0; this module does not activate accounts.
+// Accounts with no completed import are held by SQL and repositories. This
+// establishes protected-history completeness only, never full runtime import.
 
 export const HISTORY_IMPORT_POLICY=Object.freeze({version:1,maxRowBytes:262144,maxBatchBytes:1048576,maxBatchRows:100});
 const fail=code=>{throw Object.assign(Error(code),{code});};
@@ -66,7 +65,8 @@ export const HISTORY_SOURCE_INVENTORY=Object.freeze(specs.map(([table,columns])=
 const immutable=(table,key)=>`CREATE TRIGGER ${table}_immutable_update BEFORE UPDATE ON ${table} BEGIN SELECT RAISE(ABORT,'immutable_history_import'); END;
 CREATE TRIGGER ${table}_immutable_delete BEFORE DELETE ON ${table} BEGIN SELECT RAISE(ABORT,'immutable_history_import'); END;
 CREATE TRIGGER ${table}_immutable_replace BEFORE INSERT ON ${table} WHEN EXISTS(SELECT 1 FROM ${table} WHERE ${key}) BEGIN SELECT RAISE(ABORT,'immutable_history_import'); END;`;
-const pending="EXISTS(SELECT 1 FROM guard_history_import_status WHERE user_id=NEW.user_id AND pending>0)";
+// Require an actual completed import; absence of a pending row is insufficient.
+const pending="NOT EXISTS(SELECT 1 FROM guard_history_import_status WHERE user_id=NEW.user_id AND pending=0 AND completed>0 AND source_snapshot_sha IS NOT NULL)";
 const completionDeny="CREATE TRIGGER guard_history_completion_installer_only BEFORE INSERT ON guard_history_completions BEGIN SELECT RAISE(ABORT,'history_completion_requires_verified_installer'); END;";
 
 export const HISTORY_IMPORT_SCHEMA_SQL=`

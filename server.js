@@ -1,6 +1,6 @@
 import {resolveResumePath} from './storage-paths.js';
 import {resolvePendingAnswers} from './pending-answers.js';
-import {exportPreparationLedger,reservePreparation} from './preparation-handoff.js';
+import {exportPreparationLedger,reservePreparation} from './api/preparation-handoff.js';
 import {parkUnresolvedAttempt,unresolvedAttemptState,unresolvedAttemptMarker} from './unresolved-attempts.js';
 import {installReceiptSync,syncLocalReceipt} from './receipt-sync.js';
 import {automaticCampaign,automaticMember,automaticSnapshot,startManualBatch,startAutomaticCampaign,stopAutomaticCampaign,populateAutomaticCampaign,recoverAutomaticPreparation} from './automatic-campaign.js';
@@ -125,10 +125,10 @@ let uid=readToken(authToken,db);if(!uid)return send(res,401,{error:'Sign in requ
 if(path==='/api/me'&&req.method==='GET')return send(res,200,{user:{...db.prepare('SELECT id,email FROM users WHERE id=?').get(uid),emailVerified:false}});
 if(path==='/api/logout'&&req.method==='POST'){revokeToken(db,authToken);return send(res,200,{ok:true});}
 if(path==='/api/preparation-handoff/ledger'&&req.method==='GET'){
- try{return send(res,200,exportPreparationLedger(db,uid));}catch(error){return send(res,409,{error:'Protected history could not be exported completely. Preparation remains blocked.',code:error.code||'incomplete_projection'});}
+ try{return send(res,200,await exportPreparationLedger(asyncDatabase,uid));}catch(error){return send(res,409,{error:'Protected history could not be exported completely. Preparation remains blocked.',code:error.code||'incomplete_projection'});}
 }
 if(path==='/api/preparation-handoff/reserve'&&req.method==='POST'){
- try{return send(res,200,reservePreparation(db,uid,JSON.parse(await body(req,10000))));}catch(error){return send(res,409,{error:'Preparation reservation requires a fresh protection check.',code:error.code||'reservation_failed'});}
+ try{return send(res,200,await reservePreparation(asyncDatabase,uid,JSON.parse(await body(req,10000))));}catch(error){return send(res,409,{error:'Preparation reservation requires a fresh protection check.',code:error.code||'reservation_failed'});}
 }
 
 

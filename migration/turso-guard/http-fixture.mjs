@@ -1,3 +1,4 @@
+import {importEmptyFixtureHistory,nativeFixtureInstaller} from './history-fixture.mjs';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {setImmediate as nextTurn} from 'node:timers/promises';
@@ -10,10 +11,10 @@ import {GUARD_SCHEMA_SQL} from './guard-schema.mjs';
 // or application data. This exercises protocol/client integration, not service
 // behavior or production latency. Bootstrap uses the actual guard DDL; runtime
 // statements go through the official HTTP driver and shared async adapter.
-export function guardHttpFixture(t) {
+export async function guardHttpFixture(t) {
  const engine=new DatabaseSync(':memory:');
  engine.exec('PRAGMA foreign_keys=ON; PRAGMA recursive_triggers=OFF;'+GUARD_SCHEMA_SQL);
- engine.exec("INSERT INTO guard_accounts VALUES('u',0),('other',0)");
+ engine.exec("INSERT INTO guard_accounts VALUES('u',0),('other',0)");await importEmptyFixtureHistory(nativeFixtureInstaller(engine));await importEmptyFixtureHistory(nativeFixtureInstaller(engine),'other');
  const sessions=new Map(),connections=[];
  const counts={requests:0,begin:0,commit:0,rollback:0,claims:0,receipts:0,expired:0,droppedCommitResponses:0};
  let sequence=0,activeBaton=null,dropCommit=false,expirePattern=null;

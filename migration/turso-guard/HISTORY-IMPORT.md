@@ -34,7 +34,8 @@ Later outcomes survive subsequent snapshots and replay of an older source.
 The installer creates an immutable account import session before opening the
 source. A pending session blocks claims, replay/reconciliation and preparation
 exports/checks, including raw SQL preparation writes. Accounts with no session
-remain explicitly unimported. A verified completion marks only
+are also blocked by repository and raw SQL gates. Attributable receipts from an
+existing intent remain recordable during an import. A verified completion marks only
 `history_import_scope='protected_history_projection'`, with its source hash.
 
 The source file hash, schema, all table row-multiset digests, integrity, references
@@ -61,13 +62,13 @@ this prototype does not supply that access-control boundary.
 
 ## Tests and limits
 
-The integrated `node checks/run-async-tests.mjs` run passed **183 tests**, zero
-failures or skips, including **32 importer tests**. External fetches were blocked.
+The integrated `node checks/run-async-tests.mjs` run passed **199 tests**, zero
+failures or skips, including **34 importer tests**. External fetches were blocked.
 Tests use synthetic native SQLite and local libSQL data, with injected rollback,
 lost responses and concurrent WAL mutation. They cover forged completion/outcomes,
 raw replacement, changed manifests, account isolation, aliases, hold chronology,
 native-written receipts, later outcomes and empty-import epoch invalidation.
-Evidence: `../guard-history-import-tests.log`.
+Evidence: `../async-preparation-import-tests.log`.
 
 Active imported quota holds conservatively remain permanent; their expiry evidence
 is retained, but release is unimplemented. Native quota projection is checked

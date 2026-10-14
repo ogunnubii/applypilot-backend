@@ -1,3 +1,4 @@
+import {importEmptyFixtureHistory} from './history-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync} from 'node:fs';
@@ -23,7 +24,7 @@ async function fixture(t,{file=false}={}) {
  const raw=createClient({url,intMode:'bigint'});
  await raw.executeMultiple('PRAGMA foreign_keys=ON;PRAGMA journal_mode=WAL;PRAGMA busy_timeout=0;');
  await installGuardSchema(raw);
- await raw.execute("INSERT INTO guard_accounts VALUES('u',0)");
+ await raw.execute("INSERT INTO guard_accounts VALUES('u',0)");await importEmptyFixtureHistory(raw);
  const db=createLibsqlDatabase(raw); t.after(()=>db.close());
  return {db,raw,url};
 }
@@ -58,7 +59,7 @@ test('unsupported protected identity blocks every claim for its account instead 
  const {db,raw}=await fixture(t);
  await protect(raw,{company:'Different',title:'Unrelated',url:'https://jobs.lever.co/fictional/%31'});
  await assert.rejects(claimCandidate(db,candidate()),/invalid_protected_identity_blocks_account/);
- await raw.execute("INSERT INTO guard_accounts VALUES('other',0)");
+ await raw.execute("INSERT INTO guard_accounts VALUES('other',0)");await importEmptyFixtureHistory(raw,'other');
  assert.equal((await claimCandidate(db,candidate({userId:'other'}))).fresh,true);
 });
 test('preparation reservation cannot create a submission intent or receive an employer receipt',async t=>{

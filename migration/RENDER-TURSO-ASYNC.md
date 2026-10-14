@@ -1,13 +1,14 @@
 # Render + Turso implementation checkpoint
 
-Latest checkpoint: [GUARD-IMPLEMENTATION.md](GUARD-IMPLEMENTATION.md) records the
-183-test SQL guard and protected-history import prototype. [RECOVERY-CHECKPOINT.md](RECOVERY-CHECKPOINT.md)
+Latest checkpoint: [ASYNC-PREPARATION-CHECKPOINT.md](ASYNC-PREPARATION-CHECKPOINT.md)
+records three wired API slices, mandatory completed-history gates and 199 passing
+integrated async tests. The older guard checkpoint remains historical evidence. [RECOVERY-CHECKPOINT.md](RECOVERY-CHECKPOINT.md)
 supersedes the earlier console-backup memory assumptions and records its current
 resource blocker. The sections below preserve the earlier two-API-slice results;
 they do not imply the later guard prototype is integrated or production-ready.
 
-The isolated `migration/render-turso-async` branch now has a shared asynchronous
-database interface and two complete API slices wired into `server.js`:
+The isolated `migration/render-turso-async` branch has a shared asynchronous
+database interface. The first two API slices wired into `server.js` are:
 
 - Notification preferences: authenticated GET and PUT, mailbox verification,
   account existence, tenant-scoped failure counts, preference write and readback.
@@ -52,8 +53,9 @@ returned rows and rolls back; use `get`/`all` for RETURNING. The pinned local
 libSQL driver's affected-row metadata for RETURNING is incomplete, so callers
 must not infer affected counts from that path.
 
-`database/libsql.js` owns an injected client, or explicitly creates a remote
-HTTPS/libSQL client with the pinned `@libsql/client` 0.18.0 driver. It has no file,
+`database/libsql.js` owns an injected client with the pinned `@libsql/client`
+0.18.0 driver. Its remote runtime factory now rejects activation until full
+runtime import and writer qualification exist. It has no automatic file,
 sync, offline, environment-reading or automatic retry mode. No remote factory was
 called with a real URL or credential during this work. The prior receipt
 experiment now reuses this foundation but remains disconnected from submission
@@ -64,7 +66,7 @@ write transactions as BEGIN IMMEDIATE and interactive transaction expiration.
 The [official driver source](https://github.com/tursodatabase/libsql-client-ts)
 and the installed pinned source informed the connection and error handling.
 
-## Measured scope
+## Earlier two-slice measured scope
 
 | Measure | Completed or remaining |
 | --- | --- |

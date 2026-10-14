@@ -173,7 +173,7 @@ const model={schema_version:2,source_project,isolated_model:true,native_history_
 export async function historyImportState(tx,userId){
  const status=await tx.get('SELECT pending,completed,source_snapshot_sha FROM guard_history_import_status WHERE user_id=?',userId);
  if(!status)fail('account_missing');
- if(status.pending>0)fail('history_import_incomplete');
+ if(status.pending>0||status.completed<1||!status.source_snapshot_sha)fail('history_import_incomplete');
  const imported=status.completed>0;
  return {native_history_imported:imported,source_verified:imported,source_snapshot_sha:imported?status.source_snapshot_sha:null,history_import_scope:imported?'protected_history_projection':null};
 }

@@ -1,0 +1,40 @@
+Γ£ö full inline Node phase exits before archive and round-trips without printing row values (540.5834ms)
+Γ£ö recovery inline Node phase exits before archive and round-trips without printing row values (554.3075ms)
+Γ£ö inline recovery fails closed when a copied DB resume reference is missing (255.3599ms)
+Γ£ö generated shell retains memory rejection before Node and tar, with no overlapping archive child (0.5916ms)
+Γ£ö copies current and previous references, deduplicates paths, preserves relative paths and does not rewrite snapshot (314.0191ms)
+Γ£ö required reference tables and columns fail closed even when no files are referenced (129.2975ms)
+Γ£ö null current references are absent; empty current and null previous references are invalid (175.4606ms)
+Γ£ö missing current or previous referenced resume fails without changing the database (102.5131ms)
+Γ£ö parent traversal, sibling-prefix paths, extensions, relative roots and destination overlap fail closed (204.7575ms)
+Γ£ö does not overwrite or adopt a nonempty destination (50.1647ms)
+Γ£ö detects source delete after prehash while copying (112.9402ms)
+Γ£ö detects source replace after prehash while copying (106.9407ms)
+Γ£ö detects source modify after prehash while copying (118.7257ms)
+∩╣ú rejects hard-linked source resumes when the sandbox permits creation (17.265ms) # Sandbox denies synthetic hard-link creation; no escalation attempted
+∩╣ú rejects a symlink or junction anywhere in a source parent path (17.3023ms) # Sandbox denies synthetic parent-link creation; no escalation attempted
+Γ£ö offline verification uses copied DB references and succeeds after live resume files disappear (106.9893ms)
+Γ£ö offline verification rejects missing, changed and extra copied files or directories (401.7326ms)
+Γ£ö offline verification rejects altered file lists, counts, timestamps, flags, digests and paths (182.3432ms)
+Γ£ö offline verification detects copied DB reference changes rather than trusting a manifest inventory (84.6255ms)
+Γ£ö malformed oversized and BLOB reference values fail before copying (53.246ms)
+Γ£ö WAL-aware snapshot and offline restore preserve every table, schema, upload and protected state (384.8362ms)
+Γ£ö never overwrites a snapshot or an existing restore destination (299.8865ms)
+Γ£ö rejects upload files outside the resume allowlist (125.0755ms)
+∩╣ú rejects hard-linked upload files when the sandbox permits fixture creation (105.7159ms) # Windows sandbox denies hard-link fixture creation; no escalation attempted
+Γ£ö tampered database bytes and resume bytes fail verification and cannot restore (225.9921ms)
+Γ£ö incomplete marker and missing manifest fail closed (181.0448ms)
+Γ£ö CLI errors do not print private paths or input contents (161.0395ms)
+Γ£ö rejects inconsistent foreign keys and a snapshot placed inside uploads (101.9466ms)
+Γ£ö streaming row hashes exactly match legacy format1 across duplicate rows, chunks, blobs and Unicode (79.324ms)
+Γ£ö recovery checkpoint snapshots active WAL, retains uncertain evidence, and makes no freeze/upload claim (112.449ms)
+Γ£ö recovery snapshot leaves INCOMPLETE on integrity failure and never overwrites a destination (48.7431ms)
+Γ£ö online backup remains transactionally consistent while an independent connection writes (270.3066ms)
+Γä╣ tests 32
+Γä╣ suites 0
+Γä╣ pass 29
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 3
+Γä╣ todo 0
+Γä╣ duration_ms 2309.9188

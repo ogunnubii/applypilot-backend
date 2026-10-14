@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join,relative,resolve,sep} from 'node:path';
 import {spawnSync,execFileSync} from 'node:child_process';
 import {inspectDatabase,verifySnapshot,verifyRecoverySnapshot,hashFile} from './state-snapshot.mjs';
-import {consoleProgram,recoveryProgram,MINIMUM_HEADROOM_BYTES} from './build-console-backup.mjs';
+import {consoleProgram,recoveryProgram,MINIMUM_HEADROOM_BYTES,MINIMUM_FREE_SPACE_BYTES,MAXIMUM_ARCHIVE_BYTES} from './build-console-backup.mjs';
 
 function fixture(t){
  const root=mkdtempSync(join(tmpdir(),'applypilot-console-fixture-')),source=join(root,'source.sqlite'),uploads=join(root,'uploads'),target=join(root,'bundle');
@@ -42,9 +42,17 @@ test('inline recovery fails closed when a copied DB resume reference is missing'
 
 test('generated shell retains memory rejection before Node and tar, with no overlapping archive child',()=>{
  const source=readFileSync(new URL('./railway-console-recovery.sh',import.meta.url),'utf8');
- assert.equal(MINIMUM_HEADROOM_BYTES,100663296);assert(80*1024*1024<MINIMUM_HEADROOM_BYTES);
+ assert.equal(MINIMUM_HEADROOM_BYTES,268435456);assert(96*1024*1024<MINIMUM_HEADROOM_BYTES);
+ assert.equal(MINIMUM_FREE_SPACE_BYTES,268435456);
+ assert.equal(MAXIMUM_ARCHIVE_BYTES,16*1024*1024);
  assert(source.includes('test "$AP_BACKUP_HEADROOM" -ge '+MINIMUM_HEADROOM_BYTES));assert(source.includes('case "$AP_BACKUP_LIMIT:$AP_BACKUP_CURRENT" in *[!0-9:]*|:*|*:)'));
+ assert(source.includes('test "$AP_BACKUP_FREE_KIB" -ge '+MINIMUM_FREE_SPACE_BYTES/1024));
+ assert(source.includes('test "$AP_BACKUP_ARCHIVE_BYTES" -le '+MAXIMUM_ARCHIVE_BYTES));
+ assert(source.includes('three_verified_absolute_paths_required'));
+ assert(!source.includes('/app/data/applypilot.sqlite'));
+ assert(recoveryProgram.includes('resourceLimits:CONSOLE_RESOURCE_LIMITS'));
  const node=source.indexOf('node --max-old-space-size=24'),end=source.lastIndexOf('\nAPPLYPILOT_BACKUP_MODULE\n'),tar=source.indexOf('tar -czf -');
  assert(source.indexOf('\nap_backup_check_memory\n')<node);assert(end>node);assert(source.indexOf('\nap_backup_check_memory\n',end)>end);assert(tar>end);assert(!recoveryProgram.includes('node:child_process'));assert(source.indexOf('tar -tzf')<source.lastIndexOf('"backup_ready":true'));
+ assert(source.indexOf('\nap_backup_check_disk\n')<node);assert(source.indexOf('\nap_backup_check_disk\n',end)>end);
  // This is a source-structure check; POSIX execution requires the Linux worker.
 });

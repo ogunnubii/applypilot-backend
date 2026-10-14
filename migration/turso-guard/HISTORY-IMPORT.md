@@ -61,8 +61,8 @@ this prototype does not supply that access-control boundary.
 
 ## Tests and limits
 
-The integrated `node checks/run-async-tests.mjs` run passed **182 tests**, zero
-failures or skips, including **31 importer tests**. External fetches were blocked.
+The integrated `node checks/run-async-tests.mjs` run passed **183 tests**, zero
+failures or skips, including **32 importer tests**. External fetches were blocked.
 Tests use synthetic native SQLite and local libSQL data, with injected rollback,
 lost responses and concurrent WAL mutation. They cover forged completion/outcomes,
 raw replacement, changed manifests, account isolation, aliases, hold chronology,

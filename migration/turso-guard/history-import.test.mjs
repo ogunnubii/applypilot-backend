@@ -71,6 +71,15 @@ test('full native snapshot preserves all outcomes/evidence separately, with no i
  const counts=await count(raw,'guard_history_rows');assert.equal((await run(raw,s)).replayed,true);assert.equal(await count(raw,'guard_history_rows'),counts);assert.equal(await count(raw,'guard_preparation_external_events'),2);
 });
 
+test('full manifest verification retains special-name tables instead of omitting their hashes',async t=>{
+ const s=source(db=>db.exec('CREATE TABLE "__proto__"(value TEXT);INSERT INTO "__proto__" VALUES(\'SYNTHETIC_EXTRA_TABLE\')'));
+ assert.equal(Object.hasOwn(s.manifest.database.tables,'__proto__'),true);
+ assert.equal(s.manifest.database.tables.__proto__.rows,1);
+ const good=await target(t);assert.equal((await run(good.raw,s)).complete,true);
+ const bad={...s,manifest:JSON.parse(JSON.stringify(s.manifest))};delete bad.manifest.database.tables.__proto__;
+ const poisoned=await target(t);await assert.rejects(run(poisoned.raw,bad),/history_snapshot_manifest_mismatch/);await pending(poisoned.raw);
+});
+
 test('deleted journal/activity identities, external outcomes, reservations and Unicode/ATS aliases block duplicate claims',async t=>{
  const reserved=handoffIdentity({employer:'Reservation Incorporated',title:'Engineer',url:url('reservation'),location:'Unknown'},{candidate:true});
  const s=source(db=>{

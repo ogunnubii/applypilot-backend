@@ -123,7 +123,7 @@ function inspectPinned(source){
   for(const {name} of source.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").iterate()){
    const statement=source.prepare('SELECT * FROM '+quote(name));statement.setReadBigInts(true);let rows=0;
    for(const row of statement.iterate())insert.run(rowHash(row),++rows);
-   tables[name]={rows,digest:arrayHash(spool.prepare('SELECT d FROM hashes ORDER BY d,n').iterate(),row=>JSON.stringify(row.d))};spool.exec('DELETE FROM hashes');
+   Object.defineProperty(tables,name,{value:{rows,digest:arrayHash(spool.prepare('SELECT d FROM hashes ORDER BY d,n').iterate(),row=>JSON.stringify(row.d))},enumerable:true});spool.exec('DELETE FROM hashes');
   }
   return {format:1,schema_digest,tables};
  }finally{if(spool)spool.close();if(relative(parent,folder).startsWith('..')||relative(folder,path)!=='hashes.sqlite')fail('history_invalid_spool_path');if(existsSync(path))unlinkSync(path);rmdirSync(folder);}

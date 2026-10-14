@@ -20,7 +20,7 @@ export function readInlineRecoveryProgram(shellPath) {
  const start=shell.indexOf("<<'"+marker+"'\n"),end=shell.lastIndexOf('\n'+marker);
  if(start<0||end<=start)throw Error('recovery_program_heredoc_missing');
  const source=shell.slice(start+("<<'"+marker+"'\n").length,end);
- if(!source.includes('createRecoverySnapshot(source,target,{uploadsRoot:uploads})')||!source.includes('copyReferencedResumes'))throw Error('integrated_recovery_program_missing');
+ if(!source.includes('createRecoverySnapshot(source,target,{uploadsRoot:uploads')||!source.includes('copyReferencedResumes'))throw Error('integrated_recovery_program_missing');
  const guard=shell.match(/test "\$AP_BACKUP_HEADROOM" -ge (\d+)/);
  if(!guard)throw Error('recovery_program_headroom_guard_missing');
  return {source,sourceSha256:hash(source),shellSha256:hash(shell),minimumHeadroomBytes:Number(guard[1])};

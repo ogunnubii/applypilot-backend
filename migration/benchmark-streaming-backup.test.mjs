@@ -12,10 +12,10 @@ test('the qualification matrix starts with urgent recovery cases and covers each
 test('generated recovery heredoc includes resume integration and rejects an independent synthetic 80 MiB fixture',()=>{
  const pinned=readInlineRecoveryProgram(new URL('./railway-console-recovery.sh',import.meta.url));
  assert.match(pinned.sourceSha256,/^[a-f0-9]{64}$/);assert.match(pinned.shellSha256,/^[a-f0-9]{64}$/);
- assert(pinned.minimumHeadroomBytes>=96*1024*1024);
+ assert.equal(pinned.minimumHeadroomBytes,256*1024*1024);
  assert.equal(SYNTHETIC_GUARD_REJECTION_BYTES,80*1024*1024);
  assert(SYNTHETIC_GUARD_REJECTION_BYTES<pinned.minimumHeadroomBytes);
- assert(pinned.source.includes('createRecoverySnapshot(source,target,{uploadsRoot:uploads})'));
+ assert(pinned.source.includes('createRecoverySnapshot(source,target,{uploadsRoot:uploads,resourceLimits:CONSOLE_RESOURCE_LIMITS})'));
 });
 
 test('compact profile preserves the original matrix and adds a two-byte text fixture',()=>{

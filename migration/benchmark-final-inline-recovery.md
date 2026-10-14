@@ -1,5 +1,11 @@
 # Final inline recovery memory evidence
 
+Historical Windows measurements for the script hash below. The former 96 MiB
+headroom floor is superseded by the bounded 256 MiB admission gate described in
+[RECOVERY-CHECKPOINT.md](RECOVERY-CHECKPOINT.md), informed by the corrected
+[Linux review](LINUX-RECOVERY-RESOURCE-REVIEW.md). These original measurements
+are retained unchanged; they do not benchmark the revised generated program.
+
 Synthetic Windows qualification only, measured 2026-10-14. No production data,
 credentials, providers, original checkout, or active application processes were
 accessed. No production backup or Linux shell execution occurred.

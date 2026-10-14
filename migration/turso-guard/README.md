@@ -16,7 +16,7 @@ Generic preparation claims and reconciliation require that same lifecycle. SQL b
 
 Run `npm run test:async`. Its parent process owns temporary SQLite files and deletes them only after the libSQL test process exits.
 
-The latest integrated suite has **182 passing tests, zero failures and zero skips**: 32 prior async database/API tests and 150 guard/import tests. Coverage includes independent clients competing for one identity; preparation versus submission races; process restart; direct SQL writes; Stop; account isolation; rollback of partial intent/receipt graphs; and committed-but-lost responses through the official HTTP driver with a replaced, synthetic transport. These are not live Turso measurements. See `../guard-history-import-tests.log`.
+The latest integrated suite has **183 passing tests, zero failures and zero skips**: 32 prior async database/API tests and 151 guard/import tests. Coverage includes independent clients competing for one identity; preparation versus submission races; process restart; direct SQL writes; Stop; account isolation; rollback of partial intent/receipt graphs; and committed-but-lost responses through the official HTTP driver with a replaced, synthetic transport. These are not live Turso measurements. See `../guard-history-import-tests.log`.
 
 Receipt text tests compare 5,387 distinct bounded cases on both native SQLite and local libSQL (10,774 differential comparisons), including full-length contradictions, placeholders, Unicode whitespace and invalid UTF-8. Receipt query tests compare 225 pairs per driver (450 comparisons). Thirty-two preparation lifecycle tests cover snapshot revision, age and digest, replay after Stop/holds, conflicting request ownership, independent-client races, lost commit responses, immutable metadata, raw writer bypasses and oversized or incomplete projections. An earlier full `npm test` run passed 635 native tests, four UI checks and the then-current 88 async tests. The newer native receipt fix and its separate regression results are recorded in `../GUARD-IMPLEMENTATION.md`.
 
@@ -24,7 +24,7 @@ Identity qualification compares 1,112,063 Unicode scalars, 2,039 complete normal
 
 ## Protected-history import
 
-The trusted offline importer has 31 passing tests and verifies one pinned source transaction against a complete snapshot manifest. It preserves immutable evidence and outcomes in bounded batches. A durable pending-import hold blocks claims, replay, reconciliation and preparation exports until independently verified completion. Empty imports invalidate earlier snapshots too. Ordinary DML cannot forge completion or append evidence after completion. No claims, submission intents or receipts are fabricated from imported history. See [HISTORY-IMPORT.md](HISTORY-IMPORT.md) for the inventory, failure behavior and deployment boundary.
+The trusted offline importer has 32 passing tests and verifies one pinned source transaction against a complete snapshot manifest. It preserves immutable evidence and outcomes in bounded batches. A durable pending-import hold blocks claims, replay, reconciliation and preparation exports until independently verified completion. Empty imports invalidate earlier snapshots too. Ordinary DML cannot forge completion or append evidence after completion. No claims, submission intents or receipts are fabricated from imported history. See [HISTORY-IMPORT.md](HISTORY-IMPORT.md) for the inventory, failure behavior and deployment boundary.
 
 ## Remaining integration gates
 

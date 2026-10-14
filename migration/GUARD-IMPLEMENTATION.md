@@ -47,11 +47,11 @@ protection/hold checks even against fabricated matching digests. Its projection
 byte estimate is deliberately conservative: 512 plus six times source bytes per
 row, so some otherwise valid native projections are rejected rather than omitted.
 
-The latest `node checks/run-async-tests.mjs` run passed **182 tests**, with zero
-failures or skips (32 prior async API/database tests and 150 guard/import tests).
+The latest `node checks/run-async-tests.mjs` run passed **183 tests**, with zero
+failures or skips (32 prior async API/database tests and 151 guard/import tests).
 Receipt text has 10,774 native/local-libSQL differential comparisons, receipt
 queries have 450 comparisons, 32 tests cover the preparation lifecycle, and
-31 tests cover the protected-history importer.
+32 tests cover the protected-history importer.
 Independent clients, preparation/submission races, restart, Stop, owner
 boundaries, direct SQL, partial rollback and lost responses are covered.
 An earlier `npm test` run passed 635 native tests, four UI checks and the

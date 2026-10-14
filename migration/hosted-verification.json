@@ -1,0 +1,25 @@
+{
+  "verified_at_utc": "2026-10-14T01:50:56Z",
+  "scope": "Isolated hosted migration code; no production activation",
+  "application_source_changed_this_followup": false,
+  "database_inventory": {"modules": 49, "direct_calls": 852, "explicit_write_transactions": 41, "custom_functions": 10},
+  "tests": {
+    "migration_local": {"total": 25, "passed": 24, "failed": 0, "skipped": 1, "skip_reason": "Windows sandbox denied creation of a hard-linked upload fixture; no escalation attempted", "log": "hosted-local-tests.log"},
+    "turso_probe_and_async_receipts": {"total": 11, "passed": 11, "failed": 0, "remote_calls": 0, "log": "turso-probe/async-verification.log"},
+    "public_origin_http_restart": {"total": 1, "passed": 1, "failed": 0, "provider_calls": 0, "worker_starts": 0, "background_database_changes": 0, "scope": "Real app, synthetic account, loopback HTTP, fictional public origin; approved loopback-only sandbox escalation"},
+    "previous_unchanged_app_suite": {"passed": 635, "ui_checks_passed": 4, "rerun_this_followup": false, "log": "full-regression.log"}
+  },
+  "substeps": [
+    {"step": "Interface inventory", "state": "complete", "done": 3, "total": 3, "percent": 100, "checks": ["direct calls", "explicit transactions", "custom SQL functions"]},
+    {"step": "Async receipt experiment", "state": "complete", "done": 8, "total": 8, "percent": 100, "note": "Tests for one disconnected repository slice; not the whole Turso port"},
+    {"step": "Public-host local package", "state": "complete", "done": 4, "total": 4, "percent": 100, "checks": ["restore and origin preflight", "synthetic storage probe", "held exact-origin extension builder", "HTTP authentication and restart"]},
+    {"step": "Real host qualification", "state": "blocked", "done": 0, "total": 4, "percent": 0, "checks": ["approved account access", "durable local filesystem and disk quota", "public TLS and proxy", "PDF dependencies and peak memory"], "blocker": "Host selection/account approval and authenticated access are not available"},
+    {"step": "Render/Turso full integration", "state": "incomplete", "done": 0, "total": 7, "percent": 0, "note": "None of the seven integration groups in HOSTED-MIGRATION.md is complete. Async receipts are one bounded experiment."},
+    {"step": "Production backup", "state": "blocked", "done": 0, "total": 2, "percent": 0, "checks": ["approved coordinated creation on Railway volume", "verified backup and user download"], "blocker": "Parent is awaiting user approval. No assistant transmission authorized."}
+  ],
+  "production_changes": false,
+  "credentials_read_or_copied": false,
+  "employer_actions": false,
+  "new_host_account_created": false,
+  "hosted_replacement_active": false
+}

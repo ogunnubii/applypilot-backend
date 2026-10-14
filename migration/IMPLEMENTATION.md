@@ -1,11 +1,16 @@
-# Implemented fallback and operator handoff
+# Migration preparation and operator handoff
 
-The prepared replacement is a native Node/SQLite service on the existing Windows
+**Current scope:** the user requires another public hosting app. The Windows
+candidate below is not an accepted completed migration. Continue with
+[HOSTED-MIGRATION.md](HOSTED-MIGRATION.md), which contains the asynchronous Turso
+work, measured interface inventory, tested public-host candidate and remaining
+host qualification gates. No replacement has been deployed or activated.
+
+The earlier prepared candidate is a native Node/SQLite service on the existing Windows
 PC. It has no hosting subscription and needs no new cloud account or upload service.
 It depends on PC uptime and is **not activated**. It retains the original SQLite
 transaction/trigger implementation. No Turso database port has been completed or
-claimed: the tested compatibility failure led to the explicitly allowed safer
-durable-design fallback.
+claimed. It remains available for review but does not satisfy public hosting.
 
 ## Candidate compatibility evidence
 

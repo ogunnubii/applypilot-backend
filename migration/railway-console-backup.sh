@@ -1,7 +1,8 @@
 # Do not run before full-state-copy approval and a coordinated writer freeze.
-# This command creates private files on Railway; it does not download them.
+# This command creates private files inside the verified Railway volume.
+# It does not download them. Check available volume space before running.
 umask 077
-node --input-type=module - --approved-full-state-backup <<'APPLYPILOT_BACKUP_MODULE'
+node --input-type=module - --approved-full-state-backup /app/data/applypilot.sqlite /app/data/resumes /app/data <<'APPLYPILOT_BACKUP_MODULE'
 // Offline migration support. Never imports server.js, db.js, credentials or workers.
 import {DatabaseSync,backup} from 'node:sqlite';
 import {createHash} from 'node:crypto';
@@ -112,11 +113,10 @@ export function restoreToEmpty(folder,destination){
 }
 
 import {randomUUID} from 'node:crypto';
-import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {chmodSync} from 'node:fs';
 try{
- const [approval,source='/app/data/applypilot.sqlite',uploads='/app/data/resumes',parent=tmpdir()]=process.argv.slice(2);
+ const [approval,source='/app/data/applypilot.sqlite',uploads='/app/data/resumes',parent='/app/data']=process.argv.slice(2);
  if(approval!=='--approved-full-state-backup')fail('full_state_backup_approval_required');
  const target=join(parent,'applypilot-migration-'+randomUUID());
  const result=await createSnapshot(source,uploads,target);

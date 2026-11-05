@@ -31,11 +31,12 @@ export function queueFoundApplications(db,userId,{applicantId=null}={}){
  };
  db.exec('BEGIN IMMEDIATE');
  try{
+  const urlKeyed=db.prepare('PRAGMA table_info(external_application_history)').all().some(c=>c.name==='url_key');
   const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND status='saved' AND (? IS NULL OR applicant_id=?) ORDER BY match_score DESC,created_at,id").all(userId,applicantId,applicantId).sort((a,b)=>searchPriority(a)-searchPriority(b));
   for(const job of rows){
    if(!inActiveBatch(db,job))continue;
    const profile=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,userId);
-   const imported=db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,companyKey(job.company),historyKey(job.title));
+   const imported=urlKeyed?db.prepare("SELECT 1 FROM external_application_history WHERE user_id=? AND (company_key=? AND title_key=? OR url_key<>'' AND url_key=?)").get(userId,companyKey(job.company),historyKey(job.title),job.normalized_url||''):db.prepare('SELECT 1 FROM external_application_history WHERE user_id=? AND company_key=? AND title_key=?').get(userId,companyKey(job.company),historyKey(job.title));
    const duplicate=priorApplication(db,userId,job)||imported;
    const priorAttempt=job.local_attempt_at||Number(job.attempts)>0||job.handoff_available||['verifying','uncertain','submitted'].includes(job.local_phase)||db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('submission_started','automatic_submission','manual_submission','applicant_reported_submission','submitted','manual_confirmation')").get(job.id)||(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='autonomous_attempts'").get()&&db.prepare('SELECT 1 FROM autonomous_attempts WHERE job_id=?').get(job.id));
    const companyPolicy=policyFor(job);

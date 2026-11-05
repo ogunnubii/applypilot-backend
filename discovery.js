@@ -1,3 +1,4 @@
+import {autopilotStopped} from './autopilot.js';
 import {normalizeSearchScope,scopeIntent,searchPriority,currentSearchScope,searchScopeSignature} from './search-scope.js';
 import {ashbyPosting} from './ashby-posting.js';
 import {supportIntent,remoteCanadaIntent,t4FallbackIntent,refreshSalaryRates} from './support-career.js';
@@ -317,5 +318,6 @@ export async function runDueSearches(){
  // One-second tolerance avoids skipping a minute because of timer jitter.
  const cutoff=new Date(Date.now()-(SEARCH_INTERVAL_SECONDS-1)*1000).toISOString();
  const due=db.prepare('SELECT id,user_id FROM searches WHERE enabled=1 AND (last_run IS NULL OR last_run<?) ORDER BY COALESCE(last_run,created_at),id LIMIT 5').all(cutoff);
- await Promise.all(due.map(async search=>{try{await runSearch(search.id,search.user_id)}catch(e){console.error('Discovery:',e.message);}}));
+ // A stopped autopilot pauses discovery for that account (persisted).
+ await Promise.all(due.filter(search=>!autopilotStopped(db,search.user_id)).map(async search=>{try{await runSearch(search.id,search.user_id)}catch(e){console.error('Discovery:',e.message);}}));
 }

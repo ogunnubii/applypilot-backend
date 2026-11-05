@@ -11,6 +11,7 @@ function harness(jobs,shared={}){
   scripting:{executeScript:async({args})=>{
    if(!args)return [{result:{ready:true}}];
    const [,route,method,data]=args;shared.calls.push({route,method,data});
+   if(shared.routes?.[route])return [{result:{data:shared.routes[route](data,method)}}];
    if(route==='/jobs')return [{result:{data:{jobs}}}];
    const [,id,action]=route.match(/\/jobs\/([^/]+)\/local\/(.*)/)||[];
    if(action==='claim')return [{result:{data:{attempted:false}}}];
@@ -76,4 +77,24 @@ test('job-board pacing: spacing between automatic openings, and a reported limit
  const limit=await h.send('site-error',{code:429,native:true,empty:false,initial:false},h.from(t));
  assert.match(limit.data.message,/paused for 12 hours/);assert(h.shared.store.records.l1.siteCooldownUntil-Date.now()>11*3600000);
  await h.events.alarm({name:'queue'});assert(!opened().includes('l2'));
+});
+
+test('the extension follows the persisted Start/Stop switch and its buttons write to it',async()=>{
+ let running=false;const h=harness([job('l',LI)],{routes:{'/autopilot':(data,method)=>{if(method==='PUT')running=data.running;return {configured:true,running};}}});
+ await h.send('start');assert.equal(running,true,'Start writes running');assert.equal(h.shared.store.enabled,true);
+ await h.send('stop');assert.equal(running,false);assert.equal(h.shared.store.enabled,false);
+ // The dashboard starts it: the next tick resumes; the dashboard stops it: the next tick pauses.
+ running=true;await h.events.alarm({name:'queue'});assert.equal(h.shared.store.enabled,true);assert.equal(h.shared.store.userPaused,false);
+ running=false;await h.events.alarm({name:'queue'});assert.equal(h.shared.store.enabled,false);
+ assert(Object.values(h.shared.store.records).every(r=>!r.auto),'no record keeps running automatically');
+});
+
+test('board import is accepted only from a top-level LinkedIn/Indeed results page and only for that board',async()=>{
+ const h=harness([],{routes:{'/jobs/board-import':data=>({added:data.jobs.length,existing:0,duplicates:0,rejected:0})}});
+ const page={tab:{id:9},frameId:0,url:'https://www.linkedin.com/jobs/search/?keywords=sre'};
+ const ok=await h.send('board-import',{board:'linkedin',jobs:[{url:LI,title:'SRE'},{url:IN},{url:'https://evil.example/jobs/view/1'}]},page);
+ assert.equal(ok.ok,true);assert.equal(h.shared.calls.at(-1).data.jobs.length,1,'other boards and lookalikes dropped');
+ for(const [sender,board] of [[{...page,frameId:3},'linkedin'],[{...page,url:'https://www.linkedin.com/feed/'},'linkedin'],[{...page,url:'https://ca.indeed.com/jobs?q=sre'},'linkedin'],[{tab:{id:9},frameId:0,url:'https://linkedin.com.evil.example/jobs/search/'},'linkedin']])
+  assert.equal((await h.send('board-import',{board,jobs:[{url:LI}]},sender)).ok,false,sender.url);
+ assert.equal((await h.send('board-import',{board:'indeed',jobs:[{url:IN}]},{tab:{id:9},frameId:0,url:'https://ca.indeed.com/jobs?q=sre'})).ok,true);
 });

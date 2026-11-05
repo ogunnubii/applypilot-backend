@@ -11,8 +11,11 @@ export function buildZip(entries){
  const directory=Buffer.concat(central),end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50,0);end.writeUInt16LE(entries.length,8);end.writeUInt16LE(entries.length,10);end.writeUInt32LE(directory.length,12);end.writeUInt32LE(offset,16);
  return Buffer.concat([...local,directory,end]);
 }
+// Every file the manifest loads. The hosted download and the Windows package
+// (package-extension.js) are built from this one list.
+export const EXTENSION_FILES=Object.freeze(['manifest.json','background.js','content.js','board-import.js','dashboard-bridge.js','policy.js','ready-forms.js','popup.html','popup.js','README.md']);
 let archive;
 export async function extensionArchive(){
- if(!archive){const files=['manifest.json','background.js','content.js','dashboard-bridge.js','policy.js','ready-forms.js','popup.html','popup.js','README.md'];archive=buildZip(await Promise.all(files.map(async name=>[name,await readFile(new URL('./extension/'+name,import.meta.url))])));}
+ if(!archive)archive=buildZip(await Promise.all(EXTENSION_FILES.map(async name=>[name,await readFile(new URL('./extension/'+name,import.meta.url))])));
  return archive;
 }

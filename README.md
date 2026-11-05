@@ -1,5 +1,7 @@
 # ApplyPilot
 
+**Windows PC:** see [WINDOWS.md](WINDOWS.md). Double-click `ApplyPilot.cmd`, load the `extension` folder, and use the dashboard Start/Stop switch.
+
 ## LinkedIn Easy Apply, Indeed Apply and direct employer sites (helper 0.7.0)
 
 ApplyPilot can apply to LinkedIn Easy Apply and Indeed Apply jobs in the applicant's

@@ -101,6 +101,16 @@ async function reviewPrepared(id){
  if(!result?.opened)throw Error(result?.error||'Open the Applications page in ApplyPilot, then try again.');
  return result;
 }
+// The account's persisted Start/Stop switch is the source of truth once it has
+// been used. Stopping never closes or submits an open form; it only stops new
+// applications from opening.
+async function followAutopilot(){
+ let remote;try{remote=await api('/autopilot');}catch{return;}
+ if(!remote?.configured)return;
+ const s=await read();
+ if(remote.running===false&&(s.enabled||!s.userPaused)){for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;}await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});}
+ else if(remote.running===true&&(!s.enabled||s.userPaused))await chrome.storage.local.set({enabled:true,userPaused:false,error:''});
+}
 async function initialize(){const s=await read();if(!s.automaticDefault)await chrome.storage.local.set({automaticDefault:true,enabled:true,userPaused:false});if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
 async function saveRecord(record){const s=await read();s.records[record.id]=record;await chrome.storage.local.set({records:s.records});}
 async function probeForm(record){
@@ -207,6 +217,7 @@ async function tick(){
  await retrySubmissionRecords();
  await retryReceipts();
 
+ await followAutopilot();
  const s=await read();if(!s.enabled||s.userPaused)return;
  const active=Object.values(s.records).find(r=>r.auto&&['ready','verifying'].includes(r.phase));
  if(active){
@@ -242,6 +253,15 @@ async function tick(){
 }
 async function handle(m,sender){
  await initialize();
+ if(m.action==='board-import'){
+  // Only from a top-level LinkedIn/Indeed search page the applicant is viewing.
+  let from;try{from=new URL(sender.url);}catch{throw Error('Untrusted page.');}
+  const board=from.protocol==='https:'&&(from.hostname==='www.linkedin.com'&&/^\/jobs\/(?:search|collections)\b/.test(from.pathname)?'linkedin':/^(?:www|[a-z]{2})\.indeed\.com$/.test(from.hostname)&&/^\/(?:jobs|q-|m\/jobs)/.test(from.pathname)?'indeed':null);
+  if(!sender.tab||sender.frameId!==0||!board||m.board!==board)throw Error('Import jobs from a LinkedIn or Indeed search results page.');
+  const jobs=(Array.isArray(m.jobs)?m.jobs:[]).slice(0,50).filter(j=>P.nativeBoard?.(j?.url)===board).map(j=>({url:j.url,title:String(j.title||'').slice(0,200),company:String(j.company||'').slice(0,200),location:String(j.location||'').slice(0,200)}));
+  if(!jobs.length)throw Error('No supported jobs were found on this page.');
+  return api('/jobs/board-import','POST',{board,jobs});
+ }
  if(m.action==='dashboard-status'){
   const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
   if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
@@ -288,8 +308,9 @@ async function handle(m,sender){
   if(m.action==='funnel'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard+'?view=funnel'});}
   if(m.action==='dashboard'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard});}
   if(m.action==='environment'){if(!environments[m.value])throw Error('Unknown environment');const s=await read();if(Object.keys(s.records).length)throw Error('Use a separate browser profile for another server while applications are tracked');await chrome.storage.local.set({environment:m.value,enabled:false,queue:[]});return {};}
-  if(m.action==='stop'){const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;}await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});return {};}
+  if(m.action==='stop'){const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;}await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});await api('/autopilot','PUT',{running:false,source:'extension'}).catch(()=>{});return {};}
   if(m.action==='start'){
+   await api('/autopilot','PUT',{running:true,source:'extension'}).catch(()=>{});
    const {jobs}=await api('/jobs'),s=await read();const ids=jobs.filter(j=>eligible(j,s)).map(j=>j.id);
    await chrome.storage.local.set({queue:[...new Set([...s.queue,...ids])],enabled:true,userPaused:false,error:''});await tick();return {count:ids.length};
   }

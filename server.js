@@ -45,7 +45,7 @@ import {supported,sameApplication,boundApplication,nativeBoard,nativeReceiptMatc
 import {assessNativePosting} from './native-posting.js';
 import {currentSearchScope} from './search-scope.js';
 import {rememberAnswers} from './local-state.js';
-import {installNotifications,emailConfigured,sendBlockerEmails} from './notifications.js';
+import {installNotifications,emailConfigured,sendBlockerEmails,sendSubmissionEmails,submissionRecipient} from './notifications.js';
 import {chat} from './assistant.js';
 import {readFile} from 'node:fs/promises';
 import {createServer} from 'node:http';import {randomUUID} from 'node:crypto';import {mkdir,writeFile,unlink} from 'node:fs/promises';import {join,resolve,extname} from 'node:path';import {db,event,now,normalizeURL} from './db.js';import {readToken,revokeToken} from './auth.js';
@@ -64,7 +64,7 @@ let publicFillBusy=false;
 async function publicFillTick(){if(publicFillBusy)return;publicFillBusy=true;try{await resolvePendingAnswers(db);await fillPendingPublicQuestions(db);await fillPendingFactQuestions(db);}catch(error){console.error('Public answer drafting:',error.message);}finally{publicFillBusy=false;}}
 const publicFillTimer=setInterval(publicFillTick,60000);publicFillTimer.unref();setTimeout(publicFillTick,1500).unref();
 let emailBusy=false;
-const emailTimer=setInterval(async()=>{if(emailBusy)return;emailBusy=true;try{await sendBlockerEmails(db)}catch{console.error('Blocker notification delivery failed')}finally{emailBusy=false}},60000);emailTimer.unref();
+const emailTimer=setInterval(async()=>{if(emailBusy)return;emailBusy=true;try{await sendBlockerEmails(db)}catch{console.error('Blocker notification delivery failed')};try{await sendSubmissionEmails(db)}catch{console.error('Submission notification delivery failed')}finally{emailBusy=false}},60000);emailTimer.unref();
 const factsDiagnosticRuns=new Map();
 const origin=process.env.PUBLIC_ORIGIN;if(!origin)throw Error('Set PUBLIC_ORIGIN');const uploadDir=resolve(process.env.UPLOAD_DIR||'./data/resumes');const limit=6*1024*1024;
 const send=(res,status,data)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});res.end(JSON.stringify(data))};
@@ -149,9 +149,18 @@ const deleteRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)$/);
 if(deleteRoute&&req.method==='DELETE'){const x=JSON.parse(await body(req));if(x.confirm!==deleteRoute[1])return send(res,400,{error:'Confirm permanent deletion of this application'});try{if(unresolvedAttemptMarker(db,uid,deleteRoute[1]))return send(res,409,{error:'This unresolved application is protected. Its attempt history and duplicate barrier must be retained.'});return send(res,200,deleteApplication(db,uid,deleteRoute[1]));}catch(e){return send(res,409,{error:e.message});}}
 if(path==='/api/notifications'&&['GET','PUT'].includes(req.method)){
  const emailAllowed=canEmailAccount(db,uid);
- if(req.method==='PUT'){const x=JSON.parse(await body(req));if(typeof x.enabled!=='boolean')return send(res,400,{error:'Choose whether to enable blocker emails'});if(x.enabled&&!emailAllowed)return send(res,403,{error:'Email notifications are unavailable until mailbox ownership can be verified.'});db.prepare('INSERT INTO notification_preferences(user_id,enabled) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled').run(uid,x.enabled?1:0);}
- const enabled=!!db.prepare('SELECT enabled FROM notification_preferences WHERE user_id=?').get(uid)?.enabled;
- return send(res,200,{enabled:emailAllowed&&enabled,configured:emailAllowed&&emailConfigured(),emailVerificationRequired:!emailAllowed,failed:db.prepare("SELECT COUNT(*) AS n FROM blocker_emails b JOIN jobs j ON j.id=b.job_id WHERE j.user_id=? AND b.last_error IS NOT NULL").get(uid).n});
+ if(req.method==='PUT'){const x=JSON.parse(await body(req));const hasRecipient=Object.hasOwn(x,'submissionEmail');
+  if(typeof x.enabled!=='boolean'&&!hasRecipient)return send(res,400,{error:'Choose whether to enable blocker emails'});
+  if((x.enabled||hasRecipient&&x.submissionEmail)&&!emailAllowed)return send(res,403,{error:'Email notifications are unavailable until mailbox ownership can be verified.'});
+  if(typeof x.enabled==='boolean')db.prepare('INSERT INTO notification_preferences(user_id,enabled) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled').run(uid,x.enabled?1:0);
+  if(hasRecipient){let recipient;try{recipient=submissionRecipient(x.submissionEmail);}catch(e){return send(res,400,{error:e.message});}
+   const current=db.prepare('SELECT email FROM submission_email_preferences WHERE user_id=?').get(uid)?.email||'';
+   // Changing the address starts a new window: earlier applications are not re-sent.
+   if(!recipient)db.prepare('DELETE FROM submission_email_preferences WHERE user_id=?').run(uid);
+   else if(recipient!==current)db.prepare('INSERT INTO submission_email_preferences(user_id,email,since) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET email=excluded.email,since=excluded.since').run(uid,recipient,now());}
+ }
+ const enabled=!!db.prepare('SELECT enabled FROM notification_preferences WHERE user_id=?').get(uid)?.enabled,submissionEmail=db.prepare('SELECT email FROM submission_email_preferences WHERE user_id=?').get(uid)?.email||'';
+ return send(res,200,{submissionEmail:emailAllowed?submissionEmail:'',submissionFailed:db.prepare("SELECT COUNT(*) AS n FROM submission_emails s JOIN jobs j ON j.id=s.job_id WHERE j.user_id=? AND s.last_error IS NOT NULL").get(uid).n,enabled:emailAllowed&&enabled,configured:emailAllowed&&emailConfigured(),emailVerificationRequired:!emailAllowed,failed:db.prepare("SELECT COUNT(*) AS n FROM blocker_emails b JOIN jobs j ON j.id=b.job_id WHERE j.user_id=? AND b.last_error IS NOT NULL").get(uid).n});
 }
 const experienceRoute=path.match(/^\/api\/applicants\/([a-f0-9-]+)\/experience(?:\/([a-f0-9-]+))?$/);
 if(experienceRoute){try{const [,applicant,id]=experienceRoute;if(!db.prepare('SELECT id FROM applicants WHERE id=? AND user_id=?').get(applicant,uid))return send(res,404,{error:'Profile not found.'});

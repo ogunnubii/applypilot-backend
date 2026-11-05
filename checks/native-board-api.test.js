@@ -26,6 +26,9 @@ test('native board API: canonical job, posting gate, one reserved attempt, emplo
  const page=over=>({url:LI+'/?trk=fixture',title:'Senior Site Reliability Engineer',company:'Acme Cloud',location:'Canada',workplace:'remote',description:b2b,salaryText:'$120K/yr - $150K/yr',postedText:'2 days ago',applicantsText:'18 applicants',signals:['Actively recruiting'],nativeApply:true,external:false,...over});
  try{
   let ready=false;for(let i=0;i<60;i++){try{if((await api('/health')).status===200){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert(ready,log);
+  assert.equal((await api('/notifications','PUT',{submissionEmail:'not-an-email'})).status,400);
+  const recipient=await api('/notifications','PUT',{submissionEmail:'JJWorks81@gmail.com'});assert.equal(recipient.status,200);assert.equal(recipient.data.submissionEmail,'jjworks81@gmail.com');
+  assert.equal(db.prepare("SELECT enabled FROM notification_preferences WHERE user_id='u'").get()?.enabled??0,0,'blocker emails unchanged');
   const created=await api('/jobs','POST',{applicant_id:'p',url:LI+'/?refId=abc&trackingId=def'});assert.equal(created.status,201,JSON.stringify(created.data));
   const id=created.data.id;assert.equal(db.prepare('SELECT url FROM jobs WHERE id=?').get(id).url,LI);
   assert.equal((await api('/jobs','POST',{applicant_id:'p',url:LI+'/?refId=other'})).status,409,'same LinkedIn job id is one job');

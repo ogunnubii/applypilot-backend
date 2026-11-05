@@ -88,6 +88,12 @@ async function notificationSettings(){
  const display=d=>{toggle.checked=!!d.enabled;toggle.disabled=!!d.emailVerificationRequired;status.textContent=d.emailVerificationRequired?'Email notifications are unavailable until email verification is supported.':!d.configured?'Email delivery is not connected yet. Your preference is saved; a verified sender must be configured.':d.failed?'Email delivery needs attention. Check the dashboard for all blockers.':d.enabled?'Blocker emails are enabled. Emails link directly to the paused application.':'Blocker emails are off.';};
  try{display(await api('/notifications'));}catch{status.textContent='Notification settings could not be loaded.';}
  toggle.onchange=async()=>{toggle.disabled=true;try{display(await api('/notifications','PUT',{enabled:toggle.checked}));}catch(e){status.textContent=e.message;toggle.checked=!toggle.checked;}finally{toggle.disabled=false}};
+ // Optional address that receives a summary of each confirmed application.
+ const form=el('form'),field=el('input'),save=el('button'),sentStatus=el('p');field.type='email';field.placeholder='Address for submitted-application summaries';field.autocomplete='email';field.setAttribute('aria-label','Email a summary of each submitted application to');save.type='submit';save.textContent='Save';sentStatus.setAttribute('role','status');
+ form.append(field,save);section.append(form,sentStatus);
+ const showRecipient=d=>{field.value=d.submissionEmail||'';field.disabled=save.disabled=!!d.emailVerificationRequired;sentStatus.textContent=d.submissionEmail?(d.submissionFailed?'Some submission summaries could not be delivered yet; retries continue.':'Each confirmed application from now on is summarized to '+d.submissionEmail+'.'):'No submission summaries are sent.';};
+ try{showRecipient(await api('/notifications'));}catch{}
+ form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{const d=await api('/notifications','PUT',{submissionEmail:field.value.trim()});display(d);showRecipient(d);}catch(err){sentStatus.textContent=err.message;}finally{save.disabled=false}};
 }
 let refreshRevision=0,lastRevealedJobHash='';
 async function refresh(force=false){

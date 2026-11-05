@@ -57,6 +57,17 @@ to use the existing employer boards and job funnel.
   are reported separately. The existing repeat guard blocks the same employer role across
   sources (for example a LinkedIn posting and the employer's Greenhouse requisition).
 
+- **Submission summaries by email.** Settings → enter an address (for example your own
+  inbox) to receive one email for each application confirmed after you saved it, for
+  direct employer sites and LinkedIn/Indeed alike. It contains job facts only: role,
+  company, job link, where it was applied and found, location, posted pay, eligibility
+  reason, hiring signals, the applicant profile name and email, submission time and the
+  employer's confirmation text. It never includes saved answers, phone, resume or form
+  contents, and uncertain or unconfirmed outcomes are not reported as submitted.
+  Delivery uses the existing Resend outbox (`RESEND_API_KEY`, `BLOCKER_EMAIL_FROM`,
+  HTTPS `PUBLIC_ORIGIN`) with one email per job and address and idempotent retries.
+  API: `PUT /api/notifications {"submissionEmail":"you@example.com"}` (empty string turns it off).
+
 Fixture checks: `checks/native-board.test.js`, `checks/native-easy-apply.test.cjs`,
 `checks/native-background.test.cjs` and `checks/native-board-api.test.js`. They use
 synthetic jsdom pages, fixture Chrome APIs and an isolated SQLite database; no job

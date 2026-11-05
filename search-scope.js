@@ -22,9 +22,14 @@ export function normalizeSearchScope(value){
  const minimumAnnualCAD=value.minimumAnnualCAD==null?null:Number(value.minimumAnnualCAD);
  if(minimumAnnualCAD!==null&&(!Number.isInteger(minimumAnnualCAD)||minimumAnnualCAD<0||minimumAnnualCAD>10000000))throw Error('minimumAnnualCAD must be a whole CAD amount');
  const authorizedCountries=strings(value.authorizedCountries||[],'Authorized countries').map(x=>x.toLowerCase());
+ // Outside Canada the applicant needs a visa: such roles qualify only when the
+ // posting explicitly offers sponsorship for its own country. foreignWorkplaces
+ // limits which arrangements abroad are acceptable (default: remote only).
+ const foreignWorkplaces=value.foreignWorkplaces===undefined?['remote']:value.foreignWorkplaces;
+ if(!Array.isArray(foreignWorkplaces)||!foreignWorkplaces.length||foreignWorkplaces.some(w=>!['remote','hybrid','on-site'].includes(w)))throw Error('foreignWorkplaces must list remote, hybrid and/or on-site');
  if(!localPlaces.length&&!remotePlaces.length&&!value.remoteWorldwide)throw Error('Specify an on-site or remote location');
  if(value.remoteFromCountry!=='canada')throw Error('Structured eligibility currently supports remoteFromCountry: canada');
- return {version:1,roles,aliases,localPlaces,remotePlaces,remoteWorldwide:value.remoteWorldwide===true,remoteFromCountry:'canada',authorizedCountries,includeRelatedRoles:value.includeRelatedRoles===true,preferBusinessContract:value.preferBusinessContract===true,allowEmploymentFallback:value.allowEmploymentFallback===true,preferRemote:value.preferRemote===true,preferSponsorship:value.preferSponsorship===true,...(minimumAnnualCAD!==null?{minimumAnnualCAD}:{})};
+ return {version:1,roles,aliases,localPlaces,remotePlaces,remoteWorldwide:value.remoteWorldwide===true,remoteFromCountry:'canada',authorizedCountries,includeRelatedRoles:value.includeRelatedRoles===true,preferBusinessContract:value.preferBusinessContract===true,allowEmploymentFallback:value.allowEmploymentFallback===true,preferRemote:value.preferRemote===true,preferSponsorship:value.preferSponsorship===true,...(value.foreignSponsorship===true?{foreignSponsorship:true,foreignWorkplaces:[...new Set(foreignWorkplaces)]}:{}),...(minimumAnnualCAD!==null?{minimumAnnualCAD}:{})};
 }
 export function scopeIntent(scope){
  return {scope,roles:[...new Set([...scope.roles,...scope.aliases].map(x=>x.toLowerCase()))],localPlaces:scope.localPlaces,places:scope.localPlaces,remotePlaces:scope.remotePlaces,remoteAny:scope.remoteWorldwide,remote:!scope.localPlaces.length,worldwideEligibility:true};
@@ -62,10 +67,17 @@ export function scopePriority(scope,eligibility,job){
 export function setSearchRemotePreference(db,userId,searchId,input){
  const saved=db.prepare('SELECT scope_json FROM searches WHERE id=? AND user_id=?').get(searchId,userId);
  if(!saved)return null;
- if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>key!=='preferRemote')||typeof input.preferRemote!=='boolean')throw Error('Provide only a true or false remote-first preference');
+ const keys=input&&typeof input==='object'&&!Array.isArray(input)?Object.keys(input):null;
+ if(!keys?.length||keys.some(key=>!['preferRemote','foreignSponsorship','foreignWorkplaces'].includes(key))||'preferRemote' in input&&typeof input.preferRemote!=='boolean')throw Error('Provide only a true or false remote-first preference');
+ if('foreignSponsorship' in input&&typeof input.foreignSponsorship!=='boolean')throw Error('foreignSponsorship must be true or false');
  if(!saved.scope_json)throw Error('This search needs a structured scope before its ranking can be changed');
- const scope=normalizeSearchScope(JSON.parse(saved.scope_json));
- scope.preferRemote=input.preferRemote;
+ let scope=normalizeSearchScope(JSON.parse(saved.scope_json));
+ if('preferRemote' in input)scope.preferRemote=input.preferRemote;
+ // Sponsored roles abroad: re-normalized so foreignWorkplaces is validated.
+ if('foreignSponsorship' in input||'foreignWorkplaces' in input){
+  const on=input.foreignSponsorship??scope.foreignSponsorship===true;
+  scope=normalizeSearchScope({...scope,foreignSponsorship:on,foreignWorkplaces:input.foreignWorkplaces??scope.foreignWorkplaces});
+ }
  db.prepare('UPDATE searches SET scope_json=? WHERE id=? AND user_id=?').run(JSON.stringify(scope),searchId,userId);
  return {scope};
 }
@@ -86,6 +98,7 @@ export function payFloor(result,job,scope){
  return {...result,payFloor:{minimumAnnualCAD:floor,status:'met',annualMax:best}};
 }
 function scopedWorkEligibilityBase(job,scope){
+ const abroad=foreignSponsorshipEligibility(job,scope);if(abroad)return abroad;
  if(!scopeLocationAllowed(job,scope))return {eligible:false,reason:'Posting is outside the configured on-site and remote locations'};
  const location=String(job.location||''),text=String(job.description||'').replace(/<[^>]*>/g,' ');
  const remote=isScopeRemote(job);
@@ -110,6 +123,31 @@ function scopedWorkEligibilityBase(job,scope){
  if(evidence.eligible&&evidence.kind==='sponsorship')return evidence;
  if(canada||remote&&global)return {eligible:true,kind:'canada-employment-fallback',sponsorshipAvailable,reason:'Employee fallback in an allowed location with configured Canadian work authorization; employer-specific requirements still require truthful answers'};
  return {eligible:false,reason:'No compatible location and work authorization evidence'};
+}
+
+// The single country a posting is located in, when it names exactly one
+// outside Canada. Multi-country, regional or unnamed locations stay unknown.
+const FOREIGN_COUNTRIES=[['united states',{test:t=>/\b(?:USA?|U\.S\.(?:A\.)?)(?=\W|$)/.test(t)||/\b(?:united states|new york|san francisco|seattle|austin|boston|chicago|los angeles)\b/i.test(t)}],['united kingdom',/\b(?:united kingdom|UK|england|scotland|wales)\b|\b(?:london|manchester|edinburgh)\b/i],['germany',/\b(?:germany|deutschland|berlin|munich|hamburg|frankfurt)\b/i],['netherlands',/\b(?:netherlands|amsterdam|rotterdam)\b/i],['ireland',/\b(?:ireland|dublin)\b/i],['france',/\b(?:france|paris)\b/i],['australia',/\b(?:australia|sydney|melbourne)\b/i],['singapore',/\bsingapore\b/i],['japan',/\b(?:japan|tokyo)\b/i],['sweden',/\b(?:sweden|stockholm)\b/i],['denmark',/\b(?:denmark|copenhagen)\b/i],['switzerland',/\b(?:switzerland|zurich|geneva)\b/i],['spain',/\b(?:spain|madrid|barcelona)\b/i],['portugal',/\b(?:portugal|lisbon)\b/i],['poland',/\b(?:poland|warsaw)\b/i],['new zealand',/\b(?:new zealand|auckland)\b/i],['united arab emirates',/\b(?:united arab emirates|UAE|dubai)\b/i]];
+export function postingCountry(location){
+ const text=String(location||'');
+ if(/\bcanada\b/i.test(text)||ontarioLocation(text))return 'canada';
+ const found=FOREIGN_COUNTRIES.filter(([,pattern])=>pattern.test(text)).map(([name])=>name);
+ return found.length===1&&!/\b(?:worldwide|anywhere|global|EMEA|APAC|LATAM|Europe|EU|DACH|Americas)\b/i.test(text)?found[0]:null;
+}
+// A role abroad qualifies only with an explicit sponsorship offer for that
+// country and an acceptable workplace. Returns null when the rule does not
+// apply (Canada, or the scope does not include sponsored roles abroad).
+function foreignSponsorshipEligibility(job,scope){
+ if(!scope?.foreignSponsorship)return null;
+ const country=postingCountry(job.location);
+ if(!country||country==='canada')return null;
+ const text=String(job.description||'').replace(/<[^>]*>/g,' ');
+ if(!text.trim())return {eligible:false,reason:'Employer description is required to verify visa sponsorship'};
+ const workplace=isScopeRemote(job)?'remote':/\bhybrid\b/i.test(String(job.location||'')+' '+text.slice(0,4000))?'hybrid':'on-site';
+ const evidence=workEligibility({...job,description:text});
+ if(evidence.kind!=='sponsorship'||!evidence.eligible)return {eligible:false,country,reason:'Role is in '+country.replace(/\b\w/g,c=>c.toUpperCase())+' and the posting does not explicitly offer visa sponsorship'};
+ if(!scope.foreignWorkplaces.includes(workplace))return {eligible:false,country,reason:'Sponsored role abroad is '+workplace+'; your scope accepts '+scope.foreignWorkplaces.join('/')+' roles abroad'};
+ return {eligible:true,kind:'foreign-sponsorship',country,workplace,sponsorshipAvailable:true,reason:evidence.reason+' for '+(workplace==='on-site'?'an':'a')+' '+workplace+' role in '+country.replace(/\b\w/g,c=>c.toUpperCase())};
 }
 
 // Recheck a newly configured scope against pre-existing pending jobs without

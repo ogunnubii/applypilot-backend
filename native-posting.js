@@ -5,7 +5,7 @@
 // is a heuristic for which eligible job to try first; it is never presented
 // as an interview, response or hiring probability.
 import './local-policy.js';
-import {scopeIntent,scopedWorkEligibility,isScopeRemote} from './search-scope.js';
+import {scopeIntent,scopedWorkEligibility,isScopeRemote,postingCountry} from './search-scope.js';
 import {matchAssessment} from './matching.js';
 import {compensation} from './job-intelligence.js';
 
@@ -76,8 +76,12 @@ export function assessNativePosting(job,input,scope,{date=Date.now(),profileFocu
  if(!NATIVE_ROLE_FAMILY.test(snapshot.title)||NATIVE_ROLE_EXCLUSION.test(snapshot.title))return fail('Outside the Cloud, DevOps, SRE and Platform role scope.');
  reasons.push('Cloud/DevOps/SRE/Platform title');
  const posting={title:snapshot.title,location:[snapshot.workplace==='remote'?'Remote':snapshot.workplace,snapshot.location].filter(Boolean).join(' · '),description:snapshot.description,remote:snapshot.workplace==='remote'};
- if(snapshot.workplace!=='remote'||!isScopeRemote(posting))return fail('Not listed as a remote position.');
- reasons.push('Listed as remote');
+ const abroad=scope?.foreignSponsorship?postingCountry(snapshot.location):null;
+ const sponsoredAbroad=!!abroad&&abroad!=='canada';
+ // Canada: remote only. Abroad (sponsored roles): the scope's foreignWorkplaces decide.
+ if(!sponsoredAbroad&&(snapshot.workplace!=='remote'||!isScopeRemote(posting)))return fail('Not listed as a remote position.');
+ if(sponsoredAbroad&&(!snapshot.workplace||!scope.foreignWorkplaces.includes(snapshot.workplace)))return fail(snapshot.workplace?'Role abroad is '+snapshot.workplace+'; your scope accepts '+scope.foreignWorkplaces.join('/')+' roles abroad.':'The workplace type could not be read from the posting.');
+ reasons.push(sponsoredAbroad?'Listed as '+snapshot.workplace+' in '+abroad:'Listed as remote');
  if(!scope)return fail('Save and enable a structured search scope before applying on LinkedIn or Indeed.');
  const pay=nativePay(snapshot);posting.pay=pay;
  const eligibility=scopedWorkEligibility(posting,scope);
@@ -88,7 +92,7 @@ export function assessNativePosting(job,input,scope,{date=Date.now(),profileFocu
  const known=pay.filter(p=>p.currency&&p.annualMax),best=known.sort((a,b)=>b.annualMax-a.annualMax)[0];
  return {eligible:true,board,blocker:null,reasons,eligibility,pay,fit:{score:fit.score||0,strong:!!fit.strong,matched:!!fit.matched},hiring,
   rank:{payAnnualMax:best?.annualMax||0,payCurrency:best?.currency||'',fit:fit.score||0,speed:hiring.score},
-  title:snapshot.title,company:snapshot.company,location:posting.location,checkedAt:new Date(date).toISOString()};
+  title:snapshot.title,company:snapshot.company,location:posting.location,workplace:snapshot.workplace,...(sponsoredAbroad?{country:abroad}:{}),checkedAt:new Date(date).toISOString()};
 }
 
 // Pay first (only comparable within a currency; unknown pay ranks after known

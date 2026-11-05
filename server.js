@@ -410,7 +410,7 @@ if(localRoute){
   const fresh=db.prepare('SELECT * FROM jobs WHERE id=?').get(j.id);
   const prior=assessment.eligible?priorApplication(db,uid,fresh):null;
   const result=prior?{...assessment,eligible:false,blocker:'Already applied or in progress for this employer role through another source. Repeat application blocked.',reasons:[...assessment.reasons,'Cross-source duplicate']}:assessment;
-  const merged={...meta,native:result,foundVia:meta.foundVia||nativeBoard(j.url),...(result.eligible?{}:{eligibility:{eligible:false,reason:result.blocker}}),...(result.eligible?{description:String(x.description||'').slice(0,24000),location:result.location,remote:true,pay:result.pay,eligibility:result.eligibility,available:true,checkedAt:result.checkedAt}:{})};
+  const merged={...meta,native:result,foundVia:meta.foundVia||nativeBoard(j.url),...(result.eligible?{}:{eligibility:{eligible:false,reason:result.blocker}}),...(result.eligible?{description:String(x.description||'').slice(0,24000),location:result.location,remote:result.workplace==='remote',pay:result.pay,eligibility:result.eligibility,available:true,checkedAt:result.checkedAt}:{})};
   db.prepare('UPDATE jobs SET job_metadata_json=?,updated_at=? WHERE id=?').run(JSON.stringify(merged),now(),j.id);
   event(j.id,'posting_checked',result.eligible?'Job-board posting checked: '+result.reasons.join('; '):'Job-board posting blocked: '+result.blocker);
   return send(res,200,{eligible:result.eligible,blocker:result.blocker,reasons:result.reasons,rank:result.rank||null});

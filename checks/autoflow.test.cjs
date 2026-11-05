@@ -751,7 +751,7 @@ test('saved-answer recovery reuses approved facts, resumes once, and isolates at
  const stubValues={
   './answer-library.js':{reusableAnswers:(_db,p)=>JSON.parse(p.answers_json||'{}'),canReuse:q=>!/(?:salary|authorization|why)/i.test(q)},
   './employer-limits.js':{employerHold:()=>null},'./company-application-policy.js':{companyApplicationPolicy:()=>({allowed:true})},
-  './research-consent.js':{researchConsentWithdrawn:()=>false},'./search-scope.js':{scopedWorkEligibility:()=>({eligible:false}),currentSearchScope:()=>null,ontarioLocation:(await import('../search-scope.js')).ontarioLocation},
+  './research-consent.js':{researchConsentWithdrawn:()=>false},'./search-scope.js':{scopedWorkEligibility:()=>({eligible:false}),currentSearchScope:()=>null,ontarioLocation:(await import('../search-scope.js')).ontarioLocation,postingCountry:(await import('../search-scope.js')).postingCountry},
   './continuation-queue.js':{requestContinuation:()=>{throw Error('inject continuation')}}
  };
  const load=async spec=>{

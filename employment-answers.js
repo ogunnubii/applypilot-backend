@@ -1,8 +1,8 @@
-import {scopedWorkEligibility,ontarioLocation} from './search-scope.js';
+import {scopedWorkEligibility,ontarioLocation,postingCountry} from './search-scope.js';
 // Employer eligibility questions use explicit applicant answers, never model
 // inference, search preferences, nationality or an inferred immigration status.
 const clean=value=>String(value??'').normalize('NFKC').replace(/[\u2013\u2014]/g,'-').replace(/[?*✱\s]+$/g,'').replace(/\s+/g,' ').trim().toLowerCase();
-export const EMPLOYMENT_KEYS={availability:'Available to start',canadaAuthorization:'Work authorization - Canada',canadaRestrictions:'Work authorization restrictions - Canada',canadaSponsorship:'Visa sponsorship now or in future - Canada',startup:'Start-up environment experience',over18:'Over 18 - applicant confirmed',currentEmployer:'Current employer',currentTitle:'Current job title'};
+export const EMPLOYMENT_KEYS={availability:'Available to start',canadaAuthorization:'Work authorization - Canada',canadaRestrictions:'Work authorization restrictions - Canada',canadaSponsorship:'Visa sponsorship now or in future - Canada',foreignAuthorization:'Work authorization - outside Canada',foreignSponsorship:'Visa sponsorship required - outside Canada',startup:'Start-up environment experience',over18:'Over 18 - applicant confirmed',currentEmployer:'Current employer',currentTitle:'Current job title'};
 const yesNo=value=>/^(yes|no)$/i.test(String(value||'').trim())?String(value).trim().toLowerCase()==='yes'?'Yes':'No':null;
 function questionKind(value){
  const q=clean(value);
@@ -15,6 +15,9 @@ function questionKind(value){
  if(/^are you (?:legally )?authori[sz]ed to work in canada without restrictions?$/.test(q))return 'canadaUnrestricted';
  if(/^will you now or in the future require (?:visa )?sponsorship (?:to work (?:in|within) canada|in order to begin or continue employment in (?:the )?canada)$/.test(q))return 'sponsorship';
  if(/^(?:when (?:can|could) you start(?: a new role| work| employment)?|(?:what is your )?(?:earliest start date|availability to start|available to start|notice period))$/.test(q))return 'availability';
+ const foreign='(?:the )?(?:united states(?: of america)?|u\\.?s\\.?a?\\.?|usa|united kingdom|uk|germany|ireland|netherlands|the netherlands|france|australia|singapore|japan|sweden|denmark|switzerland|spain|portugal|poland|new zealand|united arab emirates|uae)';
+ if(new RegExp('^are you (?:currently )?(?:legally )?(?:authori[sz]ed|eligible|permitted) to work in '+foreign+'$').test(q))return 'foreignAuthorizationNamed';
+ if(new RegExp('^(?:will you now or in the future|do you(?: now or in the future)?) require (?:visa )?sponsorship(?: for (?:an? )?(?:employment )?visa(?: status)?)?(?: (?:to work )?in '+foreign+')$').test(q))return 'foreignSponsorshipNamed';
  const where='(?:canada|the country you are applying for|the (?:country|location) (?:where|in which) (?:the|this) (?:job|role|position) is (?:located|based)|this country)';
  if(new RegExp('^are you (?:legally )?(?:authori[sz]ed|eligible|permitted) to work in '+where+'$').test(q))return 'authorization';
  if(new RegExp('^(?:will you now or in the future|do you(?: now or in the future)?) require (?:visa )?sponsorship(?: for (?:an? )?(?:employment )?visa(?: status)?)?(?: in '+where+')?$').test(q))return 'sponsorship';
@@ -26,6 +29,12 @@ function canadaJob(job){
  // Multi-country/global roles do not establish the country of employment.
  if(/\b(?:united states|us|usa|uk|united kingdom|france|germany|india|australia|worldwide|global|anywhere|europe)\b|\bu\.s\.?(?=\W|$)|\bOntario\s*,\s*(?:CA|OR)\b/i.test(location))return false;
  return /\b(?:canada|ontario|british columbia|alberta|quebec|nova scotia|new brunswick|manitoba|saskatchewan|newfoundland|prince edward island)\b/i.test(location)||ontarioLocation(location)&&/\bON\b/.test(location)||clean(m.country)==='canada'&&!location.includes('/');
+}
+// The one country outside Canada a job is located in, or null when unclear.
+function foreignJobCountry(job){
+ let m;try{m=JSON.parse(job?.job_metadata_json||'{}');}catch{return null;}
+ const country=postingCountry(m.location||'');
+ return country&&country!=='canada'?country:null;
 }
 function selectedCanadianRemoteJob(job,scope){
  // An explicit Canada remote-search choice can select the Canadian option in
@@ -41,7 +50,8 @@ export function employmentContext(profile,job,scope=null,{annualSalaryTargetCAD}
  let saved={},application={};try{saved=JSON.parse(profile?.answers_json||'{}');application=JSON.parse(job?.answers_json||'{}');}catch{}
  const storedTarget=saved['Minimum annual salary target (CAD)'];
  const salaryTarget=storedTarget===undefined||storedTarget===''?annualSalaryTargetCAD:/^\d+$/.test(String(storedTarget))?Number(storedTarget):null;
- return {canada:canadaJob(job)||selectedCanadianRemoteJob(job,scope),locatedInCanada:clean(saved.Country)==='canada',annualSalaryTargetCAD:Number.isSafeInteger(salaryTarget)&&salaryTarget>0&&salaryTarget<=10000000?salaryTarget:null,facts:Object.fromEntries(Object.values(EMPLOYMENT_KEYS).filter(k=>typeof saved[k]==='string').map(k=>[k,saved[k]])),application};
+ const isCanada=canadaJob(job)||selectedCanadianRemoteJob(job,scope);
+ return {canada:isCanada,foreignCountry:isCanada?null:foreignJobCountry(job),locatedInCanada:clean(saved.Country)==='canada',annualSalaryTargetCAD:Number.isSafeInteger(salaryTarget)&&salaryTarget>0&&salaryTarget<=10000000?salaryTarget:null,facts:Object.fromEntries(Object.values(EMPLOYMENT_KEYS).filter(k=>typeof saved[k]==='string').map(k=>[k,saved[k]])),application};
 }
 export function approvedEmploymentAnswer(field,profile){
  const context=profile?.employment_context;if(!context)return null;
@@ -86,6 +96,14 @@ export function approvedEmploymentAnswer(field,profile){
   if(/notice period/i.test(question)&&!exact)return null;
   if(!value||value.length>120)return null;
   return {kind:'employment',answer:value};
+ }
+ // Outside Canada: the applicant's saved facts for every country other than
+ // Canada. Used only when the question names such a country, or when it asks
+ // about the job's country and that is one known country outside Canada.
+ if(kind==='foreignAuthorizationNamed'||kind==='foreignSponsorshipNamed'||!context.canada&&context.foreignCountry&&(kind==='authorization'||kind==='sponsorship')&&!/\bcanada\b/i.test(question)){
+  const key=/uthorization/i.test(kind)?EMPLOYMENT_KEYS.foreignAuthorization:EMPLOYMENT_KEYS.foreignSponsorship;
+  // Only the saved outside-Canada fact; an answer typed for another country never carries over.
+  const answer=yesNo(context.facts[key]);return answer?{kind:'employment',answer}:null;
  }
  // Even exact application answers require a clear country, so identical
  // wording copied from an old job cannot assert authorization elsewhere.

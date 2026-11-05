@@ -295,6 +295,14 @@ async function updateDiscovery(force=false){
    const label=el('label'),remote=el('input'),status=el('p');remote.type='checkbox';remote.checked=scope.preferRemote===true;status.setAttribute('role','status');
    label.append(remote,document.createTextNode(' Prioritize fully remote jobs first'));row.append(label,status);
    const describe=()=>{status.textContent=(scope.preferRemote?'Remote first. ':'')+(scope.preferBusinessContract?'Incorporated / B2B contracts preferred within each work arrangement. ':'')+(scope.allowEmploymentFallback?'Employee roles remain a fallback. ':'')+'Location and work-eligibility checks still apply.';};describe();
+   // Roles outside Canada need a visa: only postings that explicitly offer sponsorship qualify.
+   const abroadLabel=el('label','Roles outside Canada '),abroad=el('select'),abroadStatus=el('p');abroadStatus.setAttribute('role','status');
+   for(const [value,text] of [['off','Not included'],['remote','Only if visa sponsorship is offered — remote'],['all','Only if visa sponsorship is offered — remote, hybrid or on-site']]){const o=el('option',text);o.value=value;abroad.append(o);}
+   const abroadValue=()=>!scope.foreignSponsorship?'off':(scope.foreignWorkplaces||['remote']).length>1?'all':'remote';abroad.value=abroadValue();
+   abroadLabel.append(abroad);row.append(abroadLabel,abroadStatus);
+   abroad.onchange=async()=>{const before=abroadValue(),v=abroad.value;abroad.disabled=true;
+    try{const result=await api('/searches/'+saved.id+'/preferences','PUT',v==='off'?{foreignSponsorship:false}:{foreignSponsorship:true,foreignWorkplaces:v==='all'?['remote','hybrid','on-site']:['remote']});scope=result.scope;abroadStatus.textContent=v==='off'?'Saved: roles outside Canada are not included.':'Saved: roles outside Canada qualify only with an explicit visa sponsorship offer for that country. Your outside-Canada answers in your profile are used for them.';}
+    catch(error){abroad.value=before;abroadStatus.textContent=error.message;}finally{abroad.disabled=false;}};
    remote.onchange=async()=>{
     const before=scope.preferRemote===true,desired=remote.checked;remote.disabled=true;
     try{const result=await api('/searches/'+saved.id+'/preferences','PUT',{preferRemote:desired});if(result.scope?.preferRemote!==desired)throw Error('Preference could not be verified. Refresh before retrying.');scope=result.scope;describe();status.textContent='Saved. '+status.textContent;}

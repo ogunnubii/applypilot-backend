@@ -26,7 +26,12 @@ to use the existing employer boards and job funnel.
   needs explicit B2B/C2C/incorporated evidence. An optional scope field
   `minimumAnnualCAD` (for example 60000) rejects only known CAD pay whose annual
   maximum is below it; unknown or non-CAD pay is recorded as unknown and never
-  converted. External "Apply on company site" jobs are blocked with a request for the
+  converted. With `foreignSponsorship: true`, a role outside Canada qualifies only when
+  its posting explicitly offers visa sponsorship for its single named country, in one
+  of the scope's `foreignWorkplaces` (default `["remote"]`; add `"hybrid"`/`"on-site"`
+  for relocation). Authorization and sponsorship questions for such roles are answered
+  only from the saved facts *Work authorization - outside Canada* and *Visa sponsorship
+  required - outside Canada*. External "Apply on company site" jobs are blocked with a request for the
   direct employer link.
 - **Ranking.** Eligible checked postings are ordered by known pay (compared within one
   currency; unknown pay after known pay), then the existing role-fit score, then

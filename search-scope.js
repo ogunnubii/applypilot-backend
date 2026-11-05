@@ -19,15 +19,17 @@ export function normalizeSearchScope(value){
  const roles=strings(value.roles,'Roles'),aliases=strings(value.aliases||[],'Title aliases');if(!roles.length)throw Error('Include at least one role');
  const localPlaces=strings(value.localPlaces||[],'On-site locations').map(x=>x.toLowerCase());
  const remotePlaces=strings(value.remotePlaces||[],'Remote locations').map(x=>x.toLowerCase());
+ const minimumAnnualCAD=value.minimumAnnualCAD==null?null:Number(value.minimumAnnualCAD);
+ if(minimumAnnualCAD!==null&&(!Number.isInteger(minimumAnnualCAD)||minimumAnnualCAD<0||minimumAnnualCAD>10000000))throw Error('minimumAnnualCAD must be a whole CAD amount');
  const authorizedCountries=strings(value.authorizedCountries||[],'Authorized countries').map(x=>x.toLowerCase());
  if(!localPlaces.length&&!remotePlaces.length&&!value.remoteWorldwide)throw Error('Specify an on-site or remote location');
  if(value.remoteFromCountry!=='canada')throw Error('Structured eligibility currently supports remoteFromCountry: canada');
- return {version:1,roles,aliases,localPlaces,remotePlaces,remoteWorldwide:value.remoteWorldwide===true,remoteFromCountry:'canada',authorizedCountries,includeRelatedRoles:value.includeRelatedRoles===true,preferBusinessContract:value.preferBusinessContract===true,allowEmploymentFallback:value.allowEmploymentFallback===true,preferRemote:value.preferRemote===true,preferSponsorship:value.preferSponsorship===true};
+ return {version:1,roles,aliases,localPlaces,remotePlaces,remoteWorldwide:value.remoteWorldwide===true,remoteFromCountry:'canada',authorizedCountries,includeRelatedRoles:value.includeRelatedRoles===true,preferBusinessContract:value.preferBusinessContract===true,allowEmploymentFallback:value.allowEmploymentFallback===true,preferRemote:value.preferRemote===true,preferSponsorship:value.preferSponsorship===true,...(minimumAnnualCAD!==null?{minimumAnnualCAD}:{})};
 }
 export function scopeIntent(scope){
  return {scope,roles:[...new Set([...scope.roles,...scope.aliases].map(x=>x.toLowerCase()))],localPlaces:scope.localPlaces,places:scope.localPlaces,remotePlaces:scope.remotePlaces,remoteAny:scope.remoteWorldwide,remote:!scope.localPlaces.length,worldwideEligibility:true};
 }
-const ontario=/\b(?:ontario|toronto|gta|greater toronto|york region|north york|scarborough|etobicoke|markham|aurora|richmond hill|vaughan|newmarket|stouffville|mississauga|brampton|oakville|burlington|pickering|ajax|whitby|oshawa|milton|caledon|ottawa|waterloo|kitchener|hamilton|guelph|barrie|kingston|london,? (?:on|canada))\b/i;
+const ontario=/\b(?:ontario|toronto|gta|greater toronto|york region|north york|scarborough|etobicoke|markham|aurora|richmond hill|vaughan|thornhill|concord|maple|woodbridge|newmarket|stouffville|mississauga|brampton|oakville|burlington|pickering|ajax|whitby|oshawa|milton|caledon|ottawa|waterloo|kitchener|hamilton|guelph|barrie|kingston|london,? (?:on|canada))\b/i;
 export function ontarioLocation(location){
  const text=String(location||'');
  if(/\b(?:United States|USA|California|Oregon|Ohio|New York|United Kingdom|England|Australia)\b|\bOntario\s*,\s*(?:CA|OR)\b/i.test(text))return false;
@@ -71,12 +73,25 @@ export function setSearchRemotePreference(db,userId,searchId,input){
 // Structured searches do not equate a foreign remote contract with permission
 // to perform that work from Canada, or a sponsorship preference with an offer.
 export function scopedWorkEligibility(job,scope){
+ const result=scopedWorkEligibilityBase(job,scope);
+ return result.eligible?payFloor(result,job,scope):result;
+}
+// Unknown or non-CAD pay is never converted or guessed; it stays unknown.
+export function payFloor(result,job,scope){
+ const floor=scope?.minimumAnnualCAD;if(!floor)return result;
+ const cad=(Array.isArray(job.pay)?job.pay:[]).filter(p=>p&&p.currency==='CAD'&&Number(p.annualMax)>0);
+ if(!cad.length)return {...result,payFloor:{minimumAnnualCAD:floor,status:'unknown'}};
+ const best=Math.max(...cad.map(p=>Number(p.annualMax)));
+ if(best<floor)return {eligible:false,reason:'Published pay is below the CAD '+floor.toLocaleString('en-CA')+' annual-equivalent minimum',payFloor:{minimumAnnualCAD:floor,status:'below',annualMax:best}};
+ return {...result,payFloor:{minimumAnnualCAD:floor,status:'met',annualMax:best}};
+}
+function scopedWorkEligibilityBase(job,scope){
  if(!scopeLocationAllowed(job,scope))return {eligible:false,reason:'Posting is outside the configured on-site and remote locations'};
  const location=String(job.location||''),text=String(job.description||'').replace(/<[^>]*>/g,' ');
  const remote=isScopeRemote(job);
  if(!text.trim())return {eligible:false,reason:'Employer description is required to verify work eligibility'};
  const canada=ontarioLocation(location)||/\bcanada\b/i.test(location);
- const global=/\b(worldwide|anywhere|global)\b/i.test(location)||/\b(remote worldwide|worldwide remote|work (?:remotely )?from anywhere(?: in the world)?)\b/i.test(text);
+ const global=/\b(worldwide|anywhere|global)\b/i.test(location)||/\b(remote worldwide|worldwide remote|work (?:remotely )?from anywhere in the world)\b/i.test(text);
  // Posting locations outrank a company's generic remote-work benefits. A role
  // listed for DACH or the US/UK is not made Canada-eligible by a worldwide slogan.
  const namedForeignRegion=/\b(?:DACH|EMEA|APAC|Europe|European Union|Germany|Deutschland|Austria|Switzerland|United Kingdom|United States|USA|USEAST|USWEST|UK|France|Spain|Italy|Netherlands|Ireland|Poland|Portugal|India|Australia|New Zealand|Singapore|Japan|Brazil|Mexico|London|Berlin|Paris|Bangalore|Bengaluru|New York|San Francisco)\b/i.test(location);
@@ -107,6 +122,14 @@ export function currentSearchScope(db,job){
 export function currentScopeAssessment(db,job){
  const scope=currentSearchScope(db,job);if(!scope)return null;
  let metadata={};try{metadata=JSON.parse(job.job_metadata_json||'{}')}catch{}
+ // LinkedIn/Indeed postings are only known once the applicant's browser reads
+ // the bound job page. Until then eligibility is unknown (never assumed);
+ // afterwards the saved posting assessment decides. Submission still requires
+ // a fresh eligible assessment (single-application reservation).
+ if(globalThis.ApplyPilotPolicy?.nativeBoard?.(job.url||'')){
+  if(!metadata.native)return null;
+  if(!metadata.native.eligible)return {eligibility:{eligible:false,reason:metadata.native.blocker||'Posting outside the saved scope'},searchPriority:0};
+ }
  const posting={...metadata,title:job.title};
  const eligibility=scopedWorkEligibility(posting,scope);
  return {eligibility,searchPriority:scopePriority(scope,eligibility,posting)};

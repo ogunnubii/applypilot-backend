@@ -13,6 +13,8 @@ function postingKey(value){
  try{const u=new URL(value),p=u.pathname.split('/').filter(Boolean);
  if(u.hostname==='jobs.ashbyhq.com'&&/^[a-f0-9-]{36}$/i.test(p[1]||''))return 'ashby:'+p[0].toLowerCase()+':'+p[1].toLowerCase();
  if(/^(?:job-)?boards\.greenhouse\.io$/.test(u.hostname)&&p[1]==='jobs'&&/^\d+$/.test(p[2]||''))return 'greenhouse:'+p[0].toLowerCase()+':'+p[2];
+ if(u.hostname==='www.linkedin.com'&&/^\d+$/.test(p[2]||'')&&p[0]==='jobs'&&p[1]==='view')return 'linkedin:'+p[2];
+ if(/(^|\.)indeed\.com$/.test(u.hostname)&&/viewjob$/.test(u.pathname)&&/^[a-f0-9]{16}$/i.test(u.searchParams.get('jk')||''))return 'indeed:'+u.searchParams.get('jk').toLowerCase();
  if(/^jobs(?:\.eu)?\.lever\.co$/.test(u.hostname)&&/^[a-f0-9-]{36}$/i.test(p[1]||''))return u.hostname+':'+p[0].toLowerCase()+':'+p[1].toLowerCase();
  }catch{}return '';
 }

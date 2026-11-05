@@ -3,6 +3,14 @@ const P=globalThis.ApplyPilotPolicy;
 const environments={hosted:{dashboard:'https://marvelous-vitality-production-c2d8.up.railway.app/',pagesDashboard:'https://applypilot-jobs.pages.dev/',legacyDashboard:'https://applypilot-jobs.netlify.app/',api:'https://marvelous-vitality-production-c2d8.up.railway.app/api'},local:{dashboard:'http://localhost:8080/assistant',api:'http://localhost:8080/api'}};
 const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','error','automaticDefault','userPaused'])});
 let responsiveDashboardId;
+// LinkedIn/Indeed pacing for automatic openings. Conservative fixed limits;
+// a board-reported limit pauses that board far longer (see site-error).
+const NATIVE_SPACING_MS=120000,NATIVE_DAILY_CAP=25,NATIVE_LIMIT_COOLDOWN_MS=12*60*60*1000;
+const siteKey=url=>{try{return P.nativeBoard?.(url)||new URL(url).hostname;}catch{return '';}};
+// The tab currently holding a record's application: the bound job tab, or the
+// Indeed Apply tab that continuation from that exact job tab produced.
+const recordTabId=r=>Number.isInteger(r?.flowTabId)?r.flowTabId:r?.tabId;
+const tabHolds=(tab,r)=>!!tab&&(tab.id===r.flowTabId?P.continuationOf?.(tab.url,r.url):P.sameApplication(tab.url,r.url));
 async function api(path,method='GET',data){
  const state=await read(),env=environments[state.environment]||environments.hosted;
  const origins=[env.dashboard,env.pagesDashboard,env.legacyDashboard].filter(Boolean).map(url=>new URL(url).origin+'/*');
@@ -47,10 +55,10 @@ async function readyJobs(onlyId){
     if(view.submitted||view.closed||!view.frameId||view.expiresAt<=Date.now())continue;
     expiresAt=view.expiresAt;
    }else{
-    const tab=await chrome.tabs.get(record.tabId),tabs=await chrome.tabs.query({});
-    if(!P.sameApplication(tab.url,job.url)||!P.sameApplication(record.url,job.url)||tabs.filter(t=>P.sameApplication(t.url,job.url)).length!==1)continue;
+    const tab=await chrome.tabs.get(recordTabId(record)),tabs=await chrome.tabs.query({});
+    if(!tabHolds(tab,record)||!P.sameApplication(record.url,job.url)||!Number.isInteger(record.flowTabId)&&tabs.filter(t=>P.sameApplication(t.url,job.url)).length!==1)continue;
     const live=await probeForm(record);
-    if(!live?.readyForSubmit||!live.started||live.busy||live.attempted||live.jobId!==job.id||!P.sameApplication(live.url,job.url))continue;
+    if(!live?.readyForSubmit||!live.started||live.busy||live.attempted||live.jobId!==job.id||!P.boundApplication?.(live.url,job.url))continue;
     expiresAt=Date.now()+30000;
    }
    jobs.push({...job,ready_form:{source,checked_at:Date.now(),expires_at:expiresAt}});
@@ -64,8 +72,8 @@ async function reviewPrepared(id){
  const job=(await readyJobs(id)).jobs.find(j=>j.id===id);
  if(!job)throw Error('This filled form is no longer ready or available. Refresh the list. No application was restarted.');
  if(job.ready_form.source==='local'){
-  const record=(await read()).records[id],tab=await chrome.tabs.get(record.tabId);
-  if(!P.sameApplication(tab.url,job.url))throw Error('The prepared employer tab has changed. Refresh the list.');
+  const record=(await read()).records[id],tab=await chrome.tabs.get(recordTabId(record));
+  if(!tabHolds(tab,record))throw Error('The prepared employer tab has changed. Refresh the list.');
   await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});
   return {opened:true,source:'local'};
  }
@@ -96,7 +104,7 @@ async function reviewPrepared(id){
 async function initialize(){const s=await read();if(!s.automaticDefault)await chrome.storage.local.set({automaticDefault:true,enabled:true,userPaused:false});if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
 async function saveRecord(record){const s=await read();s.records[record.id]=record;await chrome.storage.local.set({records:s.records});}
 async function probeForm(record){
- let timer;try{return await Promise.race([chrome.tabs.sendMessage(record.tabId,{action:'preparation-status'},{frameId:record.frameId||0}),new Promise(resolve=>{timer=setTimeout(()=>resolve(null),2000);})]);}catch{return null;}finally{clearTimeout(timer);}
+ let timer;try{return await Promise.race([chrome.tabs.sendMessage(recordTabId(record),{action:'preparation-status'},{frameId:Number.isInteger(record.flowTabId)?0:record.frameId||0}),new Promise(resolve=>{timer=setTimeout(()=>resolve(null),2000);})]);}catch{return null;}finally{clearTimeout(timer);}
 }
 // Recover only an interrupted, unattempted campaign form in its exact existing
 // tab. Never reopen a lost form, reload a page, or replay a submission.
@@ -130,7 +138,7 @@ async function openJob(id,auto=true,focus=false){
  const matches=tabs.filter(t=>P.sameApplication(t.url,packet.job.url));
  let tab=matches.find(t=>record?.tabId===t.id)||(matches.length===1?matches[0]:null);
  if(matches.length>1&&!tab)throw Error('Several copies of this application are open. Close duplicates first.');
- record={safeInitialLoad:!record&&!tab,...record,id,url:packet.job.url,attempted:!!(record?.attempted||claim.attempted||packet.job.attempted),auto,manualOpen:!auto,phase:'ready',touched:Date.now()};
+ record={safeInitialLoad:!record&&!tab,...record,id,url:packet.job.url,openedAt:Date.now(),attempted:!!(record?.attempted||claim.attempted||packet.job.attempted),auto,manualOpen:!auto,phase:'ready',touched:Date.now()};
  if(record.attempted){record.phase='verifying';record.auto=false;}
  await saveRecord(record);
  await api('/jobs/'+id+'/local/assistance','POST',{kind:record.safeInitialLoad?'tracking':'partial'});
@@ -142,7 +150,12 @@ function eligible(j,s){
  const r=s.records[j.id];
  const review=j.metadata?.manualReview&&j.status==='needs_review'&&j.challenge==='Manual application';
  return (j.execution_mode==='local'||review)&&P.supported(j.url)&&!j.employer_hold&&j.metadata?.available!==false&&!j.local_attempt_at&&!r?.attempted&&!['Unconfirmed submission','Submission in progress','Sensitive action'].includes(j.challenge)&&
- ((j.status==='queued'||review)&&!r)&&!Object.values(s.records).some(other=>other.siteCooldownUntil>Date.now()&&new URL(other.url).hostname===new URL(j.url).hostname);
+ ((j.status==='queued'||review)&&!r)&&!Object.values(s.records).some(other=>other.siteCooldownUntil>Date.now()&&siteKey(other.url)===siteKey(j.url))&&nativePaced(j,s);
+}
+function nativePaced(j,s){
+ if(!P.nativeBoard?.(j.url))return true;
+ const same=Object.values(s.records).filter(o=>o.openedAt&&siteKey(o.url)===siteKey(j.url));
+ return !same.some(o=>Date.now()-o.openedAt<NATIVE_SPACING_MS)&&same.filter(o=>Date.now()-o.openedAt<86400000).length<NATIVE_DAILY_CAP;
 }
 async function retrySubmissionRecords(){
  const s=await read();let sent=0;
@@ -197,9 +210,9 @@ async function tick(){
  const s=await read();if(!s.enabled||s.userPaused)return;
  const active=Object.values(s.records).find(r=>r.auto&&['ready','verifying'].includes(r.phase));
  if(active){
-  const tab=Number.isInteger(active.tabId)?await chrome.tabs.get(active.tabId).catch(()=>null):null;
-  if(tab&&P.sameApplication(tab.url,active.url)&&Date.now()-active.touched<90000)return;
-  if(tab&&P.sameApplication(tab.url,active.url)&&!active.attempted){const live=await probeForm(active);if(live?.busy&&!live.attempted){active.touched=Date.now();await saveRecord(active);return;}}
+  const tab=Number.isInteger(recordTabId(active))?await chrome.tabs.get(recordTabId(active)).catch(()=>null):null;
+  if(tabHolds(tab,active)&&Date.now()-active.touched<90000)return;
+  if(tabHolds(tab,active)&&!active.attempted){const live=await probeForm(active);if(live?.busy&&!live.attempted){active.touched=Date.now();await saveRecord(active);return;}}
   active.phase='blocked';active.auto=false;active.interrupted=!active.attempted;await saveRecord(active);
   await api('/jobs/'+active.id+'/local/progress','POST',{blocked:true,fields:[],message:active.attempted?'Submission uncertain; check employer receipt.':'Browser stopped responding. Reopen from extension.'}).catch(()=>{});
  }
@@ -253,13 +266,13 @@ async function handle(m,sender){
   const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
   if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
   const s=await read(),record=s.records[m.id];
-  if(!Number.isInteger(record?.tabId))throw Error('The original employer tab is no longer open. Open ApplyPilot Local to review this application before restarting it.');
-  const tab=await chrome.tabs.get(record.tabId).catch(()=>null);
-  if(!tab||!P.sameApplication(tab.url,record.url))throw Error('The original employer form is no longer available. Open ApplyPilot Local to review it; no application was restarted.');
+  if(!Number.isInteger(recordTabId(record)))throw Error('The original employer tab is no longer open. Open ApplyPilot Local to review this application before restarting it.');
+  const tab=await chrome.tabs.get(recordTabId(record)).catch(()=>null);
+  if(!tabHolds(tab,record))throw Error('The original employer form is no longer available. Open ApplyPilot Local to review it; no application was restarted.');
   await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});
   // Filling requests its packet through this same serialized message queue.
   // Release the queue before waiting on content-script work to avoid deadlock.
-  chrome.tabs.sendMessage(tab.id,{action:'fill'},{frameId:record.frameId||0}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[record.frameId||0]},files:['policy.js','content.js']})).catch(e=>chrome.storage.local.set({error:'Could not refill the employer form: '+e.message}));return {focused:true};
+  chrome.tabs.sendMessage(tab.id,{action:'fill'},{frameId:tab.id===record.flowTabId?0:record.frameId||0}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[tab.id===record.flowTabId?0:record.frameId||0]},files:['policy.js','content.js']})).catch(e=>chrome.storage.local.set({error:'Could not refill the employer form: '+e.message}));return {focused:true};
  }
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){
@@ -282,18 +295,29 @@ async function handle(m,sender){
   }
  }
  const s=await read();
- let b=Object.values(s.records).find(r=>r.tabId===sender.tab?.id&&P.sameApplication(sender.url,r.url));
+ let b=Object.values(s.records).find(r=>r.tabId===sender.tab?.id&&P.sameApplication(sender.url,r.url)||Number.isInteger(r.flowTabId)&&r.flowTabId===sender.tab?.id&&P.continuationOf?.(sender.url,r.url));
+ if(!b&&m.action==='packet'&&sender.frameId===0&&P.nativeContinuation?.(sender.url)){
+  // Adopt Indeed Apply only right after this extension opened it from the
+  // exact bound job tab (same tab or a tab that tab opened). Single use.
+  const pending=Object.values(s.records).filter(r=>!r.attempted&&!Number.isInteger(r.flowTabId)&&r.flowPendingAt>Date.now()-60000&&(sender.tab?.id===r.tabId||sender.tab?.openerTabId===r.tabId)&&P.continuationOf?.(sender.url,r.url));
+  if(pending.length===1){b=pending[0];b.flowTabId=sender.tab.id;b.flowPendingAt=0;await saveRecord(b);}
+ }
  if(!b&&m.action==='packet'&&(sender.frameId===0||P.trustedFrame?.(sender,sender.url)===true)){
   const matches=Object.values(s.records).filter(r=>P.sameApplication(sender.url,r.url));
   if(matches.length===1){const tabs=await chrome.tabs.query({});if(tabs.filter(t=>P.sameApplication(t.url,matches[0].url)).length===1){b=matches[0];b.tabId=sender.tab.id;b.auto=false;await saveRecord(b);}}
  }
- if(!b||!(sender.frameId===0||P.trustedFrame?.(sender,b.url)===true))throw Error('This tab is not linked to an active ApplyPilot application.');
+ if(!b||!(sender.frameId===0||sender.tab?.id!==b.flowTabId&&P.trustedFrame?.(sender,b.url)===true))throw Error('This tab is not linked to an active ApplyPilot application.');
  if(m.action==='packet'){b.frameId=sender.frameId;const packet=await api('/jobs/'+b.id+'/local/packet');b.attempted=!!(b.attempted||packet.job.attempted);await saveRecord(b);b.autonomousSubmit=packet.autonomousSubmit===true;b.prepareSteps=packet.prepareSteps===true;await saveRecord(b);return {...packet,automatic:!b.attempted&&s.enabled&&!s.userPaused&&(b.auto||b.autonomousSubmit||b.prepareSteps),autofillOnly:!b.autonomousSubmit};}
  if(m.action==='attention-position'){const {jobs,preparation}=await listedJobs(),member=jobs.find(j=>j.id===b.id)?.preparation;if(preparation?.enabled&&member)return {position:member.position,total:preparation.target};const waiting=P.attentionOrder(jobs),index=waiting.findIndex(j=>j.id===b.id);return {position:index<0?0:index+1,total:waiting.length};}
- if(m.action==='state')return {attempted:b.attempted,automatic:!b.attempted&&s.enabled&&!s.userPaused&&(b.auto||b.autonomousSubmit||b.prepareSteps),autofillOnly:!b.autonomousSubmit,prepareSteps:!!b.prepareSteps,autonomousSubmit:!!b.autonomousSubmit,refreshEnabled:!!s.enabled&&!s.userPaused,phase:b.phase};
+ if(m.action==='state')return {flowElsewhere:Number.isInteger(b.flowTabId)&&b.flowTabId!==sender.tab?.id,attempted:b.attempted,automatic:!b.attempted&&s.enabled&&!s.userPaused&&(b.auto||b.autonomousSubmit||b.prepareSteps),autofillOnly:!b.autonomousSubmit,prepareSteps:!!b.prepareSteps,autonomousSubmit:!!b.autonomousSubmit,refreshEnabled:!!s.enabled&&!s.userPaused,phase:b.phase};
  if(m.action==='preparation-heartbeat'){
   if(!s.enabled||s.userPaused||b.attempted||b.phase==='submitted')return {continue:false};
   b.touched=Date.now();await saveRecord(b);return {continue:true};
+ }
+ if(m.action==='posting'){
+  if(b.attempted)throw Error('Submission already started.');
+  const result=await api('/jobs/'+b.id+'/local/posting','POST',{...m,action:undefined,url:sender.url});
+  b.postingEligible=result.eligible===true;b.postingCheckedAt=Date.now();await saveRecord(b);return result;
  }
  if(m.action==='assistance'){b.assisted=true;await saveRecord(b);return api('/jobs/'+b.id+'/local/assistance','POST',{kind:'human'});}
  if(m.action==='cover-letter'){
@@ -311,13 +335,14 @@ async function handle(m,sender){
   const clickId=m.clickId||'legacy',payload={url:sender.url,before:String(m.before||'').slice(0,20000),human:m.human===true,clickId,humanAssisted:!!b.assisted,automatic};b.pendingClicks=b.pendingClicks||{};if(!automatic)b.pendingClicks[clickId]=payload;await saveRecord(b);
   try{const result=await api('/jobs/'+b.id+'/local/attempt','POST',payload);delete b.pendingClicks[clickId];await saveRecord(b);return result;}catch(e){b.auto=false;b.phase='blocked';if(e.status&&e.status<500&&e.status!==429)delete b.pendingClicks[clickId];await saveRecord(b);throw e;}
  }
- if(m.action==='step'){const manualEntry=m.entry===true&&b.manualOpen&&!b.entryOpened&&!b.attempted;if(!manualEntry&&(!s.enabled||s.userPaused||!(b.auto||b.autonomousSubmit||b.prepareSteps)))throw Error('Automation was stopped');if((b.steps||0)>=15)throw Error('Step limit reached. Continue manually.');await api('/jobs/'+b.id+'/local/step','POST',{});if(m.entry===true)b.entryOpened=true;b.steps=(b.steps||0)+1;await saveRecord(b);return {};}
+ if(m.action==='step'){if(P.nativeBoard?.(b.url)&&!Number.isInteger(b.flowTabId)&&(!b.postingEligible||Date.now()-(b.postingCheckedAt||0)>3600000))throw Error('Check this job-board posting before opening its application.');if(m.entry===true&&P.nativeBoard?.(b.url)==='indeed'){b.flowPendingAt=Date.now();await saveRecord(b);}const manualEntry=m.entry===true&&b.manualOpen&&!b.entryOpened&&!b.attempted;if(!manualEntry&&(!s.enabled||s.userPaused||!(b.auto||b.autonomousSubmit||b.prepareSteps)))throw Error('Automation was stopped');if((b.steps||0)>=15)throw Error('Step limit reached. Continue manually.');await api('/jobs/'+b.id+'/local/step','POST',{});if(m.entry===true)b.entryOpened=true;b.steps=(b.steps||0)+1;await saveRecord(b);return {};}
  if(m.action==='form-opened'){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;await saveRecord(b);return {};}
  if(m.action==='site-error'){
   const issue=P.employerPageIssue({status:m.code});if(!issue)throw Error('Unrecognized employer page error.');
   const canRetry=issue.retryable&&s.enabled&&b.auto&&!b.attempted&&b.safeInitialLoad&&!b.formTouched&&!b.steps&&m.empty===true&&m.initial===true&&!(b.siteRetries>0);
   let message=issue.message;
-  b.siteCooldownUntil=issue.retryable||issue.code===429?Date.now()+(issue.code===429?300000:60000):0;
+  b.siteCooldownUntil=issue.retryable||issue.code===429?Date.now()+(m.native===true&&issue.code===429&&P.nativeBoard?.(b.url)?NATIVE_LIMIT_COOLDOWN_MS:issue.code===429?300000:60000):0;
+  if(m.native===true&&issue.code===429&&P.nativeBoard?.(b.url))message='The job board reported an application limit. This board is paused for 12 hours; other boards continue.';
   b.siteRetryAt=canRetry?Date.now()+60000:0;
   if(canRetry){b.siteRetries=(b.siteRetries||0)+1;message+=' Will check this empty page once in about a minute; other employer sites can continue.';}
   else if(b.attempted)message+=' A submission may already have occurred. Check for an employer receipt; automatic retry is disabled.';
@@ -336,7 +361,7 @@ async function handle(m,sender){
  if(m.action==='remember')return api('/jobs/'+b.id+'/answers','PUT',{question:m.question,answer:m.answer,remember:true});
  if(m.action==='receipt'){
   if(!b.attempted)throw Error('No submission action observed in this tab.');
-  if(!P.receipt(m.receipt)||!P.sameApplication(sender.url,b.url))throw Error('A matching employer receipt is required.');
+  if(!P.receipt(m.receipt)||!(P.sameApplication(sender.url,b.url)||sender.tab?.id===b.flowTabId&&P.continuationOf?.(sender.url,b.url)))throw Error('A matching employer receipt is required.');
   if(b.receiptEvidence)return {ok:true};
   b.pendingReceipt||={receipt:String(m.receipt).slice(0,300),url:sender.url,afterSubmit:true,observedAt:new Date().toISOString(),receiptId:crypto.randomUUID()};
   b.auto=false;b.phase='receipt_pending';await saveRecord(b);
@@ -351,5 +376,5 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(['list','dashboard-stat
 chrome.alarms.onAlarm.addListener(a=>{if(a.name==='queue')return serial(tick).catch(()=>{});});
 chrome.runtime.onStartup.addListener(()=>serial(async()=>{await initialize();const s=await read();for(const r of Object.values(s.records)){r.interrupted=!r.attempted&&r.auto&&r.phase==='ready';r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted'&&r.phase!=='prepared')r.phase='blocked';}await chrome.storage.local.set({records:s.records,enabled:!s.userPaused,error:'Browser restarted. Eligible preparation resumes in its existing tab after sign-in; previous submission attempts remain protected.'});}));
 chrome.runtime.onInstalled.addListener(()=>serial(initialize));
-chrome.tabs.onRemoved.addListener(id=>serial(async()=>{const s=await read();for(const r of Object.values(s.records))if(r.tabId===id){r.tabId=null;r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records});await tick();}).catch(()=>{}));
+chrome.tabs.onRemoved.addListener(id=>serial(async()=>{const s=await read();for(const r of Object.values(s.records))if(r.flowTabId===id){r.flowTabId=null;r.auto=false;if(r.phase!=='submitted')r.phase='blocked';}else if(r.tabId===id){r.tabId=null;r.auto=false;r.siteRetryAt=0;if(r.phase!=='submitted')r.phase='blocked';}await chrome.storage.local.set({records:s.records});await tick();}).catch(()=>{}));
 

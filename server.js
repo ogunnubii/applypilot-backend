@@ -41,7 +41,9 @@ import {installDrafts,draftForJob,draftAnswer} from './answer-drafts.js';
 import {hasResearchDraftForQuestion,installResearch,isResearchDraft,markResearchDraftUsed,researchForJob} from './google-research.js';
 import {researchConsentWithdrawn} from './research-consent.js';
 import {deleteApplication} from './delete-application.js';
-import {supported,sameApplication,receipt as employerReceipt} from './local-policy.js';
+import {supported,sameApplication,boundApplication,nativeBoard,nativeReceiptMatches,receipt as employerReceipt} from './local-policy.js';
+import {assessNativePosting} from './native-posting.js';
+import {currentSearchScope} from './search-scope.js';
 import {rememberAnswers} from './local-state.js';
 import {installNotifications,emailConfigured,sendBlockerEmails} from './notifications.js';
 import {chat} from './assistant.js';
@@ -104,9 +106,9 @@ if(req.method==='GET'&&['/preparation-handoff','/preparation-handoff.js'].includ
 if(req.method==='GET'&&['/setup','/setup.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/setup.js':'./web/setup.html',import.meta.url)));return;
 }
-if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.6.38.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
+if(req.method==='GET'&&path==='/applypilot-local.zip'){const archive=await extensionArchive();res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="applypilot-local-0.7.0.zip"','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(archive);return;}
 if(req.method==='GET'&&path==='/local-browser.html'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/local-browser.html',import.meta.url)));return;}
-if(path==='/api/health')return send(res,200,{ok:true,commit:process.env.RAILWAY_GIT_COMMIT_SHA||null,release:'2026-10-12-canadian-location-recovery',extensionVersion:'0.6.38',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
+if(path==='/api/health')return send(res,200,{ok:true,commit:process.env.RAILWAY_GIT_COMMIT_SHA||null,release:'2026-10-12-canadian-location-recovery',extensionVersion:'0.7.0',aiConfigured:!!(process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),googleResearchConfigured:!!process.env.GEMINI_API_KEY});
 if(['/api/signup','/api/register','/api/login'].includes(path)&&req.method==='POST'){
  const input=JSON.parse(await body(req,4096));
  if(!input||typeof input!=='object'||Array.isArray(input))return send(res,400,{error:'Enter your email and password.'});
@@ -294,7 +296,7 @@ if(letterRoute&&req.method==='GET'){
  if(!ownJob(uid,letterRoute[1]))return send(res,404,{error:'Application not found.'});
  return send(res,200,{coverLetter:coverLetterPreview(db,uid,letterRoute[1])});
 }
-let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|answer|cover-letter|research-answer|research-used|step|attempt|submitted|capture|assistance)$/);
+let localRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/local\/(claim|packet|progress|answer|cover-letter|research-answer|research-used|step|attempt|submitted|capture|assistance|posting)$/);
 if(localRoute){
  const j=ownJob(uid,localRoute[1]);if(!j)return send(res,404,{error:'Job not found'});
  const focus=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(uid);if(focus&&focus.job_id!==j.id&&['claim','packet','step'].includes(localRoute[2]))return send(res,409,{error:'This application is parked while you work on one job at a time.'});
@@ -346,7 +348,7 @@ if(localRoute){
   const bytes=await readFile(p.resume_path);if(bytes.length>limit)throw Error('Resume too large');
   const applicationAnswers=JSON.parse(j.answers_json||'{}');if(!p.google_research_consent)for(const [question,answer] of Object.entries(applicationAnswers))if(isResearchDraft(db,j.id,question,answer))delete applicationAnswers[question];
   const campaign=preparationCampaign(db,uid),member=preparationMember(db,j);
-  return send(res,200,{prepareSteps:!!(campaign?.enabled&&member&&member.campaign_id===campaign.id&&!member.excluded_at),autonomousSubmit:metadataFor(j).manualReview||globalThis.ApplyPilotPolicy.customApplication(j.url)?false:focusAllowsSubmit(db,j),job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...reusableAnswers(db,p),...applicationAnswers},savedFactsAvailable:true,aiAssistance:!!((p.google_research_consent||p.gemini_facts_consent)&&process.env.GEMINI_API_KEY||p.ai_consent&&process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),applicationOnlyQuestions:db.prepare('SELECT question FROM research_drafts WHERE job_id=? UNION SELECT question FROM fact_drafts WHERE job_id=?').all(j.id,j.id).map(row=>row.question),excludeFrench:excludesFrench(db,uid),resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
+  return send(res,200,{prepareSteps:!!(campaign?.enabled&&member&&member.campaign_id===campaign.id&&!member.excluded_at),autonomousSubmit:metadataFor(j).manualReview||globalThis.ApplyPilotPolicy.customApplication(j.url)?false:focusAllowsSubmit(db,j),job:{id:j.id,url:j.url,title:j.title,company:j.company,attempted:!!j.local_attempt_at,phase:j.local_phase},profile:{name:p.name,email:p.email,phone:p.phone,location:p.location},answers:{...reusableAnswers(db,p),...applicationAnswers},savedFactsAvailable:true,nativeBoard:nativeBoard(j.url),aiAssistance:!nativeBoard(j.url)&&!!((p.google_research_consent||p.gemini_facts_consent)&&process.env.GEMINI_API_KEY||p.ai_consent&&process.env.OPENAI_API_KEY&&process.env.OPENAI_MODEL),applicationOnlyQuestions:db.prepare('SELECT question FROM research_drafts WHERE job_id=? UNION SELECT question FROM fact_drafts WHERE job_id=?').all(j.id,j.id).map(row=>row.question),excludeFrench:excludesFrench(db,uid),resume:{name:'resume'+extname(p.resume_path),base64:bytes.toString('base64')}});
  }
  if(action==='cover-letter'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
@@ -355,10 +357,29 @@ if(localRoute){
    return focus&&focus.job_id!==job.id?'This application is parked.':member&&(!campaign?.enabled||member.excluded_at||member.campaign_id!==campaign.id)?'This preparation campaign is paused.':employerHold(db,job)?.message||((policy=>policy.allowed?'':policy.message)(companyApplicationPolicy(db,job.applicant_id,job)))||'';
   }}));}catch(error){return send(res,400,{error:error.message});}
  }
+ if(action==='posting'&&req.method==='POST'){
+  // The applicant's browser reports what the bound LinkedIn/Indeed job page
+  // shows. The assessment is deterministic and is saved with the job so the
+  // submission reservation can require a fresh, eligible check.
+  if(!nativeBoard(j.url))return send(res,400,{error:'Posting checks apply to LinkedIn and Indeed jobs.'});
+  if(j.local_attempt_at)return send(res,409,{error:'A submission may already have occurred. Check the employer receipt.'});
+  const x=JSON.parse(await body(req)),meta=metadataFor(j);
+  const assessment=assessNativePosting(j,x,currentSearchScope(db,j));
+  if(assessment.title&&!j.title)db.prepare('UPDATE jobs SET title=? WHERE id=?').run(text(assessment.title,200),j.id);
+  if(assessment.company&&!j.company)db.prepare('UPDATE jobs SET company=? WHERE id=?').run(text(assessment.company,200),j.id);
+  const fresh=db.prepare('SELECT * FROM jobs WHERE id=?').get(j.id);
+  const prior=assessment.eligible?priorApplication(db,uid,fresh):null;
+  const result=prior?{...assessment,eligible:false,blocker:'Already applied or in progress for this employer role through another source. Repeat application blocked.',reasons:[...assessment.reasons,'Cross-source duplicate']}:assessment;
+  const merged={...meta,native:result,foundVia:meta.foundVia||nativeBoard(j.url),...(result.eligible?{}:{eligibility:{eligible:false,reason:result.blocker}}),...(result.eligible?{description:String(x.description||'').slice(0,24000),location:result.location,remote:true,pay:result.pay,eligibility:result.eligibility,available:true,checkedAt:result.checkedAt}:{})};
+  db.prepare('UPDATE jobs SET job_metadata_json=?,updated_at=? WHERE id=?').run(JSON.stringify(merged),now(),j.id);
+  event(j.id,'posting_checked',result.eligible?'Job-board posting checked: '+result.reasons.join('; '):'Job-board posting blocked: '+result.blocker);
+  return send(res,200,{eligible:result.eligible,blocker:result.blocker,reasons:result.reasons,rank:result.rank||null});
+ }
  if(action==='answer'&&req.method==='POST'){
   const x=JSON.parse(await body(req));try{return send(res,200,await prepareFormAnswer(db,uid,j.id,x.question,{expectedOwner:owner,choices:x.choices,answerFormat:x.answerFormat==='number'?'number':'text',maxLength:Number.isInteger(x.maxLength)&&x.maxLength>0?Math.min(x.maxLength,4000):4000,fieldHelp:text(x.fieldHelp,2000),check:job=>{const focus=db.prepare('SELECT job_id FROM work_focus WHERE user_id=? AND enabled=1').get(uid);return focus&&focus.job_id!==job.id?'This application is parked.':employerHold(db,job)?.message||((policy=>policy.allowed?'':policy.message)(companyApplicationPolicy(db,job.applicant_id,job)))||'';}}));}catch(error){return send(res,400,{error:error.message});}
  }
  if(action==='research-answer'&&req.method==='POST'){
+  if(nativeBoard(j.url))return send(res,403,{error:'LinkedIn and Indeed applications use only your saved answers.'});
   const x=JSON.parse(await body(req)),question=text(x.question,4000);if(!question)return send(res,400,{error:'A public job-page question is required'});
   try{
    if(!db.prepare('SELECT google_research_consent FROM applicants WHERE id=? AND user_id=?').get(j.applicant_id,uid)?.google_research_consent)return send(res,403,{error:'Enable Google public job-page drafting in profile setup first.'});
@@ -387,14 +408,14 @@ if(localRoute){
  }
  if(action==='attempt'&&req.method==='POST'){
   const x=JSON.parse(await body(req));
-  if(typeof x.before!=='string'||!sameApplication(x.url,j.url))return send(res,409,{error:'Application identity requires review before recording an employer limit or submission.'});
+  if(typeof x.before!=='string'||!boundApplication(x.url,j.url))return send(res,409,{error:'Application identity requires review before recording an employer limit or submission.'});
   if(applicationLimit(x.before)){recordEmployerLimit(db,uid,j.id,x.before,{source:'Employer page observed by browser helper'});return send(res,409,{error:'Employer application limit reached. Other employers can continue.'});}
   if(applicationQuota(x.before)){recordEmployerLimit(db,uid,j.id,x.before,{source:'Employer policy observed before submission'});if(employerHold(db,j))return send(res,409,{error:'This employer’s recorded submission window is full. Other employers can continue.'});}
 
   const p=db.prepare('SELECT consent FROM applicants WHERE id=?').get(j.applicant_id);
   if(!p?.consent)return send(res,403,{error:'Applicant consent was withdrawn'});
   if(researchConsentWithdrawn(db,j.id,j.applicant_id))return send(res,403,{error:'AI answer drafting consent was withdrawn'});
-  if(typeof x.before!=='string'||!sameApplication(x.url,j.url)||employerReceipt(x.before))return send(res,409,{error:'Application requires human review before submission'});
+  if(typeof x.before!=='string'||!boundApplication(x.url,j.url)||employerReceipt(x.before))return send(res,409,{error:'Application requires human review before submission'});
   if(x.human!==true){if(submissionDeclaration(x.before))return send(res,409,{error:'The employer declaration needs your review and Submit click.'});if(x.automatic!==true)return send(res,409,{error:'A submission authorization is required.'});try{return send(res,200,reserveAutonomousAttempt(db,j.id,uid,owner));}catch(e){return send(res,409,{error:e.message});}}
   return send(res,200,recordManualSubmit(db,j,x.clickId||'legacy',x.humanAssisted===true));
  }
@@ -415,7 +436,8 @@ if(localRoute){
  if(action==='submitted'&&req.method==='POST'){
   const x=JSON.parse(await body(req)),receipt=text(x.receipt,300);
   if(applicationLimit(x.receipt)){recordEmployerLimit(db,uid,j.id,x.receipt,{source:'Employer response reported by browser helper'});return send(res,409,{error:'The employer limit message is not a submission receipt.'});}
-  if(!j.local_attempt_at||!sameApplication(x.url,j.url)||x.afterSubmit!==true||!employerReceipt(receipt))return send(res,400,{error:'An employer receipt after submission is required'});
+  if(!j.local_attempt_at||!boundApplication(x.url,j.url)||x.afterSubmit!==true||!employerReceipt(receipt))return send(res,400,{error:'An employer receipt after submission is required'});
+  if(nativeBoard(j.url)==='linkedin'&&!nativeReceiptMatches('linkedin',receipt,j))return send(res,400,{error:'A LinkedIn confirmation naming this employer is required'});
   try{const result=syncLocalReceipt(db,j.id,uid,owner,x);confirmLibrary(db,j);return send(res,200,result);}catch(error){return send(res,409,{error:error.message});}
  }
  return send(res,405,{error:'Method not allowed'});

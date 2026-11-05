@@ -20,6 +20,7 @@ function submissionStarted(db,j){return !!j.local_attempt_at||['verifying','unce
 function memberProblem(db,j){
  const problem=preparationCandidateProblem(db,j,{fresh:false});if(problem)return problem;
  if(metadataFor(j).manualReview||globalThis.ApplyPilotPolicy.customApplication(j.url))return 'This employer form requires manual review.';
+ if(globalThis.ApplyPilotPolicy.nativeBoard(j.url))return 'LinkedIn and Indeed applications run only in your own browser.';
  return '';
 }
 export function automaticClaimProblem(db,j){

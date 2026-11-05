@@ -1,6 +1,7 @@
 import {searchPriority,currentScopeAssessment} from './search-scope.js';
 import {companyApplicationKeys} from './company-application-policy.js';
 import {applicationRoleKey} from './application-dedup.js';
+import {compareNative} from './native-posting.js';
 
 export const COMPANY_ROTATION_SIZE=5;
 export function applicationPlatform(value){
@@ -26,7 +27,8 @@ export function diversifyApplications(jobs,history=[]){
  }
  const score=job=>Number(job.match_score??job.assessment?.score)||0;
  const counts=job=>{const n=companyCounts.get(company(job))||0;return [Math.floor(n/COMPANY_ROTATION_SIZE),n===0?0:1,platformCounts.get(platform(job))||0,n];};
- const compare=(a,b)=>{const priority=searchPriority(a)-searchPriority(b);if(priority)return priority;const ac=counts(a),bc=counts(b);for(let i=0;i<ac.length;i++)if(ac[i]!==bc[i])return ac[i]-bc[i];return score(b)-score(a)||String(a.created_at||'').localeCompare(String(b.created_at||''))||String(a.id||a.url).localeCompare(String(b.id||b.url));};
+ const nativeOf=job=>{let m=job.metadata;try{m ||= JSON.parse(job.job_metadata_json||'{}');}catch{}return m?.native?.eligible?m.native:null;};
+ const compare=(a,b)=>{const priority=searchPriority(a)-searchPriority(b);if(priority)return priority;const native=compareNative(nativeOf(a),nativeOf(b));if(native)return native;const ac=counts(a),bc=counts(b);for(let i=0;i<ac.length;i++)if(ac[i]!==bc[i])return ac[i]-bc[i];return score(b)-score(a)||String(a.created_at||'').localeCompare(String(b.created_at||''))||String(a.id||a.url).localeCompare(String(b.id||b.url));};
  const ordered=[];
  while(rows.length){let best=0;for(let i=1;i<rows.length;i++)if(compare(rows[i],rows[best])<0)best=i;const [job]=rows.splice(best,1);ordered.push(job);add(companyCounts,company(job));add(platformCounts,platform(job));}
  return ordered;

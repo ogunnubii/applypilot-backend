@@ -63,6 +63,8 @@ export async function prepareFormAnswer(db,uid,id,question,{research=researchFor
   }
   return {answer:chosen,source,requiresReview:true,...(citations?{citations}:{})};
  }
+ // LinkedIn/Indeed: saved facts and exact saved answers only, never a draft.
+ if(globalThis.ApplyPilotPolicy?.nativeBoard?.(job.url))return {answer:'',reason:'Save your answer to this question; LinkedIn and Indeed applications never use generated answers.'};
  const publicQuestion=canResearchQuestion(question)&&(!fieldHelp||canResearchQuestion(question+' '+fieldHelp)),personal=!publicQuestion&&canDraftProfessional(question,fieldHelp);
  if(choices.length&&(publicQuestion||!canDraftProfessional(question,fieldHelp)))return {answer:'',reason:'This dropdown needs your saved answer or review.'};
  if(publicQuestion?!p.google_research_consent:!personal||!p.gemini_facts_consent&&!p.ai_consent)return {answer:'',reason:'This question needs your saved answer or review.'};

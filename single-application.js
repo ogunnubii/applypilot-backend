@@ -1,3 +1,4 @@
+import {freshNativeAssessment} from './native-posting.js';
 import {installUnresolvedAttempts,unresolvedAttemptQuarantined,unresolvedAttemptEligibility,unresolvedAttemptMarker} from './unresolved-attempts.js';
 import {preparationCampaign,preparationMember,preparationPreferenceProblem} from './preparation-campaign.js';
 import {automaticCampaign,automaticMember,automaticClaimProblem,automaticAllowsSubmit} from './automatic-campaign.js';
@@ -143,6 +144,7 @@ function preparationProblem(db,job){
  if(!p?.consent||!p.email||!p.resume_path)return 'Applicant consent, email and resume are required.';
  if(!inActiveBatch(db,job))return 'This application is outside your active batch.';
  if(!supported(job.url))return 'Use a supported direct employer application link.';
+ if(globalThis.ApplyPilotPolicy.nativeBoard(job.url)&&p.execution_mode==='cloud')return 'LinkedIn and Indeed applications run only in your own signed-in browser. Choose My Windows browser for this profile.';
  if(metadata.available===false)return 'The employer posting is no longer available.';
  if(currentScopeAssessment(db,job)?.eligibility?.eligible===false)return 'This job does not meet the current search scope and work eligibility requirements.';
  if(metadata.eligibility?.eligible===false)return 'This job does not meet the saved work eligibility requirements.';
@@ -247,6 +249,8 @@ export function reserveAutonomousAttempt(db,jobId,userId,owner){
   const focus=db.prepare('SELECT * FROM work_focus WHERE user_id=?').get(userId);
   if(focus?.search_queue_only&&!automaticMember(db,j)){if(inFlightApplication(db,userId,j.id))throw Error('Another application is still running or verifying a submission.');const scopeProblem=savedSearchProblem(db,j,focus);if(scopeProblem)throw Error(scopeProblem);}
   if(metadataFor(j).manualReview||globalThis.ApplyPilotPolicy.customApplication(j.url))throw Error('This employer form requires your review and Submit click.');
+  // Native boards: local browser only, and only after a fresh eligible posting check.
+  if(globalThis.ApplyPilotPolicy.nativeBoard(j.url)&&(j.status!=='local_browser'||owner==='hosted-worker'||!freshNativeAssessment(metadataFor(j))))throw Error('A fresh eligible LinkedIn/Indeed posting check in your browser is required before submission.');
   if(j.status==='running'&&(owner!=='hosted-worker'||j.local_owner||db.prepare('SELECT execution_mode FROM applicants WHERE id=?').get(j.applicant_id)?.execution_mode!=='cloud'))throw Error('The selected execution environment is no longer authorized.');
   if(j.status==='local_browser'&&['blocked','uncertain','verifying'].includes(j.local_phase))throw Error('The employer form needs review before automatic submission.');
   db.prepare('INSERT INTO autonomous_attempts VALUES(?,?,?)').run(jobId,owner,now());

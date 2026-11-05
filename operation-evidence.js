@@ -1,4 +1,8 @@
 import {receipt} from './local-policy.js';
+// Application source is attributed from the URL applied to: LinkedIn and Indeed
+// by their own job ids, everything else as a direct employer/ATS application.
+export const APPLICATION_SOURCES=Object.freeze(['direct','linkedin','indeed']);
+export function applicationSource(job){const url=typeof job==='string'?job:job?.url;return globalThis.ApplyPilotPolicy?.nativeBoard?.(url||'')||'direct';}
 export function applicationEvidence(job,now=Date.now()){
  const text=String(job.confirmation||'');
  const placeholder=/reached your application limit|application limit (?:has been )?reached|could(?:n['’]t| not) submit your application|placeholder|example\.com|github\.com|not (?:yet )?(?:submitted|confirmed)|unconfirmed|simulat|test receipt/i.test(text);
@@ -30,5 +34,9 @@ export function operationSnapshot(db,userId){
  FROM jobs j WHERE j.user_id=? AND (j.status NOT IN ('archived','duplicate') OR j.status='archived' AND EXISTS(SELECT 1 FROM events a WHERE a.job_id=j.id AND a.type='archived' AND a.message LIKE 'Queue reset for support-career batches.%'))`).all(userId);
  const totals={completed:0,confirmed:0,worked:0,awaiting:0,active:0,stalled:0,blocked:0,unverifiedOutcome:0,automatic:0,assisted:0,unknown:0};
  for(const job of jobs){const evidence=applicationEvidence(job);for(const key of Object.keys(totals))if(evidence[key])totals[key]++;}
- return {totals,applications:jobs.map(job=>({id:job.id,...applicationEvidence(job)})),checkedAt:new Date().toISOString()};
+ // Confirmed receipts are also counted per application source, so direct
+ // employer applications are reported separately from LinkedIn and Indeed.
+ const bySource=Object.fromEntries(APPLICATION_SOURCES.map(source=>[source,{confirmed:0,attempted:0,awaiting:0,blocked:0}]));
+ for(const job of jobs){const evidence=applicationEvidence(job),row=bySource[applicationSource(job)];for(const key of Object.keys(row))if(evidence[key])row[key]++;}
+ return {totals,bySource,applications:jobs.map(job=>({id:job.id,source:applicationSource(job),...applicationEvidence(job)})),checkedAt:new Date().toISOString()};
 }

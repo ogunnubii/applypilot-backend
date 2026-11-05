@@ -11,6 +11,58 @@
       if(host==='careers.deloitte.ca'&&/^\/job\/[^/]+\/\d+-en_US\/?$/.test(u.pathname))return 'deloitte';
     }catch{}return null;
   }
+  // Native job-board applications (LinkedIn Easy Apply, Indeed Apply). These are
+  // never ATS/custom forms: they run only in the applicant's own signed-in
+  // browser, and identity is the board's own job id, never a search page.
+  function nativeBoard(url){
+    try{const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443')return null;
+      if(u.hostname==='www.linkedin.com'&&/^\/jobs\/view\/\d{6,20}(?:\/apply)?\/?$/.test(u.pathname))return 'linkedin';
+      if(/^(?:www|[a-z]{2})\.indeed\.com$/.test(u.hostname)&&/^\/(?:m\/)?viewjob\/?$/.test(u.pathname)&&u.searchParams.getAll('jk').length===1&&/^[a-f0-9]{16}$/i.test(u.searchParams.get('jk')))return 'indeed';
+    }catch{}return null;
+  }
+  function nativeJobId(url){
+    const board=nativeBoard(url);if(!board)return null;const u=new URL(url);
+    return board==='linkedin'?u.pathname.match(/\/jobs\/view\/(\d+)/)[1]:u.searchParams.get('jk').toLowerCase();
+  }
+  // Indeed Apply moves the bound tab to smartapply.indeed.com, whose URL does
+  // not identify the job. It is only ever accepted as a continuation of one
+  // already-bound Indeed job (same tab or a tab it opened), never on its own.
+  function nativeContinuation(url){
+    try{const u=new URL(url);return u.protocol==='https:'&&!u.username&&!u.password&&(!u.port||u.port==='443')&&u.hostname==='smartapply.indeed.com'&&/^\/beta\/indeedapply\//.test(u.pathname)?'indeed-apply':null;}catch{return null;}
+  }
+  function continuationOf(url,jobUrl){
+    if(nativeBoard(jobUrl)!=='indeed'||!nativeContinuation(url))return false;
+    const jk=new URL(url).searchParams.getAll('jk');
+    return jk.length===0||jk.length===1&&jk[0].toLowerCase()===nativeJobId(jobUrl);
+  }
+  function boundApplication(url,jobUrl){return sameApplication(url,jobUrl)||continuationOf(url,jobUrl);}
+  // Board-level limits and verification walls. A limit is a pause signal for
+  // that board; verification always needs the applicant. Nothing is bypassed.
+  function nativeBlocker(value){
+    const text=String(value||'').slice(0,20000);
+    if(/\b(?:you(?:'|’)ve reached|you have reached) (?:the|your) (?:daily )?(?:easy apply )?(?:application )?limit\b|\bwe limit daily submissions\b|\btoo many (?:applications|requests)\b|\btry again (?:tomorrow|later)\b[^\n]{0,80}\bappl/i.test(text))return {kind:'rate-limit',message:'The job board reported an application limit. Applications on this board are paused; other boards can continue.'};
+    if(/\bverify you(?:'|’)?re (?:a )?human\b|\bverify you are human\b|\bsecurity (?:check|verification)\b|\badditional verification required\b|\bunusual activity\b|\blet(?:'|’)s do a quick security check\b|\bconfirm you(?:'|’)re not a robot\b/i.test(text))return {kind:'verification',message:'The job board is asking for a security verification. Complete it yourself; ApplyPilot never bypasses verification.'};
+    return null;
+  }
+  // An existing application shown before this run is never treated as ours,
+  // and it blocks a new attempt for review.
+  const nativeAlreadyApplied=value=>/(?:^|\n)\s*(?:applied (?:\d+|an?) (?:second|minute|hour|day|week|month)s? ago|you applied (?:on|to)\b|application (?:submitted|sent)\s*$|you(?:'|’)ve applied\b)/im.test(String(value||''));
+  const nativeKey=value=>String(value??'').normalize('NFKC').toLowerCase().replace(/&/g,' and ').replace(/[^\p{L}\p{N}]+/gu,' ').replace(/\b(?:inc|llc|ltd|limited|corp|corporation|co|plc|gmbh)\b/g,' ').replace(/\s+/g,' ').trim();
+  // Fresh, job-specific confirmation for native boards. LinkedIn names the
+  // employer in its confirmation; Indeed shows its receipt beside the job.
+  function nativeReceiptMatches(board,value,job={}){
+    const text=String(value||''),line=receipt(text);if(!line)return false;
+    const company=nativeKey(job.company),title=nativeKey(job.title);
+    if(board==='linkedin'){
+      const sent=line.match(/^your application was sent to (.{2,120}?)[.!]*$/i);
+      return !!sent&&company.length>=2&&nativeKey(sent[1])===company;
+    }
+    if(board==='indeed'||board==='indeed-apply'){
+      const page=nativeKey(text);
+      return (company.length>=2&&page.includes(company))||(title.length>=4&&page.includes(title));
+    }
+    return false;
+  }
   const normalize = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[?]/g,'').replace(/[*✱]/g, '').replace(/\s+/g, ' ').trim();
   function greenhouseIdentity(url){
     try{const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443')return null;
@@ -25,10 +77,13 @@
     try{const u=new URL(sender.url);return Number.isInteger(sender.frameId)&&sender.frameId>0&&/^\/embed\/job_app\/?$/.test(u.pathname)&&!!greenhouseIdentity(sender.url)&&sameApplication(sender.url,url)&&sameApplication(sender.tab?.url,url);}catch{return false;}
   }
   function supported(url) {
-    try { const u = new URL(url); return u.protocol === 'https:' && !u.username && !u.password && (!u.port || u.port === '443') && (domains.some(d => u.hostname === d || u.hostname.endsWith('.'+d))||customApplication(url)||u.hostname==='careers.trivago.com'&&!!greenhouseIdentity(url)); } catch { return false; }
+    try { const u = new URL(url); return u.protocol === 'https:' && !u.username && !u.password && (!u.port || u.port === '443') && (domains.some(d => u.hostname === d || u.hostname.endsWith('.'+d))||customApplication(url)||!!nativeBoard(url)||u.hostname==='careers.trivago.com'&&!!greenhouseIdentity(url)); } catch { return false; }
   }
   function identity(url) {
     const canonical=greenhouseIdentity(url);if(canonical)return canonical;
+    const board=nativeBoard(url);
+    if(board==='linkedin')return 'https://www.linkedin.com/jobs/view/'+nativeJobId(url);
+    if(board==='indeed')return 'https://www.indeed.com/viewjob?jk='+nativeJobId(url);
     const u = new URL(url); u.hash = '';
     const custom=customApplication(url);
     if(custom){u.hostname=u.hostname.replace(/^www\./,'');u.search='';if(custom==='icims')u.pathname=u.pathname.match(/^\/jobs\/\d+/)[0];}
@@ -60,6 +115,9 @@
     // Randstad's actual receipt uses "sent to". Require the affirmative sentence
     // on its own line, not a future instruction, quotation or pending message.
     // Callers still require a matching application and a recorded receipt event.
+    // LinkedIn Easy Apply confirmation names the employer on its own line.
+    const linkedin=(text.match(/(?:^|[\r\n])\s*(?:(?:Applicant verified|Browser extension observed): )?(Your application was sent to [^\r\n!?]{2,120}?[.!]*)\s*(?=[\r\n]|$)/i)||[])[1]||'';
+    if(linkedin&&!/\b(?:pending|not|awaiting|queued|failed)\b/i.test(linkedin))return linkedin;
     const sent=(text.match(/(?:^|[\r\n])\s*(?:(?:Applicant verified|Browser extension observed): )?(Your job application has been sent to [^\r\n.!?]{2,100}[.!])(?=\s|$)/i)||[])[1]||'';
     return /\b(?:pending|not|awaiting|queued|failed)\b/i.test(sent)?'':sent;
   };
@@ -206,5 +264,5 @@ function frenchApplication(job={}){
  return signals.filter(s=>text.includes(s)).length>=2;
 }
 
-  globalThis.ApplyPilotPolicy = Object.freeze({customApplication,submissionDeclaration,greenhouseIdentity,trustedFrame,frenchApplication,needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,savedOptionSelections,fieldKind,knownAnswer,optionMatches});
+  globalThis.ApplyPilotPolicy = Object.freeze({nativeBoard,nativeJobId,nativeContinuation,continuationOf,boundApplication,nativeBlocker,nativeAlreadyApplied,nativeReceiptMatches,customApplication,submissionDeclaration,greenhouseIdentity,trustedFrame,frenchApplication,needsInput,attentionOrder,employerPageIssue,domains,normalize,supported,identity,sameApplication,sensitive,receipt,savedAnswer,savedOptionSelections,fieldKind,knownAnswer,optionMatches});
 })();

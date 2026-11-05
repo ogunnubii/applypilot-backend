@@ -1,5 +1,69 @@
 # ApplyPilot
 
+## LinkedIn Easy Apply, Indeed Apply and direct employer sites (helper 0.7.0)
+
+ApplyPilot can apply to LinkedIn Easy Apply and Indeed Apply jobs in the applicant's
+own signed-in Chrome/Edge profile, alongside direct employer applications through the
+existing Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, BambooHR and
+Recruitee adapters. Add a job by its board link (`linkedin.com/jobs/view/<id>` or
+`indeed.com/viewjob?jk=<key>`); it is stored by the board's own job id, so tracking
+parameters and country subdomains never create a second job. Search-result pages are
+not accepted. Job boards are not scraped; discovery of direct employer jobs continues
+to use the existing employer boards and job funnel.
+
+- **Local browser only.** The hosted worker, hosted campaigns and hosted single-job
+  mode never open LinkedIn or Indeed. No board credentials reach the backend.
+- **Posting check first.** Before any form is opened the extension reads the bound job
+  page (title, company, location, workplace type, description, posted pay, posting age,
+  applicant count, recruiting badges) and the server assesses it deterministically:
+  Cloud/DevOps/SRE/Platform title; listed as Remote (hybrid, on-site or unknown are
+  skipped); the enabled structured scope must explicitly allow working from the saved
+  location (Thornhill is recognized as York Region, Ontario). "Remote" alone is not
+  treated as worldwide or as Canada, and a "work from anywhere" benefit is not
+  worldwide eligibility. With `allowEmploymentFallback:false` a Canadian engagement
+  needs explicit B2B/C2C/incorporated evidence. An optional scope field
+  `minimumAnnualCAD` (for example 60000) rejects only known CAD pay whose annual
+  maximum is below it; unknown or non-CAD pay is recorded as unknown and never
+  converted. External "Apply on company site" jobs are blocked with a request for the
+  direct employer link.
+- **Ranking.** Eligible checked postings are ordered by known pay (compared within one
+  currency; unknown pay after known pay), then the existing role-fit score, then
+  hiring-speed signals that cite their page text (posting age, applicant count,
+  "Actively recruiting"/"Urgently hiring"/multiple openings). These are ordering
+  points, never interview or hiring probabilities.
+- **Answers.** Saved profile facts and exact saved answers only. For LinkedIn and Indeed
+  jobs the packet disables AI assistance and the answer, research and drafting paths
+  return "save your answer" instead of generating one. Unknown required answers become
+  recorded blockers; other eligible jobs continue. An already-selected board resume is
+  reused instead of uploading another copy.
+- **Submission.** Automatic final Submit still requires the explicit automatic-submission
+  opt-in and the same durable reservation (`autonomous_attempts`), plus a fresh (≤24 h)
+  eligible posting check for this job. One attempt per job; uncertain outcomes are never
+  retried. LinkedIn's final review page is accepted only after this run verified every
+  earlier step. Only a fresh confirmation for this job counts: LinkedIn must name the
+  same employer ("Your application was sent to <company>"); Indeed's receipt must appear
+  in the bound Indeed Apply tab beside the job's title or company. An existing "Applied"
+  state blocks the job for review.
+- **Indeed Apply continuation.** smartapply.indeed.com does not identify the job, so it
+  is accepted only in the tab the bound Indeed job opened right after the extension's
+  own Apply click, and never if its `jk` names another job.
+- **Limits and verification.** CAPTCHA, sign-in, MFA and "verify you are human" pages
+  stop for the applicant; nothing is bypassed. A board-reported application limit pauses
+  that board for 12 hours while other boards continue. Automatic openings on each board
+  are spaced at least 2 minutes apart and capped at 25 per rolling 24 hours.
+- **Attribution and duplicates.** Each job records how it was found (`foundVia`:
+  `direct-discovery`, `job-funnel`, `linkedin`, `indeed`). `/api/operations` adds
+  `bySource` counts (`direct`, `linkedin`, `indeed`), so direct employer confirmations
+  are reported separately. The existing repeat guard blocks the same employer role across
+  sources (for example a LinkedIn posting and the employer's Greenhouse requisition).
+
+Fixture checks: `checks/native-board.test.js`, `checks/native-easy-apply.test.cjs`,
+`checks/native-background.test.cjs` and `checks/native-board-api.test.js`. They use
+synthetic jsdom pages, fixture Chrome APIs and an isolated SQLite database; no job
+board or employer is contacted and no application is sent. Live LinkedIn/Indeed markup
+changes frequently; selectors and receipts need supervised validation before relying
+on unattended runs.
+
 ## Required cover letters (helper 0.6.37)
 
 When an active application requires a clearly identified cover letter, ApplyPilot

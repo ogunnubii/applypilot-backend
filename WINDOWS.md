@@ -1,28 +1,29 @@
 # ApplyPilot on your Windows PC
 
-ApplyPilot runs on your own computer (`http://localhost:8080`, reachable only from this PC) and applies through your own signed-in Chrome or Edge with the ApplyPilot helper extension. No AI service is called per application: answers come from your saved profile facts and saved answers, and anything unknown stops that job as a blocker while other eligible jobs continue.
+ApplyPilot runs on your own computer (`http://localhost:8080` by default, reachable only from this PC) and applies through your own signed-in Chrome or Edge with the ApplyPilot helper extension. No AI service is called per application: answers come from your saved profile facts and saved answers, and anything unknown stops that job as a blocker while other eligible jobs continue.
 
 ## 1. One-time setup
 
 1. Install **Node.js 24 or newer** from https://nodejs.org (LTS installer, defaults are fine).
 2. Download this repository (green **Code → Download ZIP** on GitHub, or `git clone`) to a folder such as `C:\ApplyPilot`.
 3. Double-click **`ApplyPilot.cmd`**. The first run installs dependencies, creates `.env.local` with a private registration code (shown once, also saved in that file), builds the helper package and opens `http://localhost:8080/setup`.
+   If port 8080 is already used by another program (for example a Docker service), ApplyPilot leaves that program alone and tells you. Start it on a free port instead: `ApplyPilot.cmd start -Port 8088`. The port is saved in `.env.local`, so later double-clicks reuse it.
 4. Create your local account with that registration code.
 5. Optional: run `ApplyPilot.cmd shortcut` to put an ApplyPilot icon on your desktop.
 
-## 2. Install the browser helper (0.7.1)
+## 2. Install the browser helper (0.7.2)
 
 1. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
 2. Choose **Load unpacked** and select the `extension` folder inside the ApplyPilot folder. (`web\applypilot-local.zip` is the same helper packaged for sharing; unzip it first if you use it instead.)
 3. Approve the site access Chrome/Edge asks for (employer application sites, `linkedin.com/jobs`, `indeed.com`).
-4. Open the helper's popup and choose **This PC (localhost:8080)** as the server.
+4. Open the helper's popup, choose **This PC (localhost)** and set **Local port** to the port ApplyPilot runs on (8080 unless you used `-Port`).
 5. Stay signed in to LinkedIn and Indeed in this same browser profile. ApplyPilot never signs in for you.
 
 After updating ApplyPilot, run `ApplyPilot.cmd restart`, then press **Reload** on the helper in `chrome://extensions`.
 
 ## 3. Set up your profile
 
-On the dashboard (`http://localhost:8080/assistant`):
+On the dashboard (`http://localhost:<port>/assistant`, for example `http://localhost:8088/assistant`):
 
 1. **Profile**: name, email, phone, location (for example Thornhill, Ontario, Canada), resume, consent, and **My Windows browser** as the execution mode.
 2. **Search scope**: roles (Cloud, DevOps, SRE, Platform), remote only, the places you may work from (Canada / Thornhill), work authorization you actually hold, B2B/C2C preference with employee fallback off, and `minimumAnnualCAD` (for example 60000).
@@ -35,6 +36,7 @@ On the dashboard (`http://localhost:8080/assistant`):
 * **Start ApplyPilot / Stop ApplyPilot** on the dashboard (or Start/Stop in the helper popup) is one remembered switch. When running, it discovers jobs, queues eligible ones and applies one at a time. When stopped, there is no discovery, no new queueing and no new applications, even after a restart. An application already open in your browser is left as it is.
 * Leave the dashboard tab open; the helper uses it to talk to the local server.
 * `ApplyPilot.cmd status`, `ApplyPilot.cmd stop`, `ApplyPilot.cmd restart` control the program itself. The log is at `data\applypilot.log`.
+* Change the port any time with `ApplyPilot.cmd restart -Port <port>` (1024–65535), then set the same port in the helper popup. The helper trusts and talks only to that one localhost port.
 
 ## Where jobs come from
 

@@ -7,7 +7,7 @@ import {importBundle} from './profile-import.js';
 const [file,email]=process.argv.slice(2);
 if(!file){console.error('Usage: import-local.js <file.json> [account-email]');process.exit(2);}
 const users=email?db.prepare('SELECT id,email FROM users WHERE lower(email)=lower(?)').all(email):db.prepare('SELECT id,email FROM users').all();
-if(users.length!==1){console.error(users.length?'Several accounts exist; pass the account email.':'No local account yet. Open http://localhost:8080/setup first.');process.exit(2);}
+if(users.length!==1){console.error(users.length?'Several accounts exist; pass the account email.':'No local account yet. Open '+(process.env.PUBLIC_ORIGIN||'http://localhost:8080')+'/setup first.');process.exit(2);}
 try{
  const result=importBundle(db,users[0].id,JSON.parse(await readFile(file,'utf8')));
  const h=result.history;

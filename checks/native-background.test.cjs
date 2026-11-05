@@ -98,3 +98,23 @@ test('board import is accepted only from a top-level LinkedIn/Indeed results pag
   assert.equal((await h.send('board-import',{board,jobs:[{url:LI}]},sender)).ok,false,sender.url);
  assert.equal((await h.send('board-import',{board:'indeed',jobs:[{url:IN}]},{tab:{id:9},frameId:0,url:'https://ca.indeed.com/jobs?q=sre'})).ok,true);
 });
+
+test('local port is configurable; only that localhost origin is trusted and used',async()=>{
+ const h=harness([]);
+ h.shared.tabs.push({id:30,url:'http://localhost:8088/assistant'});
+ const popup={url:'chrome-extension://fixture/popup.html'};
+ assert.equal((await h.send('environment',{value:'local',port:80},popup)).ok,false,'privileged ports rejected');
+ assert.equal((await h.send('environment',{value:'local',port:70000},popup)).ok,false);
+ assert.equal((await h.send('environment',{value:'local',port:8088},popup)).ok,true);
+ assert.equal(h.shared.store.environment,'local');assert.equal(h.shared.store.localPort,8088);
+ const dash=url=>({tab:{id:30},frameId:0,url});
+ assert.equal((await h.send('dashboard-status',{},dash('http://localhost:8088/assistant'))).ok,true);
+ // Another local service (for example jjworks on 8080) is not trusted.
+ assert.equal((await h.send('dashboard-status',{},dash('http://localhost:8080/'))).ok,false);
+ assert.equal((await h.send('dashboard-status',{},dash('http://localhost:8088/assistant'.replace('8088','9999')))).ok,false);
+ // The dashboard link and API calls use the configured port.
+ await h.send('dashboard',{},popup);
+ assert.equal(h.shared.tabs.at(-1).url,'http://localhost:8088/assistant');
+ // Hosted dashboards stay trusted.
+ assert.equal((await h.send('dashboard-status',{},dash('https://applypilot-jobs.netlify.app/automate.html'))).ok,true);
+});

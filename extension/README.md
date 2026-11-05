@@ -42,7 +42,7 @@ Version 0.6.19 recognizes combined first-and-last-name prompts from your saved f
 
 1. Start the local backend using `../start-local.ps1 -Install`, or deploy the updated hosted backend/dashboard.
 2. In your usual signed-in browser profile, open `chrome://extensions` or `edge://extensions`, enable Developer mode, click Load unpacked, and select this directory.
-3. Open the extension popup. Select This PC for localhost:8080 or Hosted ApplyPilot for the existing Netlify/Railway service.
+3. Open the extension popup. Select This PC (localhost) and set the local port ApplyPilot runs on (default 8080, for example 8088), or Hosted ApplyPilot for the existing Netlify/Railway service.
 4. Open ApplyPilot and sign in. Complete the profile/resume at the backend's `/setup` page and select My Windows browser. Keep the signed-in dashboard tab open.
 5. Automatic mode is on by default. Every 30 seconds it picks up explicitly queued jobs for profiles in My Windows browser mode. Found jobs stay unstarted until queued. Signed-in Railway, Cloudflare Pages and legacy Netlify dashboards can sync. Open manually is an optional override; Continue automatically resumes a selected blocked application. Stop automation persists across restarts.
 

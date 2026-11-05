@@ -1,7 +1,22 @@
 importScripts('policy.js','ready-forms.js');
 const P=globalThis.ApplyPilotPolicy;
-const environments={hosted:{dashboard:'https://marvelous-vitality-production-c2d8.up.railway.app/',pagesDashboard:'https://applypilot-jobs.pages.dev/',legacyDashboard:'https://applypilot-jobs.netlify.app/',api:'https://marvelous-vitality-production-c2d8.up.railway.app/api'},local:{dashboard:'http://localhost:8080/assistant',api:'http://localhost:8080/api'}};
-const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','error','automaticDefault','userPaused'])});
+const environments={hosted:{dashboard:'https://marvelous-vitality-production-c2d8.up.railway.app/',pagesDashboard:'https://applypilot-jobs.pages.dev/',legacyDashboard:'https://applypilot-jobs.netlify.app/',api:'https://marvelous-vitality-production-c2d8.up.railway.app/api'},local:null};
+// The local server's port is configurable (default 8080). Only that one
+// localhost origin is trusted and used; other local services are ignored.
+const DEFAULT_LOCAL_PORT=8080;
+const localPortOf=state=>Number.isInteger(state?.localPort)&&state.localPort>=1024&&state.localPort<=65535?state.localPort:DEFAULT_LOCAL_PORT;
+function environmentFor(state){
+ if(state?.environment!=='local')return environments.hosted;
+ const origin='http://localhost:'+localPortOf(state);
+ return {dashboard:origin+'/assistant',api:origin+'/api',origin};
+}
+const HOSTED_DASHBOARDS=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app'];
+async function trustedDashboard(sender){
+ if(!sender.tab||sender.frameId!==0)return false;
+ let origin;try{origin=new URL(sender.url).origin;}catch{return false;}
+ return HOSTED_DASHBOARDS.includes(origin)||origin===environmentFor(await read()).origin;
+}
+const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','localPort','error','automaticDefault','userPaused'])});
 let responsiveDashboardId;
 // LinkedIn/Indeed pacing for automatic openings. Conservative fixed limits;
 // a board-reported limit pauses that board far longer (see site-error).
@@ -12,7 +27,7 @@ const siteKey=url=>{try{return P.nativeBoard?.(url)||new URL(url).hostname;}catc
 const recordTabId=r=>Number.isInteger(r?.flowTabId)?r.flowTabId:r?.tabId;
 const tabHolds=(tab,r)=>!!tab&&(tab.id===r.flowTabId?P.continuationOf?.(tab.url,r.url):P.sameApplication(tab.url,r.url));
 async function api(path,method='GET',data){
- const state=await read(),env=environments[state.environment]||environments.hosted;
+ const state=await read(),env=environmentFor(state);
  const origins=[env.dashboard,env.pagesDashboard,env.legacyDashboard].filter(Boolean).map(url=>new URL(url).origin+'/*');
  const tabs=(await chrome.tabs.query({url:origins})).sort((a,b)=>Number(!!b.active)-Number(!!a.active)||Number(b.id===responsiveDashboardId)-Number(a.id===responsiveDashboardId)||(b.lastAccessed||0)-(a.lastAccessed||0));
  let lastError;
@@ -263,18 +278,15 @@ async function handle(m,sender){
   return api('/jobs/board-import','POST',{board,jobs});
  }
  if(m.action==='dashboard-status'){
-  const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
-  if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
+  if(!await trustedDashboard(sender))throw Error('Untrusted dashboard.');
   const s=await read();return {version:chrome.runtime.getManifest().version,enabled:!!s.enabled,queued:s.queue.length,error:s.error||''};
  }
  if(m.action==='open-from-dashboard'){
-  const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
-  if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
+  if(!await trustedDashboard(sender))throw Error('Untrusted dashboard.');
   return openJob(m.id,false,true);
  }
  if(m.action==='resume-existing'){
-  const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
-  if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
+  if(!await trustedDashboard(sender))throw Error('Untrusted dashboard.');
   const s=await read(),record=s.records[m.id];
   if(!record||record.attempted||record.phase==='submitted')throw Error('This application cannot automatically restart. Check its employer receipt.');
   if(Object.values(s.records).some(r=>r.id!==m.id&&r.auto&&['ready','verifying'].includes(r.phase)))throw Error('Another application is running. Your answers are saved; resume this one after it finishes.');
@@ -283,8 +295,7 @@ async function handle(m,sender){
   return openJob(m.id,true);
  }
  if(m.action==='focus-existing'){
-  const allowed=['https://marvelous-vitality-production-c2d8.up.railway.app','https://applypilot-jobs.pages.dev','https://applypilot-jobs.netlify.app','http://localhost:8080'];
-  if(!sender.tab||sender.frameId!==0||!allowed.includes(new URL(sender.url).origin))throw Error('Untrusted dashboard.');
+  if(!await trustedDashboard(sender))throw Error('Untrusted dashboard.');
   const s=await read(),record=s.records[m.id];
   if(!Number.isInteger(recordTabId(record)))throw Error('The original employer tab is no longer open. Open ApplyPilot Local to review this application before restarting it.');
   const tab=await chrome.tabs.get(recordTabId(record)).catch(()=>null);
@@ -305,9 +316,17 @@ async function handle(m,sender){
    const state=await read(),record=state.records[m.id];if(record){record.attempted=true;record.phase='submitted';record.auto=false;record.siteRetryAt=0;record.pendingClicks={};}
    await chrome.storage.local.set({records:state.records,queue:state.queue.filter(id=>id!==m.id)});return result;
   }
-  if(m.action==='funnel'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard+'?view=funnel'});}
-  if(m.action==='dashboard'){const s=await read();return chrome.tabs.create({url:(environments[s.environment]||environments.hosted).dashboard});}
-  if(m.action==='environment'){if(!environments[m.value])throw Error('Unknown environment');const s=await read();if(Object.keys(s.records).length)throw Error('Use a separate browser profile for another server while applications are tracked');await chrome.storage.local.set({environment:m.value,enabled:false,queue:[]});return {};}
+  if(m.action==='funnel'){const s=await read();return chrome.tabs.create({url:environmentFor(s).dashboard+'?view=funnel'});}
+  if(m.action==='dashboard'){const s=await read();return chrome.tabs.create({url:environmentFor(s).dashboard});}
+  if(m.action==='environment'){
+   if(!['hosted','local'].includes(m.value))throw Error('Unknown environment');
+   const port=m.port===undefined?undefined:Number(m.port);
+   if(port!==undefined&&!(Number.isInteger(port)&&port>=1024&&port<=65535))throw Error('Use a local port between 1024 and 65535.');
+   const s=await read(),next={environment:m.value,localPort:port??localPortOf(s)};
+   if(next.environment===s.environment&&(next.environment!=='local'||next.localPort===localPortOf(s)))return {};
+   if(Object.keys(s.records).length)throw Error('Use a separate browser profile for another server while applications are tracked');
+   await chrome.storage.local.set({...next,enabled:false,queue:[]});return {};
+  }
   if(m.action==='stop'){const s=await read();for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;}await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});await api('/autopilot','PUT',{running:false,source:'extension'}).catch(()=>{});return {};}
   if(m.action==='start'){
    await api('/autopilot','PUT',{running:true,source:'extension'}).catch(()=>{});

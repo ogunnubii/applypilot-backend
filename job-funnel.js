@@ -86,7 +86,7 @@ export async function processFunnel(db,{resolve=resolveFunnelPosting,limit=5,clo
    const prefs=batchPreferences(db,item.user_id);if(prefs)await refreshSalaryRates();
    const scope=currentSearchScope(db,{user_id:item.user_id,applicant_id:p.id});
    const intent=scope?scopeIntent(scope):parseIntent(prefs?supportSearchInstruction(db,item.user_id,p.id):WORLDWIDE_TECH_INSTRUCTION);
-   const metadata=jobIntelligence(job,{...intent,minimumCAD:prefs?.minimum_cad},p.focus);
+   const metadata={...jobIntelligence(job,{...intent,minimumCAD:prefs?.minimum_cad},p.focus),foundVia:'job-funnel'};
    if(prefs&&(!metadata.supportCareer?.strong||!metadata.salaryTarget?.eligible)){finish('excluded',metadata.salaryTarget?.reason||'Outside support-career preferences');continue;}
    if(!metadata.matched){finish('excluded','Role is outside the requested technology and IT categories.');continue;}
    if(!metadata.eligibility.eligible){finish('review',metadata.eligibility.reason);continue;}

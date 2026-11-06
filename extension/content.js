@@ -33,6 +33,11 @@ function descriptors(e,metadata=true){
 }
 const label=e=>descriptors(e)[0];
 const protectedField=e=>descriptors(e).some(protectedQuestion)||protectedQuestion(referencedText(e,'aria-describedby'));
+function controlHasValue(e){
+ if(!e)return false;if(e.type==='checkbox'||e.type==='radio')return !!e.checked;if(e.type==='file')return !!e.files?.length;
+ if(e.isContentEditable)return !!compact(e.textContent);if(e.tagName==='SELECT')return [...e.selectedOptions].some(o=>o.value&&!o.disabled);
+ return typeof e.value==='string'&&!!e.value.trim();
+}
 function ambiguousHelp(e,fields=controls()){
  const question=normalizeDescriptor(label(e)),help=referencedText(e,'aria-describedby');
  if(help&&/^(?:additional (?:details|information)|details|please explain|please describe|answer)$/.test(question))return true;
@@ -43,7 +48,75 @@ async function send(action,data={}){const r=await chrome.runtime.sendMessage({ac
 async function recordAssistance(){if(!started||assistanceSent)return;try{await send('assistance');assistanceSent=true;}catch{/* The boundary remains unknown if tracking cannot sync. */}}
 function bodyText(){return [...document.body.childNodes].filter(e=>e.nodeType===3||e.nodeType===1&&e!==bar&&!e.matches('script,style,noscript,template')&&visible(e)).map(e=>e.nodeType===3?e.textContent:e.innerText||'').join('\n');}
 function siteIssue(){return P.employerPageIssue({title:document.title,text:bodyText(),hasForm:controls().length>0||!!document.querySelector('form')});}
-function receipt(){return P.receipt(bodyText());}
+const nativeSite=()=>P.nativeBoard?.(location.href)||P.nativeContinuation?.(location.href)||null;
+// On LinkedIn/Indeed a generic confirmation is not enough: it must belong to this job.
+function receipt(){const text=bodyText(),line=P.receipt(text);if(!line)return '';const site=nativeSite();if(site&&!P.nativeReceiptMatches(site,text,packet?.job||{}))return '';return line;}
+const textOf=selector=>{for(const e of document.querySelectorAll(selector))if(visible(e)&&compact(e.innerText||e.textContent))return compact(e.innerText||e.textContent);return '';};
+function easyApplyButtons(){
+ const found=[...document.querySelectorAll('button')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true'&&/^easy apply$/i.test(buttonName(e)));
+ // LinkedIn repeats the same button in its sticky header; distinct targets are ambiguous.
+ return new Set(found.map(e=>e.getAttribute('aria-label')||'')).size<=1?found:[];
+}
+function indeedApplyButtons(){
+ // Indeed Apply is a button, or (on regional sites such as ca.indeed.com) an
+ // anchor to smartapply.indeed.com. An anchor counts only when it continues
+ // this exact job (no jk, or the page's jk); another job's link never does.
+ const smartApply=e=>e.tagName==='A'&&!!e.href&&P.nativeContinuation?.(e.href)&&P.continuationOf?.(e.href,location.href);
+ const found=[...document.querySelectorAll('#indeedApplyButton,button,[role="button"],a[href]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true'&&(e.tagName==='A'?smartApply(e)&&(e.id==='indeedApplyButton'||/^apply now\b/i.test(buttonName(e))):e.id==='indeedApplyButton'||/^apply now$/i.test(buttonName(e))));
+ // A button wrapping its own anchor is one control.
+ return [...new Set(found)].filter((e,_,all)=>!all.some(o=>o!==e&&o.contains(e)));
+}
+const externalApply=site=>[...document.querySelectorAll('a,button,[role="button"]')].some(e=>!bar?.contains(e)&&visible(e)&&(site==='linkedin'?/^apply$/i.test(buttonName(e))&&/company website|on company site|external/i.test(e.getAttribute('aria-label')||e.getAttribute('title')||'apply on company website'):/^apply on company site$/i.test(buttonName(e))));
+// A read-only snapshot of the bound job page; nothing is clicked or filled.
+function postingSnapshot(){
+ const site=nativeSite(),top=textOf('.job-details-jobs-unified-top-card__container--two-pane,.jobs-unified-top-card,.job-details-jobs-unified-top-card__primary-description-container,[data-testid="jobsearch-JobInfoHeader"],.jobsearch-JobInfoHeader-title-container')||compact(bodyText()).slice(0,1500);
+ const title=textOf(site==='linkedin'?'.job-details-jobs-unified-top-card__job-title h1,.jobs-unified-top-card__job-title,h1':'[data-testid="jobsearch-JobInfoHeader-title"],.jobsearch-JobInfoHeader-title,h1').replace(/\s*-\s*job post$/i,'');
+ const company=textOf(site==='linkedin'?'.job-details-jobs-unified-top-card__company-name,.jobs-unified-top-card__company-name,[data-company-name="true"]':'[data-testid="inlineHeader-companyName"],[data-company-name="true"],.jobsearch-CompanyInfoContainer a');
+ const where=textOf(site==='linkedin'?'[data-testid="job-location"],.job-details-jobs-unified-top-card__bullet,.job-details-jobs-unified-top-card__primary-description-container .tvm__text:first-child,.job-details-jobs-unified-top-card__tertiary-description-container .tvm__text:first-child':'[data-testid="inlineHeader-companyLocation"],[data-testid="job-location"],#jobLocationText');
+ const pills=[...document.querySelectorAll('button,span,li,div')].filter(e=>!bar?.contains(e)&&visible(e)&&e.children.length<=2).map(e=>compact(e.innerText||e.textContent)).filter(t=>t&&t.length<=40);
+ // LinkedIn's current header shows workplace and job type as preference pills.
+ // Read them from the header so "Hybrid" in a similar-jobs list cannot interfere.
+ const header=site==='linkedin'?[...document.querySelectorAll('.job-details-fit-level-preferences,.job-details-preferences-and-skills,.job-details-jobs-unified-top-card__job-insight')].filter(visible):[];
+ const headerPills=header.flatMap(h=>[...h.querySelectorAll('button,span,li,strong')].map(e=>compact(e.innerText||e.textContent)).filter(t=>t&&t.length<=40));
+ const places=new Set((headerPills.some(t=>/^(?:remote|hybrid|on-?site)$/i.test(t))?headerPills:pills).map(t=>t.toLowerCase()).filter(t=>['remote','hybrid','on-site','onsite'].includes(t)).map(t=>t==='onsite'?'on-site':t));
+ const workplace=/\bhybrid\b/i.test(where)?'hybrid':/\bon-?site\b|\bin-person\b/i.test(where)?'on-site':places.size===1?[...places][0]:/\bremote\b/i.test(where)&&!places.size?'remote':'';
+ const salaryText=pills.find(t=>/\$\s?[\d,.]+\s*k?[^$]{0,24}(?:-|–|—|to)\s*\$\s?[\d,.]+\s*k?\s*(?:\/\s*|\s+(?:a|an|per)\s+)(?:yr|year|hr|hour|mo|month|week|day)\b/i.test(t))||'';
+ const description=textOf(site==='linkedin'?'#job-details,.jobs-description__content,.jobs-box__html-content':'#jobDescriptionText,[data-testid="jobDescriptionText"]').slice(0,24000);
+ const signals=pills.filter(t=>/actively (?:recruiting|hiring)|urgently hiring|hiring multiple|early applicant|typically responds|responds within/i.test(t)).slice(0,10);
+ const nativeApply=site==='linkedin'?easyApplyButtons().length>0:indeedApplyButtons().length===1;
+ return {url:location.href,title,company,location:where,workplace,description,salaryText,
+  postedText:(top.match(/(?:reposted\s+|posted\s+)?(?:(?<!\d)\d+\+?\s+(?:minute|hour|day|week|month)s?\s+ago|just posted|today)\b/i)||[''])[0],
+  applicantsText:(top.match(/(?:over\s+)?(?<!\d)\d[\d,]*\+?\s+(?:applicants|people clicked apply)/i)||[''])[0],
+  signals,nativeApply,external:!nativeApply&&externalApply(site)};
+}
+let postingChecked=false,nativeStepsVerified=0,stepsAdvanced=0;
+// Bounded multi-step progression: a form that keeps offering Next is stopped for review.
+const MAX_FORM_STEPS=12;
+// LinkedIn/Indeed end with a read-only review page. It is accepted as final
+// only after this run verified every earlier step and the page is open in the
+// bound application (modal or Indeed Apply).
+const nativeFormOpen=()=>nativeSite()==='linkedin'&&!!applicationRoot()||nativeSite()==='indeed-apply';
+const nativeReviewOnly=()=>nativeFormOpen()&&nativeStepsVerified>0&&[...(applicationRoot()?.querySelectorAll('h1,h2,h3,h4,[role="heading"]')||[])].some(e=>visible(e)&&/^review your application$/i.test(compact(e.textContent)));
+// A challenge, sign-in or board limit visible right now. Always read live,
+// never from an earlier report.
+function liveChallenge(){
+ const native=nativeSite()?P.nativeBlocker(bodyText()):null;if(native)return native;
+ if([...document.querySelectorAll('iframe[src*="captcha"],iframe[title*="challenge" i],.g-recaptcha,.h-captcha,[data-sitekey]')].some(visible))return {kind:'verification',message:'CAPTCHA requires you'};
+ return null;
+}
+async function checkNativePosting(){
+ const site=nativeSite();if(postingChecked||attempted||!['linkedin','indeed'].includes(site))return true;
+ // A verification page is not the posting: report it, never assess it.
+ const challenge=liveChallenge();
+ if(challenge){if(!bar)mount();started=true;if(challenge.kind==='rate-limit'){stopped=true;clearInterval(timer);await send('site-error',{code:429,native:true,empty:false,initial:false});note.textContent=challenge.message;return false;}await report(challenge.message,[],true);return false;}
+ const result=await send('posting',postingSnapshot());postingChecked=result.eligible===true;
+ if(result.eligible===true)return true;
+ if(!bar)mount();started=true;await report(result.blocker||'This posting is outside your saved scope.',[],true);return false;
+}
+function nativeResumeSelected(){
+ const root=applicationRoot();if(!root)return false;
+ return [...root.querySelectorAll('input[type="radio"]:checked,[aria-checked="true"],[aria-selected="true"]')].some(e=>{let n=e;for(let i=0;i<5&&n;i++,n=n.parentElement)if(/\bresume\b|\.(?:pdf|docx?)\b/i.test(n.textContent||''))return true;return false;});
+}
 function setValue(e,value){
  if(e.maxLength>=0&&String(value).length>e.maxLength){fieldErrors.push(label(e)+': saved answer exceeds the employer’s character limit.');return false;}
  if(e.matches?.('[contenteditable="true"]')){e.textContent=String(value);e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:String(value)}));e.dispatchEvent(new Event('change',{bubbles:true}));return true;}
@@ -183,6 +256,10 @@ function mount(){
  const saving=document.createElement('small');saving.id='applypilot-answer-save-status';saving.setAttribute('role','status');saving.textContent='Answers save automatically as you type.';bar.append(saving);
 }
 function applicationRoot(){
+ const board=nativeSite();
+ if(board==='linkedin')return [...document.querySelectorAll('[role="dialog"]')].find(e=>visible(e)&&(e.matches('.jobs-easy-apply-modal,[data-test-modal-id="easy-apply-modal"]')||!!e.querySelector('.jobs-easy-apply-content,.jobs-easy-apply-modal__content')||/^apply to\b/i.test(compact(e.querySelector('h1,h2,h3')?.textContent))))||null;
+ if(board==='indeed')return null; // the job page itself is not the application form
+ if(board==='indeed-apply')return document.querySelector('main')||document;
  const site=P.customApplication?.(location.href);
  if(site==='randstad')return document.querySelector('#applicationForm');
  if(site==='jfrog')return document.querySelector('#job-form-2');
@@ -210,8 +287,11 @@ function review(){
  const fields=controls(),required=fields.filter(isRequired),captcha=[...document.querySelectorAll('iframe[src*="captcha"],iframe[title*="challenge" i],.g-recaptcha,.h-captcha,[data-sitekey]')].some(visible);
  const login=fields.some(e=>e.type==='password'||e.autocomplete==='one-time-code'||/\b(verification code|authentication code|one.time code)\b/i.test(label(e)));
  const sensitive=required.some(protectedField),custom=required.some(e=>['combobox','checkbox','radio'].includes(controlRole(e))&&!controlComplete(e,fields));
- const missing=[...new Set(fields.filter(e=>(isRequired(e)||ambiguousHelp(e,fields)||nativeExpected.has(e)||multiExpected.has(e)||e.getAttribute('aria-invalid')==='true'||e.willValidate&&e.validity?.valid===false)&&!controlComplete(e,fields)).map(label))];
- const ambiguous=fields.filter(e=>ambiguousHelp(e,fields));
+ // An optional field is never a blocker: unknown optional answers stay blank.
+ // Ambiguous wording matters only on a required field or one already holding a value.
+ const optionalBlank=e=>!isRequired(e)&&!nativeExpected.has(e)&&!multiExpected.has(e)&&!controlHasValue(e);
+ const missing=[...new Set(fields.filter(e=>(isRequired(e)||ambiguousHelp(e,fields)&&!optionalBlank(e)||nativeExpected.has(e)||multiExpected.has(e)||e.getAttribute('aria-invalid')==='true'||e.willValidate&&e.validity?.valid===false)&&!controlComplete(e,fields)).map(label))];
+ const ambiguous=fields.filter(e=>ambiguousHelp(e,fields)&&!optionalBlank(e));
  const errors=[...document.querySelectorAll('[aria-invalid="true"],[role="alert"]')].filter(visible).filter(e=>e.getAttribute('aria-invalid')==='true'||/required|invalid|error/i.test(e.innerText||''));
  const embedded=[...document.querySelectorAll('iframe')].filter(visible).some(e=>!/captcha|challenge/i.test(e.src)&&e.getBoundingClientRect().height>150);
  const pending=[...(applicationRoot()?.querySelectorAll('form[aria-busy="true"],[role="form"][aria-busy="true"],input[aria-busy="true"],.application-question [aria-busy="true"],.field-wrapper [aria-busy="true"],.ashby-application-form-field-entry [aria-busy="true"],form [role="progressbar"],form progress')||[])].some(e=>visible(e)&&(e.tagName!=='PROGRESS'||!e.hasAttribute('value')||e.value<e.max));
@@ -255,7 +335,7 @@ async function fillPass(){
  for(const group of groups.values()){if(group.some(e=>e.checked))continue;const a=answer(group[0]);if(a===null)continue;const match=group.filter(e=>P.optionMatches(label(group[0]),optionText(e),a,packet.profile));if(match.length===1){match[0].click();if(match[0].checked)count++;}}
  count+=await fillRoleRadios(fields);
  const files=[...(applicationRoot()?.querySelectorAll('input[type="file"]')||[])].filter(e=>controlVisible(e)&&!e.disabled&&!e.matches(':disabled')&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
- if(files.length===1&&!files[0].files.length&&packet.resume?.base64){const r=packet.resume,mime=/\.pdf$/i.test(r.name)?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document';if(files[0].accept&&!files[0].accept.split(',').some(type=>{type=type.trim().toLowerCase();return type.startsWith('.')?r.name.toLowerCase().endsWith(type):type===mime||type==='application/*'||type==='*/*';})){fieldErrors.push(label(files[0])+': saved resume format is not accepted.');return count;}const bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0)),dt=new DataTransfer();dt.items.add(new File([bytes],r.name,{type:mime}));files[0].files=dt.files;files[0].dispatchEvent(new Event('input',{bubbles:true}));files[0].dispatchEvent(new Event('change',{bubbles:true}));await pause(60);if(files[0].files?.length)count++;else fieldErrors.push(label(files[0])+': employer did not retain the resume attachment.');}
+ if(files.length===1&&!files[0].files.length&&packet.resume?.base64&&!(nativeSite()&&nativeResumeSelected())){const r=packet.resume,mime=/\.pdf$/i.test(r.name)?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document';if(files[0].accept&&!files[0].accept.split(',').some(type=>{type=type.trim().toLowerCase();return type.startsWith('.')?r.name.toLowerCase().endsWith(type):type===mime||type==='application/*'||type==='*/*';})){fieldErrors.push(label(files[0])+': saved resume format is not accepted.');return count;}const bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0)),dt=new DataTransfer();dt.items.add(new File([bytes],r.name,{type:mime}));files[0].files=dt.files;files[0].dispatchEvent(new Event('input',{bubbles:true}));files[0].dispatchEvent(new Event('change',{bubbles:true}));await pause(60);if(files[0].files?.length)count++;else fieldErrors.push(label(files[0])+': employer did not retain the resume attachment.');}
  count+=await fillCoverLetters();
  if(count)note.textContent=count+' additional fields filled.';if(count)await send('progress',{fields:[],message:'Filled '+count+' fields on the employer form.',blocked:false,filled:count});return count;
 }
@@ -266,6 +346,8 @@ async function prepareMissingAnswers(){
  for(const e of controls()){
   const fields=controls(),q=label(e),key=norm(q);
   if(isCoverLetterField(e))continue;
+  // Optional questions are never drafted: unknown optional answers stay blank.
+  if(!isRequired(e))continue;
   if(prepared>=12)break;
   const dropdown=e.tagName==='SELECT'||controlRole(e)==='combobox';
   if(attempted||!visible(e)||e.maxLength===0||controlComplete(e,fields)||protectedField(e)||ambiguousHelp(e,fields)||!dropdown&&answer(e)!==null||e.multiple||isCustomMulti(e)||q==='Required field'||q.length<3||q.length>4000||['file','password','checkbox','hidden','submit'].includes(e.type)||e.type==='button'&&!dropdown||controlRole(e)==='checkbox')continue;
@@ -314,14 +396,27 @@ async function fillWithFacts(){
  }
  return total;
 }
-async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked,progress:formProgress(),readyForSubmit:blocked&&fields.length===0&&readyForMySubmit()});if(blocked)await updateAttentionPosition();}
+async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}
+ // The exact blocker is persisted once; an identical repeat is not re-sent.
+ const reportKey=JSON.stringify([location.href,reason,[...fields].sort(),blocked]);if(blocked&&reportKey===lastBlockedReport)return;lastBlockedReport=blocked?reportKey:'';
+ await send('progress',{fields,message:reason,blocked,step:stepsAdvanced+1,progress:formProgress(),readyForSubmit:blocked&&fields.length===0&&readyForMySubmit()});if(blocked)await updateAttentionPosition();}
 function signature(){return location.href+'|'+controls().map(e=>label(e)+':'+e.type+':'+controlRole(e)).join('|')+'|'+buttons().map(e=>buttonName(e)).join('|');}
-function buttons(){const root=P.customApplication?.(location.href)?applicationRoot():document;return [...(root?.querySelectorAll('button,input[type="submit"],[role="button"]')||[])].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');}
+function buttons(){const root=P.customApplication?.(location.href)||nativeSite()?applicationRoot():document;return [...(root?.querySelectorAll('button,input[type="submit"],[role="button"]')||[])].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');}
 const buttonName=e=>compact(e.innerText||e.value||e.getAttribute('aria-label'));
 const isSubmitAction=e=>/^(?:submit(?: my| your| the)?(?: application)?|send(?: my| the)? application|complete application)$/i.test(buttonName(e))||!!P.customApplication?.(location.href)&&hasApplicationFields()&&/^(?:apply|apply now)$/i.test(buttonName(e));
-const isNextAction=e=>/^(?:next(?: step)?|continue(?: application)?|save\s*(?:&|and)\s*continue|save and next|review(?: application)?|proceed)$/i.test(buttonName(e));
+const isNextAction=e=>/^(?:next(?: step)?|continue(?: application)?|save\s*(?:&|and)\s*continue|save and next|review(?: application)?|proceed)$/i.test(buttonName(e))||!!nativeSite()&&/^(?:review your application|continue to next step)$/i.test(buttonName(e));
 function hasApplicationFields(){return controls().some(e=>!['hidden','submit','button','reset','image','search'].includes(e.type)&&e.getAttribute('role')!=='searchbox');}
-function readyForMySubmit(){const check=review(),actions=buttons(),p=formProgress();return !attempted&&!initialReceipt&&hasApplicationFields()&&!check.reason&&p.required>0&&p.required===p.filled&&actions.filter(isSubmitAction).length===1&&!actions.some(isNextAction);}
+// Submit only when a visible resume upload actually holds the saved resume (same
+// file name and size), or the board already shows a selected resume.
+function resumeAttachment(){
+ const inputs=[...(applicationRoot()?.querySelectorAll('input[type="file"]')||[])].filter(e=>controlVisible(e)&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
+ if(!inputs.length)return {ok:true};
+ if(nativeSite()&&nativeResumeSelected())return {ok:true};
+ const r=packet?.resume,expectedSize=r?.base64?Math.floor(r.base64.replace(/=+$/,'').length*3/4):null;
+ for(const e of inputs){const f=e.files?.[0];if(!f)continue;if(!r?.name||f.name===r.name&&(expectedSize===null||f.size===expectedSize))return {ok:true};return {ok:false,reason:'The attached resume ('+f.name+') is not your saved resume. Check it before submitting.'};}
+ return inputs.some(isRequired)||r?.base64?{ok:false,reason:'Your resume is not attached to this form.'}:{ok:true};
+}
+function readyForMySubmit(){if(!resumeAttachment().ok)return false;const check=review(),actions=buttons(),p=formProgress(),reviewOnly=p.required===0&&nativeReviewOnly();return !attempted&&!initialReceipt&&(hasApplicationFields()||reviewOnly)&&!check.reason&&(p.required>0&&p.required===p.filled||reviewOnly)&&actions.filter(isSubmitAction).length===1&&!actions.some(isNextAction);}
 function preparationMessage(check){
  if(check.reason)return check.reason;
  if(!hasApplicationFields())return 'The application form is not open yet. Open Application or Apply to begin autofill.';
@@ -333,6 +428,9 @@ function applicationEntry(){
  // Open an empty entry page, never advance a populated step. Ashby exposes
  // both an Application tab and an Apply button; prefer its unique tab.
  if(hasApplicationFields())return null;
+ const board=nativeSite();
+ if(board==='linkedin'){const found=easyApplyButtons();return found[0]||null;}
+ if(board==='indeed'){const found=indeedApplyButtons();return found.length===1?found[0]:null;}
  const custom=P.customApplication?.(location.href);
  if(custom){
   if(applicationRoot()?.querySelector('input[type="file"]'))return null;
@@ -353,15 +451,20 @@ async function advance(){
  // Capture the receipt before a backend/state check can fail. Once attempted,
  // this branch performs evidence synchronization only, including after Stop.
  if(attempted&&!initialReceipt){pendingReceipt=pendingReceipt||receipt();if(pendingReceipt){const result=await send('receipt',{receipt:pendingReceipt});note.textContent=result?.pending?(result.needsReview?'Employer receipt saved in this browser. Sign in or review synchronization; do not resubmit.':'Employer receipt saved in this browser. Synchronization will retry automatically; do not resubmit.'):'Employer receipt verified. Application submitted.';stopped=true;clearInterval(timer);return;}}
- const state=await send('state');attempted=attempted||state.attempted;const issue=siteIssue();if(issue){stopped=true;clearInterval(timer);const result=await send('site-error',{code:issue.code,empty:controls().length===0&&!document.querySelector('form'),initial:lastStep===''});note.textContent=result.message;return;}
+ const state=await send('state');attempted=attempted||state.attempted;
+ if(state.flowElsewhere){stopped=true;clearInterval(timer);note.textContent='Continuing in the Indeed application tab.';return;}
+ const blocker=nativeSite()&&!attempted?P.nativeBlocker(bodyText()):null;
+ if(blocker?.kind==='rate-limit'){stopped=true;clearInterval(timer);await send('site-error',{code:429,native:true,empty:false,initial:false});note.textContent=blocker.message;return;}
+ if(blocker)return report(blocker.message);
+ const issue=siteIssue();if(issue){stopped=true;clearInterval(timer);const result=await send('site-error',{code:issue.code,empty:controls().length===0&&!document.querySelector('form'),initial:lastStep===''});note.textContent=result.message;return;}
  const text=receipt();if(text&&!initialReceipt&&attempted){await send('receipt',{receipt:text});note.textContent='Employer receipt verified. Application submitted.';stopped=true;clearInterval(timer);return;}
  if(attempted){if(!submitAt)submitAt=Date.now();note.textContent=Date.now()-submitAt>30000?'Submission uncertain. Check the employer receipt before retrying.':'Awaiting employer confirmation. Your Submit click is not yet a confirmed submission.';return;}
  await send('progress',{fields:[],message:'Preparing the selected employer form',blocked:false,progress:formProgress()});
  const check=review();if(check.fields.length){const issue=check.fields.map(q=>aiIssues.get(q)).find(Boolean);if(issue)check.reason+=' · '+issue;}if(initialReceipt)return report('An existing receipt is visible. Verify this application manually.');
- if(!check.reason&&!hasApplicationFields()){
+ if(!check.reason&&!hasApplicationFields()&&!nativeFormOpen()){
   const entry=applicationEntry(),current=signature();
   if(entry&&lastStep===''){await send('step',{entry:true});lastStep=current;stepAt=Date.now();pageWaitAt=Date.now();entry.click();note.textContent='Opening the employer application form.';return;}
-  if(Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer application form to load.';return;}
+  if(Date.now()-pageWaitAt<(nativeSite()==='indeed'?30000:20000)){note.textContent='Waiting for the employer application form to load.';return;}
   return report(preparationMessage(check),check.fields);
  }
  if(!state.automatic||state.autofillOnly&&!state.prepareSteps){await report(preparationMessage(check),check.fields,true);return;}
@@ -370,15 +473,15 @@ async function advance(){
  const bs=buttons(),submit=bs.filter(isSubmitAction),next=bs.filter(isNextAction);
  if(!controls().length&&!bs.some(b=>isSubmitAction(b)||isNextAction(b)||/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(b)))&&Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer form to load…';return;}
  if(submit.length===1&&next.length===0){
-  if(!controls().length&&!document.querySelector('form'))return report('Cannot identify the final application form.');await send('capture',{fields:formAnswers()});const finalCheck=review();if(finalCheck.reason)return report(finalCheck.reason,finalCheck.fields);
-  const finalButtons=buttons(),finalSubmit=finalButtons.filter(isSubmitAction);if(finalSubmit.length!==1||finalButtons.some(isNextAction))return report('The form changed before final review. Review this step.');if(!readyForMySubmit())return report('Review the employer form: required fields or the final action could not be verified.',[],true);if(packet.autonomousSubmit!==true||state.autonomousSubmit!==true)return report('Ready to submit — all supported fields are filled. Review the form, then click Submit.',[],true);
+  if(!controls().length&&!document.querySelector('form')&&!nativeReviewOnly())return report('Cannot identify the final application form.');await send('capture',{fields:formAnswers()});const finalCheck=review();if(finalCheck.reason)return report(finalCheck.reason,finalCheck.fields);
+  const finalButtons=buttons(),finalSubmit=finalButtons.filter(isSubmitAction);if(finalSubmit.length!==1||finalButtons.some(isNextAction))return report('The form changed before final review. Review this step.');{const attachment=resumeAttachment();if(!attachment.ok)return report(attachment.reason,['Resume'],true);}if(!readyForMySubmit())return report('Review the employer form: required fields or the final action could not be verified.',[],true);if(packet.autonomousSubmit!==true||state.autonomousSubmit!==true)return report('Ready to submit — all supported fields are filled. Review the form, then click Submit.',[],true);
   if(P.submissionDeclaration(bodyText()))return report('The final Submit action includes an employer declaration. Review and submit this form yourself.');
   const before=bodyText(),grant=await send('attempt',{before,automatic:true,human:false,clickId:crypto.randomUUID()});
   attempted=true;submitAt=Date.now();if(grant?.permitted!==true)return report('Submission authorization was not confirmed. Check the employer receipt before retrying.');
   const recheck=review();if(recheck.reason)return report('Form changed after submission authorization. '+recheck.reason,recheck.fields);
   automaticSubmissionInProgress=true;finalSubmit[0].click();note.textContent='Submitted to the employer; waiting for its receipt.';startReceiptMonitor();return;
  }
- if(next.length===1&&submit.length===0){if(!controls().length)return report('Cannot identify fields for this step.');await send('capture',{fields:formAnswers()});await send('step');lastStep=signatureNow;stepAt=Date.now();next[0].click();return;}
+ if(next.length===1&&submit.length===0){if(!controls().length&&!nativeFormOpen())return report('Cannot identify fields for this step.');if(stepsAdvanced>=MAX_FORM_STEPS)return report('Stopped after '+MAX_FORM_STEPS+' form steps without reaching the final step. Review this application yourself.');stepsAdvanced++;await send('capture',{fields:formAnswers()});await send('step');if(nativeSite()){const p=formProgress();if(p.required===p.filled)nativeStepsVerified++;}lastStep=signatureNow;stepAt=Date.now();next[0].click();return;}
  const apply=bs.filter(e=>/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(e)));if(!controls().length&&apply.length===1&&lastStep===''){await send('step');lastStep=signatureNow;stepAt=Date.now();apply[0].click();return;}await report('Application action is unfamiliar or ambiguous. Continue manually.');
 }
 function startReceiptMonitor(){stopped=false;clearInterval(timer);timer=setInterval(monitor,2500);}
@@ -400,6 +503,10 @@ async function monitor(){if(!started||busy||stopped||Date.now()<monitorRetryAt)r
 // Recheck saved answers in the existing form. Explicit preparation campaigns may
 // advance non-submit steps; the final action still requires its separate grant.
 let savedRefreshBusy=false,lastRefreshSignature='',formChanged=false,formChangeTimer;
+// Loop guards: ApplyPilot's own edits are not "form changes"; an unchanged
+// answer set is refilled at most MAX_REFILLS times; an identical blocker is
+// reported once. New saved answers or a genuinely different form reset them.
+const MAX_REFILLS=2;let selfEditUntil=0,refills=0,refillSnapshot='',lastBlockedReport='';
 const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions,p?.autonomousSubmit,p?.prepareSteps]);
 async function refreshPausedAnswers(){
  if(document.activeElement?.matches?.('input,select,textarea,[contenteditable="true"]'))return;
@@ -410,10 +517,15 @@ async function refreshPausedAnswers(){
   const latest=await send('packet');if(latest.job.attempted){attempted=true;if(!latest.autofillOnly)return;}
   const formSignature=signature();
   if(answerSnapshot(latest)===answerSnapshot(packet)&&formSignature===lastRefreshSignature&&!formChanged){const check=review();await report(preparationMessage(check),check.fields,true);return;}
+  const snapshotNow=answerSnapshot(latest);
+  if(snapshotNow!==refillSnapshot){refillSnapshot=snapshotNow;refills=0;}
+  if(refills>=MAX_REFILLS){const check=review();await report(preparationMessage(check),check.fields,true);return;}
+  refills++;
   lastRefreshSignature=formSignature;formChanged=false;
   packet=latest;busy=true;attemptedCustom=new WeakMap();
+  if(!await checkNativePosting())return;
   // Reuse saved facts and bounded AI preparation, preserving existing field values.
-  await fill();const check=review();
+  selfEditUntil=Date.now()+60000;try{await fill();}finally{selfEditUntil=Date.now()+1500;}const check=review();
   if((packet.autonomousSubmit===true||packet.prepareSteps===true)&&state.refreshEnabled&&!check.reason){stopped=false;await advance();if(!stopped)startReceiptMonitor();}else await report(preparationMessage(check),check.fields,true);
  }catch{/* Keep the existing form and edits intact when the connection is unavailable. */}
  finally{busy=false;savedRefreshBusy=false;}
@@ -421,6 +533,7 @@ async function refreshPausedAnswers(){
 if(!siteIssue()){
  setInterval(refreshPausedAnswers,30000);
  new MutationObserver(changes=>{
+  if(busy||Date.now()<selfEditUntil)return;
   if(!changes.some(c=>!bar?.contains(c.target)&&(c.type==='attributes'||[...c.addedNodes,...c.removedNodes].some(n=>n!==bar))))return;
   formChanged=true;clearTimeout(formChangeTimer);
   formChangeTimer=setTimeout(()=>{if(packet?.autofillOnly)refreshPausedAnswers();},750);
@@ -429,7 +542,9 @@ if(!siteIssue()){
 async function resumeFill(){
  if(busy)throw Error('Form preparation is already running. Wait for it to finish.');busy=true;clearInterval(timer);pageWaitAt=Date.now();
  try{packet=await send('packet');attempted=attempted||!!packet.job.attempted||!!(await send('state')).attempted;
-  if(!started){initialReceipt=!!receipt()&&!attempted;started=true;}
+  if(!started){initialReceipt=!attempted&&(!!receipt()||!!nativeSite()&&(!!P.receipt(bodyText())||P.nativeAlreadyApplied(bodyText())));started=true;}
+  if(initialReceipt&&nativeSite()){if(!bar)mount();await report('An existing application is shown for this job. Verify it on the job board; it will not be submitted again.');return;}
+  if(!await checkNativePosting())return;
   stopped=false;attemptedCustom=new WeakMap();letterTried=new WeakMap();if(!attempted)await fill();await advance();if(!stopped)timer=setInterval(monitor,2500);
  }finally{busy=false;}
 }
@@ -462,8 +577,22 @@ document.addEventListener('submit',e=>{
  if(submitter&&Date.now()-lastNativeSubmitClickAt>1000){recordAssistance();void observeManualSubmission();}
 },true);
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{
- if(m.action==='preparation-status'){reply({busy:!!busy,stopped:!!stopped,attempted:!!attempted,started:!!started,jobId:packet?.job?.id,url:location.href,readyForSubmit:!!started&&!busy&&readyForMySubmit()});return;}
+ if(m.action==='preparation-status'){reply({busy:!!busy,stopped:!!stopped,attempted:!!attempted,started:!!started,jobId:packet?.job?.id,url:location.href,readyForSubmit:!!started&&!busy&&readyForMySubmit(),challenge:liveChallenge()?.message||''});return;}
  if(m.action==='fill'){resumeFill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}
 });
-begin();
+// Read-only listing inspection (LinkedIn/Indeed job page opened by the helper for
+// one saved job). Reads the posting and reports it; never fills, clicks, uploads
+// or claims. A board limit or verification page is reported, not bypassed.
+async function inspectListing(){
+ const site=nativeSite();if(site!=='linkedin'&&site!=='indeed')return false;
+ let role;try{role=await chrome.runtime.sendMessage({action:'listing-role'});}catch{return false;}
+ if(!role?.ok||role.data?.inspect!==true)return false;
+ for(let i=0;i<24;i++){if(P.nativeBlocker(bodyText()))break;const snap=postingSnapshot();if(snap.title&&snap.company)break;await new Promise(r=>setTimeout(r,500));}
+ const blocker=P.nativeBlocker(bodyText());
+ if(blocker){await send('listing-limit',{kind:blocker.kind}).catch(()=>{});return true;}
+ const text=bodyText(),alreadyApplied=!!P.receipt(text)||P.nativeAlreadyApplied(text);
+ await send('listing-check',{...postingSnapshot(),alreadyApplied}).catch(()=>{});
+ return true;
+}
+inspectListing().then(inspected=>{if(!inspected)begin();}).catch(()=>begin());
 })();

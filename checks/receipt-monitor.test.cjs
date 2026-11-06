@@ -4,7 +4,7 @@ test('content monitor recovers transient state and receipt failures without fill
  w.Date.now=()=>time;w.HTMLElement.prototype.getClientRects=()=>[{}];Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});w.HTMLElement.prototype.click=()=>clicks++;
  w.chrome={runtime:{onMessage:{addListener(){}},sendMessage:async m=>{calls.push(m);if(m.action==='state')return failState?{ok:false,error:'HTTP 502',status:502}:{ok:true,data:{attempted:true,automatic:false,refreshEnabled:false}};if(m.action==='receipt')return failReceipt?{ok:false,error:'Disconnected'}:{ok:true,data:{pending:true}};return {ok:true,data:{}};}}};
  w.eval(fs.readFileSync('extension/policy.js','utf8'));
- w.eval(fs.readFileSync('extension/content.js','utf8').replace(/begin\(\);\s*\}\)\(\);/,`packet={job:{id:'j',title:'Fixture'},answers:{},profile:{}};started=true;attempted=true;mount();window.check=monitor;window.monitorState=()=>({stopped,monitorFailures});})();`));
+ w.eval(fs.readFileSync('extension/content.js','utf8').replace(/(?:begin\(\);|inspectListing\(\)\.then\([^\n]*)\s*\}\)\(\);/,`packet={job:{id:'j',title:'Fixture'},answers:{},profile:{}};started=true;attempted=true;mount();window.check=monitor;window.monitorState=()=>({stopped,monitorFailures});})();`));
  try{
   await w.check();assert.equal(w.monitorState().stopped,false);assert.equal(w.monitorState().monitorFailures,1);
   failState=false;time+=100000;w.document.querySelector('main').textContent='Your application has been received.';

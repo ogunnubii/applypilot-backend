@@ -63,7 +63,15 @@ export async function prepareFormAnswer(db,uid,id,question,{research=researchFor
   }
   return {answer:chosen,source,requiresReview:true,...(citations?{citations}:{})};
  }
- const publicQuestion=canResearchQuestion(question)&&(!fieldHelp||canResearchQuestion(question+' '+fieldHelp)),personal=!publicQuestion&&canDraftProfessional(question,fieldHelp);
+ // LinkedIn/Indeed: saved facts first (above), then Gemini only for routine
+ // professional questions grounded in saved facts. No web research, no other
+ // provider, and protected/personal questions stay with the applicant.
+ const native=globalThis.ApplyPilotPolicy?.nativeBoard?.(job.url);
+ if(native){
+  if(!canDraftProfessional(question,fieldHelp))return {answer:'',reason:'This needs your saved answer.'};
+  if(!p.gemini_facts_consent||!process.env.GEMINI_API_KEY)return {answer:'',reason:'Save your answer, or enable Gemini professional-fact drafting (setup) for routine professional questions.'};
+ }
+ const publicQuestion=!native&&canResearchQuestion(question)&&(!fieldHelp||canResearchQuestion(question+' '+fieldHelp)),personal=!publicQuestion&&canDraftProfessional(question,fieldHelp);
  if(choices.length&&(publicQuestion||!canDraftProfessional(question,fieldHelp)))return {answer:'',reason:'This dropdown needs your saved answer or review.'};
  if(publicQuestion?!p.google_research_consent:!personal||!p.gemini_facts_consent&&!p.ai_consent)return {answer:'',reason:'This question needs your saved answer or review.'};
  const owner=job.local_owner,applicant=job.applicant_id,url=job.url;

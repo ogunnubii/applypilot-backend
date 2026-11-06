@@ -33,9 +33,19 @@ export async function draftAnswer({question,profile,job,answers,experience=[],jo
  return {answer:result.answer,reason:result.reason.slice(0,1000),sources:result.sources.map(id=>facts.find(f=>f.id===id).question)};
 }
 
-export function installDrafts(db){installFactDrafts(db);installExperience(db);db.exec(`CREATE TABLE IF NOT EXISTS draft_usage(user_id TEXT NOT NULL,day TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(user_id,day));CREATE TABLE IF NOT EXISTS professional_draft_cache(job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,question TEXT NOT NULL,fingerprint TEXT NOT NULL,result_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(job_id,question));`);}
+export function installDrafts(db){installFactDrafts(db);installExperience(db);db.exec(`CREATE TABLE IF NOT EXISTS shared_draft_cache(user_id TEXT NOT NULL,applicant_id TEXT NOT NULL,fingerprint TEXT NOT NULL,result_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(user_id,applicant_id,fingerprint));CREATE TABLE IF NOT EXISTS draft_usage(user_id TEXT NOT NULL,day TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(user_id,day));CREATE TABLE IF NOT EXISTS professional_draft_cache(job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,question TEXT NOT NULL,fingerprint TEXT NOT NULL,result_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(job_id,question));`);}
 const DRAFT_POLICY_VERSION='grounded-work-style-v5';
 const pendingDrafts=new Map();
+// Provider backoff per account: after a rate limit or outage, wait before the
+// next call (1, 2, 4 … up to 30 minutes) instead of retrying every question.
+const providerBackoff=new Map();
+export function draftBackoff(uid,now=Date.now()){const b=providerBackoff.get(uid);return b&&b.until>now?b:null;}
+function noteProviderFailure(uid,error,now=Date.now()){if(![429,500,502,503,504].includes(error?.status))return;const prior=providerBackoff.get(uid),failures=(prior?.failures||0)+1;providerBackoff.set(uid,{failures,until:now+Math.min(30,2**(failures-1))*60000,status:error.status});}
+export function resetDraftBackoff(uid){providerBackoff.delete(uid);}
+// Answers that do not depend on the employer or role are reused across jobs
+// (same saved facts, same question wording, same format), so each is drafted once.
+const JOB_SPECIFIC=/\b(?:this|the|our)\s+(?:company|organi[sz]ation|team|role|position|job|opportunity|mission|product)\b|\b(?:why|what attracts|interest(?:ed)? in)\b|\bus\b|\bhere\b/i;
+export function jobIndependentQuestion(question,job={}){const q=String(question||'');if(JOB_SPECIFIC.test(q))return false;for(const name of [job.company,job.title])if(name&&q.toLowerCase().includes(String(name).toLowerCase()))return false;return true;}
 export async function draftForJob(db,uid,id,question,options={}){
  const job=db.prepare('SELECT * FROM jobs WHERE id=? AND user_id=?').get(id,uid);
  if(!job)throw Error('Application not found.');
@@ -54,18 +64,23 @@ export async function draftForJob(db,uid,id,question,options={}){
  const fingerprint=createHash('sha256').update(JSON.stringify({policy:DRAFT_POLICY_VERSION,answers,experience,jobContext,question,title:job.title,company:job.company,gemini:!!profile.gemini_facts_consent,openai:!!profile.ai_consent,model:env.GEMINI_MODEL||env.OPENAI_MODEL,maxLength:options.maxLength,fieldHelp:options.fieldHelp,choices:options.choices,answerFormat:options.answerFormat})).digest('hex');
  const cached=db.prepare('SELECT * FROM professional_draft_cache WHERE job_id=? AND question=?').get(id,question);
  if(cached?.fingerprint===fingerprint&&Date.now()-Date.parse(cached.created_at)<86400000)return {...JSON.parse(cached.result_json),cached:true};
+ // Cross-job cache: only for questions that do not depend on this employer or role.
+ const shared=jobIndependentQuestion(question,job)?createHash('sha256').update(JSON.stringify({policy:DRAFT_POLICY_VERSION,answers,experience,question:String(question).trim().toLowerCase(),gemini:!!profile.gemini_facts_consent,openai:!!profile.ai_consent,model:env.GEMINI_MODEL||env.OPENAI_MODEL,maxLength:options.maxLength,fieldHelp:options.fieldHelp,choices:options.choices,answerFormat:options.answerFormat})).digest('hex'):null;
+ if(shared){const row=db.prepare('SELECT result_json,created_at FROM shared_draft_cache WHERE user_id=? AND applicant_id=? AND fingerprint=?').get(uid,profile.id,shared);if(row&&Date.now()-Date.parse(row.created_at)<30*86400000){const output={...JSON.parse(row.result_json),cached:true,sharedCache:true};if(output.answer?.trim())db.prepare('INSERT OR REPLACE INTO fact_drafts VALUES(?,?,?,?,?,?)').run(id,question,output.answer.trim(),output.provider||'gemini',JSON.stringify(output.sources||[]),new Date().toISOString());return output;}}
+ const backoff=draftBackoff(uid);if(backoff)throw Error('Gemini is temporarily unavailable (HTTP '+backoff.status+'); retrying after '+new Date(backoff.until).toLocaleTimeString()+'. Saved answers remain available.');
  const pendingKey=uid+'|'+id+'|'+fingerprint;if(pendingDrafts.has(pendingKey))return pendingDrafts.get(pendingKey);
  const task=(async()=>{
  const day=new Date().toISOString().slice(0,10);
  const usage=db.prepare('INSERT INTO draft_usage VALUES(?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET count=count+1 WHERE count<30').run(uid,day);
  if(!usage.changes)throw Error('Daily draft limit reached. Saved-answer reuse remains available.');
- const result=await draftAnswer({question,profile:{...profile,resume_path:null},job,answers,experience,jobContext,...options});
+ let result;try{result=await draftAnswer({question,profile:{...profile,resume_path:null},job,answers,experience,jobContext,...options});resetDraftBackoff(uid);}catch(error){noteProviderFailure(uid,error);throw error;}
  const current=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(profile.id,uid),provider=result.provider||'openai';
  if(!current||(provider==='gemini'?!current.gemini_facts_consent:!current.ai_consent))throw Error('Answer drafting consent changed while preparing this answer.');
  if(JSON.stringify(await resumeFacts(current,reusableAnswers(db,current)))!==JSON.stringify(answers)||JSON.stringify(experienceFor(db,uid,profile.id))!==JSON.stringify(experience))throw Error('Your saved facts changed while drafting. Try again with the updated facts.');
  if(result.answer?.trim())db.prepare('INSERT OR REPLACE INTO fact_drafts VALUES(?,?,?,?,?,?)').run(id,question,result.answer.trim(),provider,JSON.stringify(result.sources||[]),new Date().toISOString());
  const output={...result,provider,requiresReview:true};
  db.prepare('INSERT OR REPLACE INTO professional_draft_cache VALUES(?,?,?,?,?)').run(id,question,fingerprint,JSON.stringify(output),new Date().toISOString());
+ if(shared&&output.answer?.trim())db.prepare('INSERT OR REPLACE INTO shared_draft_cache(user_id,applicant_id,fingerprint,result_json,created_at) VALUES(?,?,?,?,?)').run(uid,profile.id,shared,JSON.stringify(output),new Date().toISOString());
  return output;
  })();pendingDrafts.set(pendingKey,task);try{return await task;}finally{pendingDrafts.delete(pendingKey);}
 }
@@ -117,7 +132,7 @@ export async function geminiFactAnswer({question,profile,job,answers,experience=
  input:JSON.stringify({question:redact(question),fieldHelp:redact(fieldHelp).slice(0,2000),limits:answerLimit(question,maxLength,fieldHelp),choices,answerFormat,job:contextFor(job,jobContext),facts}),
  response_format:{type:'text',mime_type:'application/json',schema}
  })});
- if(!response.ok)throw Error('Gemini professional drafting returned HTTP '+response.status+'. Saved answers remain available.');
+ if(!response.ok)throw Object.assign(Error('Gemini professional drafting returned HTTP '+response.status+'. Saved answers remain available.'),{status:response.status});
  const data=await response.json();if(data.status!=='completed')throw Error('Gemini did not complete the professional answer.');
  const output=(data.steps||[]).filter(step=>step.type==='model_output').flatMap(step=>step.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('');
  let result;try{result=JSON.parse(output);}catch{throw Error('Gemini returned an unreadable professional answer.');}
@@ -125,7 +140,9 @@ export async function geminiFactAnswer({question,profile,job,answers,experience=
  // PDF extraction wraps otherwise identical evidence over multiple lines.
  // Normalize whitespace only; keep wording, numbers, punctuation and source IDs.
  const quoteText=value=>String(value).replace(/\s+/g,' ').trim();
- if(result.evidence.some(e=>!e||typeof e.quote!=='string'||quoteText(e.quote).length<8||!facts.some(f=>f.id===e.id&&quoteText(f.answer).includes(quoteText(e.quote)))))throw Error('Gemini could not support this answer: a citation did not match its saved source. The answer was not filled.');
+ // A short saved fact (for example a numeric experience answer) can be quoted
+ // in full. Short fragments of a longer fact still cannot support a claim.
+ if(result.evidence.some(e=>!e||typeof e.quote!=='string'||!quoteText(e.quote)||!facts.some(f=>f.id===e.id&&(quoteText(e.quote).length>=8?quoteText(f.answer).includes(quoteText(e.quote)):quoteText(f.answer)===quoteText(e.quote)))))throw Error('Gemini could not support this answer: a citation did not match its saved source. The answer was not filled.');
  if(result.answer.trim()&&!result.evidence.length)throw Error('Gemini returned an answer without supporting saved facts. The answer was not filled.');
  const mismatch=invalidFormat(result.answer,question,{maxLength,fieldHelp,choices,answerFormat});if(mismatch)return {answer:'',reason:mismatch,sources:[],provider:'gemini'};
  const unsupported=unsupportedHistoryChoice(result.answer,question,result.evidence.map(e=>({question:facts.find(f=>f.id===e.id).question,quote:e.quote})),fieldHelp,choices);if(unsupported)return {answer:'',reason:unsupported,sources:[],provider:'gemini'};

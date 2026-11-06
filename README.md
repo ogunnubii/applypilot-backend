@@ -1,5 +1,87 @@
 # ApplyPilot
 
+**Windows PC:** see [WINDOWS.md](WINDOWS.md). Double-click `ApplyPilot.cmd`, load the `extension` folder, and use the dashboard Start/Stop switch.
+
+## LinkedIn Easy Apply, Indeed Apply and direct employer sites (helper 0.7.0)
+
+ApplyPilot can apply to LinkedIn Easy Apply and Indeed Apply jobs in the applicant's
+own signed-in Chrome/Edge profile, alongside direct employer applications through the
+existing Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, BambooHR and
+Recruitee adapters. Add a job by its board link (`linkedin.com/jobs/view/<id>` or
+`indeed.com/viewjob?jk=<key>`); it is stored by the board's own job id, so tracking
+parameters and country subdomains never create a second job. Search-result pages are
+not accepted. Job boards are not scraped; discovery of direct employer jobs continues
+to use the existing employer boards and job funnel.
+
+- **Local browser only.** The hosted worker, hosted campaigns and hosted single-job
+  mode never open LinkedIn or Indeed. No board credentials reach the backend.
+- **Posting check first.** Before any form is opened the extension reads the bound job
+  page (title, company, location, workplace type, description, posted pay, posting age,
+  applicant count, recruiting badges) and the server assesses it deterministically:
+  Cloud/DevOps/SRE/Platform title; listed as Remote (hybrid, on-site or unknown are
+  skipped); the enabled structured scope must explicitly allow working from the saved
+  location (Thornhill is recognized as York Region, Ontario). "Remote" alone is not
+  treated as worldwide or as Canada, and a "work from anywhere" benefit is not
+  worldwide eligibility. With `allowEmploymentFallback:false` a Canadian engagement
+  needs explicit B2B/C2C/incorporated evidence. An optional scope field
+  `minimumAnnualCAD` (for example 60000) rejects only known CAD pay whose annual
+  maximum is below it; unknown or non-CAD pay is recorded as unknown and never
+  converted. With `foreignSponsorship: true`, a role outside Canada qualifies only when
+  its posting explicitly offers visa sponsorship for its single named country, in one
+  of the scope's `foreignWorkplaces` (default `["remote"]`; add `"hybrid"`/`"on-site"`
+  for relocation). Authorization and sponsorship questions for such roles are answered
+  only from the saved facts *Work authorization - outside Canada* and *Visa sponsorship
+  required - outside Canada*. External "Apply on company site" jobs are blocked with a request for the
+  direct employer link.
+- **Ranking.** Eligible checked postings are ordered by known pay (compared within one
+  currency; unknown pay after known pay), then the existing role-fit score, then
+  hiring-speed signals that cite their page text (posting age, applicant count,
+  "Actively recruiting"/"Urgently hiring"/multiple openings). These are ordering
+  points, never interview or hiring probabilities.
+- **Answers.** Saved profile facts and exact saved answers only. For LinkedIn and Indeed
+  jobs the packet disables AI assistance and the answer, research and drafting paths
+  return "save your answer" instead of generating one. Unknown required answers become
+  recorded blockers; other eligible jobs continue. An already-selected board resume is
+  reused instead of uploading another copy.
+- **Submission.** Automatic final Submit still requires the explicit automatic-submission
+  opt-in and the same durable reservation (`autonomous_attempts`), plus a fresh (≤24 h)
+  eligible posting check for this job. One attempt per job; uncertain outcomes are never
+  retried. LinkedIn's final review page is accepted only after this run verified every
+  earlier step. Only a fresh confirmation for this job counts: LinkedIn must name the
+  same employer ("Your application was sent to <company>"); Indeed's receipt must appear
+  in the bound Indeed Apply tab beside the job's title or company. An existing "Applied"
+  state blocks the job for review.
+- **Indeed Apply continuation.** smartapply.indeed.com does not identify the job, so it
+  is accepted only in the tab the bound Indeed job opened right after the extension's
+  own Apply click, and never if its `jk` names another job.
+- **Limits and verification.** CAPTCHA, sign-in, MFA and "verify you are human" pages
+  stop for the applicant; nothing is bypassed. A board-reported application limit pauses
+  that board for 12 hours while other boards continue. Automatic openings on each board
+  are spaced at least 2 minutes apart and capped at 25 per rolling 24 hours.
+- **Attribution and duplicates.** Each job records how it was found (`foundVia`:
+  `direct-discovery`, `job-funnel`, `linkedin`, `indeed`). `/api/operations` adds
+  `bySource` counts (`direct`, `linkedin`, `indeed`), so direct employer confirmations
+  are reported separately. The existing repeat guard blocks the same employer role across
+  sources (for example a LinkedIn posting and the employer's Greenhouse requisition).
+
+- **Submission summaries by email.** Settings → enter an address (for example your own
+  inbox) to receive one email for each application confirmed after you saved it, for
+  direct employer sites and LinkedIn/Indeed alike. It contains job facts only: role,
+  company, job link, where it was applied and found, location, posted pay, eligibility
+  reason, hiring signals, the applicant profile name and email, submission time and the
+  employer's confirmation text. It never includes saved answers, phone, resume or form
+  contents, and uncertain or unconfirmed outcomes are not reported as submitted.
+  Delivery uses the existing Resend outbox (`RESEND_API_KEY`, `BLOCKER_EMAIL_FROM`,
+  HTTPS `PUBLIC_ORIGIN`) with one email per job and address and idempotent retries.
+  API: `PUT /api/notifications {"submissionEmail":"you@example.com"}` (empty string turns it off).
+
+Fixture checks: `checks/native-board.test.js`, `checks/native-easy-apply.test.cjs`,
+`checks/native-background.test.cjs` and `checks/native-board-api.test.js`. They use
+synthetic jsdom pages, fixture Chrome APIs and an isolated SQLite database; no job
+board or employer is contacted and no application is sent. Live LinkedIn/Indeed markup
+changes frequently; selectors and receipts need supervised validation before relying
+on unattended runs.
+
 ## Required cover letters (helper 0.6.37)
 
 When an active application requires a clearly identified cover letter, ApplyPilot
@@ -49,9 +131,9 @@ Older sections below describe the manual-submit default. An explicit autonomous 
 
 1. Install Node.js 24 or newer (including npm).
 2. Extract or clone this repository, open PowerShell in its directory, and run `./start-local.ps1 -Install`. The script creates a private `.env.local` with random session and registration secrets, starts the API and discovery on localhost:8080, and binds only to 127.0.0.1. It does not launch a separate automation browser.
-3. Open **http://localhost:8080/setup** in your normal Chrome or Edge profile. Use the registration code printed on the first run (also stored in `.env.local`) to create an account, or sign in. Save your truthful profile and PDF/DOCX resume. Choose **My Windows browser**.
+3. Open **http://localhost:8080/setup** (or the port you chose with `-Port`, e.g. `./start-local.ps1 start -Port 8088`) in your normal Chrome or Edge profile. Use the registration code printed on the first run (also stored in `.env.local`) to create an account, or sign in. Save your truthful profile and PDF/DOCX resume. Choose **My Windows browser**.
 4. Add real direct application links, or create a discovery search. PDF role extraction needs the existing Poppler `pdftotext` utility; if unavailable, the resume is still stored and attachable, and you can create a search manually.
-5. Load `extension/` as an unpacked extension in `chrome://extensions` or `edge://extensions` with Developer mode enabled. Choose **This PC (localhost:8080)** in its popup. Keep the dashboard signed in and open.
+5. Load `extension/` as an unpacked extension in `chrome://extensions` or `edge://extensions` with Developer mode enabled. Choose **This PC (localhost)** in its popup and set the local port (default 8080). Keep the dashboard signed in and open.
 6. Review jobs in the dashboard. **Start routine applications** prepares jobs explicitly queued by searches with **Automatically prepare strong matches** enabled. Review-only Found jobs stay closed until you choose **Prepare automatically** for that job. ApplyPilot fills supported steps and stops at the employer's final Submit control. You review the form and click Submit yourself. **Stop automation** stops subsequent preparation.
 
 Your ordinary browser profile supplies its existing site logins. Cookies and passwords are not copied to the backend. Install in each browser profile you intend to use; Chrome and Edge maintain separate extension state.

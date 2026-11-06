@@ -102,3 +102,5 @@ import {installReceiptSync} from './receipt-sync.js';
 installReceiptSync(db);
 installPreparationHandoff(db);
 
+import {installAutopilot} from './autopilot.js';
+installAutopilot(db);

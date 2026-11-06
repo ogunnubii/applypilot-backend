@@ -1,3 +1,5 @@
+Version 0.7.0 adds LinkedIn Easy Apply and Indeed Apply in your signed-in browser. Each job page is checked against your saved remote scope before any form opens; only saved facts and exact saved answers are used; one reserved Submit per job when automatic submission is explicitly enabled; and only a confirmation naming this job counts. CAPTCHA, sign-in and board limits stop for you. New site access for linkedin.com/jobs/view and indeed.com requires Chrome/Edge approval when you reload the extension.
+
 Version 0.6.38 lists only checked, still-available filled forms awaiting your Submit click. Open filled form focuses the existing local employer tab or opens the retained hosted viewer. It never claims, restarts, refills, or submits an application. Expired forms, unknown required answers, employer holds, completed applications and uncertain submissions stay out of this list. Stop controls remain in Settings. Update the same installation and retain its storage.
 
 Version 0.6.37 prepares required cover-letter text and accepted PDF/DOCX uploads from confirmed professional background. Existing letters and edits are preserved, optional letters are skipped, and prepared letters require your review and manual Submit click. Review the saved letter on its application card.
@@ -40,7 +42,7 @@ Version 0.6.19 recognizes combined first-and-last-name prompts from your saved f
 
 1. Start the local backend using `../start-local.ps1 -Install`, or deploy the updated hosted backend/dashboard.
 2. In your usual signed-in browser profile, open `chrome://extensions` or `edge://extensions`, enable Developer mode, click Load unpacked, and select this directory.
-3. Open the extension popup. Select This PC for localhost:8080 or Hosted ApplyPilot for the existing Netlify/Railway service.
+3. Open the extension popup. Select This PC (localhost) and set the local port ApplyPilot runs on (default 8080, for example 8088), or Hosted ApplyPilot for the existing Netlify/Railway service.
 4. Open ApplyPilot and sign in. Complete the profile/resume at the backend's `/setup` page and select My Windows browser. Keep the signed-in dashboard tab open.
 5. Automatic mode is on by default. Every 30 seconds it picks up explicitly queued jobs for profiles in My Windows browser mode. Found jobs stay unstarted until queued. Signed-in Railway, Cloudflare Pages and legacy Netlify dashboards can sync. Open manually is an optional override; Continue automatically resumes a selected blocked application. Stop automation persists across restarts.
 

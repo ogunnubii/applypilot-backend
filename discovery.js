@@ -1,3 +1,4 @@
+import {autopilotStopped} from './autopilot.js';
 import {normalizeSearchScope,scopeIntent,searchPriority,currentSearchScope,searchScopeSignature} from './search-scope.js';
 import {ashbyPosting} from './ashby-posting.js';
 import {supportIntent,remoteCanadaIntent,t4FallbackIntent,refreshSalaryRates} from './support-career.js';
@@ -216,6 +217,8 @@ export async function detailForJob(row){
  return undefined;
 }
 function saveMetadata(id,metadata){
+ // Keep source attribution (how the job was found) across metadata refreshes.
+ const previous=(()=>{try{return JSON.parse(db.prepare('SELECT job_metadata_json FROM jobs WHERE id=?').get(id)?.job_metadata_json||'{}');}catch{return {};}})();if(previous.foundVia&&!metadata.foundVia)metadata={...metadata,foundVia:previous.foundVia};
  db.prepare('UPDATE jobs SET job_metadata_json=?,match_score=?,discovery_priority=?,metadata_attempt_at=? WHERE id=?').run(JSON.stringify(metadata),metadata.score||0,metadata.available!==false&&metadata.eligibility?.eligible?100-(metadata.score||0):1000,now(),id);
 }
 async function refreshTrackedJobs(userId,applicant,intent){
@@ -263,7 +266,7 @@ async function executeSearch(id,userId){
    try{const detail=await cachedJSON(job.descriptionURL,3600000);job.description=detail.content||'';job.pay_input_ranges=detail.pay_input_ranges;job.publishedAt=detail.first_published||job.publishedAt;}catch(e){errors.push('Could not verify '+job.company+': '+String(e.message).slice(0,100));continue;}
   }
   if(excludesFrench(db,userId)&&frenchApplication(job))continue;
-  const metadata=jobIntelligence(job,intent,applicant.focus),existing=db.prepare('SELECT * FROM jobs WHERE applicant_id=? AND normalized_url=?').get(applicant.id,url);
+  const metadata={...jobIntelligence(job,intent,applicant.focus),foundVia:'direct-discovery'},existing=db.prepare('SELECT * FROM jobs WHERE applicant_id=? AND normalized_url=?').get(applicant.id,url);
   if(existing)saveMetadata(existing.id,metadata);
   if(intent.worldwideEligibility&&!metadata.eligibility.eligible)continue;
   if(intent.supportCareer&&(!metadata.supportCareer?.strong||!metadata.salaryTarget?.eligible))continue;
@@ -315,5 +318,6 @@ export async function runDueSearches(){
  // One-second tolerance avoids skipping a minute because of timer jitter.
  const cutoff=new Date(Date.now()-(SEARCH_INTERVAL_SECONDS-1)*1000).toISOString();
  const due=db.prepare('SELECT id,user_id FROM searches WHERE enabled=1 AND (last_run IS NULL OR last_run<?) ORDER BY COALESCE(last_run,created_at),id LIMIT 5').all(cutoff);
- await Promise.all(due.map(async search=>{try{await runSearch(search.id,search.user_id)}catch(e){console.error('Discovery:',e.message);}}));
+ // A stopped autopilot pauses discovery for that account (persisted).
+ await Promise.all(due.filter(search=>!autopilotStopped(db,search.user_id)).map(async search=>{try{await runSearch(search.id,search.user_id)}catch(e){console.error('Discovery:',e.message);}}));
 }

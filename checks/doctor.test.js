@@ -27,3 +27,20 @@ test('doctor: secrets hidden, unknown work facts shown as "will ask", counts spl
  const mismatch=doctorReport({env:{PORT:'8088',PUBLIC_ORIGIN:'http://localhost:8080'},db:null,version:'22.0.0'});
  assert(mismatch.some(c=>c.area==='Node.js'&&c.status==='action'));assert(mismatch.some(c=>c.area==='Local address'&&c.status==='action'));
 });
+
+test('doctor: shows where LinkedIn/Indeed jobs stop (added, waiting, eligible, held reasons) and whether automatic submit is on',()=>{
+ const db=new DatabaseSync(':memory:');
+ db.exec(`CREATE TABLE applicants(id TEXT,name TEXT,execution_mode TEXT,consent INTEGER,resume_path TEXT,gemini_facts_consent INTEGER,answers_json TEXT,created_at TEXT);
+  CREATE TABLE jobs(url TEXT,status TEXT,confirmation TEXT,local_attempt_at TEXT,local_phase TEXT,job_metadata_json TEXT);
+  CREATE TABLE work_focus(user_id TEXT,enabled INTEGER,job_id TEXT,auto_submit INTEGER,search_queue_only INTEGER);`);
+ const li='https://www.linkedin.com/jobs/view/',held=JSON.stringify({listingCheck:{eligible:false,blocker:'Not listed as a remote position.'}});
+ db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?)').run(li+'1','saved',null,null,null,'{}');
+ db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?)').run(li+'2','saved',null,null,null,held);
+ db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?)').run(li+'3','saved',null,null,null,held);
+ db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?)').run(li+'4','saved',null,null,null,JSON.stringify({listingCheck:{eligible:true}}));
+ db.exec("INSERT INTO work_focus VALUES('u',0,NULL,0,1)");
+ const out=formatDoctor(doctorReport({env:{},db,version:'24.21.0'}));
+ assert.match(out,/LinkedIn: 4 added · 1 waiting for listing check · 1 eligible · 2 held · 0 submitted without receipt · 0 confirmed · top reasons: 2× Not listed as a remote position/);
+ assert.match(out,/Indeed: No jobs added yet[\s\S]*does not crawl Indeed/);
+ assert.match(out,/Automatic submit: Off: jobs are prepared but not submitted/);
+});

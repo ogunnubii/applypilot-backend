@@ -47,6 +47,27 @@ export function doctorReport({env=process.env,db=null,version=process.versions.n
    SUM(status='local_browser' AND local_phase='prepared' AND local_attempt_at IS NULL) AS prepared FROM jobs`).get();
   add('Applications',null,`${row.confirmed||0} confirmed by employer receipt · ${row.attempted||0} submitted without a confirmed receipt · ${row.blocked||0} blocked · ${row.prepared||0} prepared`);
  }catch{}
+ // LinkedIn/Indeed pipeline: where those jobs stop (counts and reasons only).
+ try{
+  const f=db.prepare('SELECT enabled,auto_submit,search_queue_only FROM work_focus').all();
+  const auto=f.some(r=>r.enabled&&r.auto_submit);
+  add('Automatic submit',auto?true:null,f.length?(auto?'On (one job at a time'+(f.some(r=>r.search_queue_only)?', saved-search queue':'')+')':'Off: jobs are prepared but not submitted'):'Not chosen yet',auto?'':'Choose “Apply automatically” for the saved-search queue in the dashboard.');
+ }catch{}
+ try{
+  for(const [board,like] of [['LinkedIn','%linkedin.com/jobs/view/%'],['Indeed','%indeed.com/viewjob%']]){
+   const jobs=db.prepare('SELECT status,local_attempt_at,confirmation,job_metadata_json FROM jobs WHERE url LIKE ?').all(like);
+   if(!jobs.length){add(board,null,'No jobs added yet','Open a '+board+' job search page in Chrome (signed in) and click the ApplyPilot “Add … jobs” button. ApplyPilot does not crawl '+board+'.');continue;}
+   let waiting=0,eligible=0,held=0,attempted=0,confirmed=0;const reasons=new Map();
+   for(const j of jobs){let m={};try{m=JSON.parse(j.job_metadata_json||'{}');}catch{}
+    if(['submitted','interview','rejected','offer'].includes(j.status)&&j.confirmation){confirmed++;continue;}
+    if(j.local_attempt_at){attempted++;continue;}
+    const c=m.listingCheck;if(!c){waiting++;continue;}
+    if(c.eligible)eligible++;else{held++;const r=String(c.blocker||'held').replace(/\s+/g,' ').slice(0,90);reasons.set(r,(reasons.get(r)||0)+1);}
+   }
+   const top=[...reasons].sort((a,b)=>b[1]-a[1]).slice(0,3).map(([r,n])=>n+'× '+r).join(' | ');
+   add(board,null,`${jobs.length} added · ${waiting} waiting for listing check · ${eligible} eligible · ${held} held · ${attempted} submitted without receipt · ${confirmed} confirmed`+(top?' · top reasons: '+top:''),waiting&&!eligible?'Keep ApplyPilot running with Chrome open and helper 0.7.4 loaded; listings are checked about every 2 minutes per board.':'');
+  }
+ }catch{}
  return checks;
 }
 export function formatDoctor(checks){

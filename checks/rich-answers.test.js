@@ -92,3 +92,14 @@ test('Gemini citations tolerate resume line wraps but never changed facts or dif
  await assert.rejects(draft('Deployment time fell by 60%.','99'),/citation/);
  await assert.rejects(draft('I led a fully remote global team.'),/citation/);
 });
+
+test('Gemini accepts an entire short saved fact but rejects short fragments, changed numbers and missing sources',async()=>{
+ const options={question:'Describe your Terraform experience.',profile:{gemini_facts_consent:1},job:{title:'Cloud Engineer'},answers:{'Years of Terraform experience':'10'},env:{GEMINI_API_KEY:'test'}};
+ const draft=(quote,id='1',answers=options.answers)=>geminiFactAnswer({...options,answers,fetchImpl:async()=>output({answer:'I have 10 years of Terraform experience.',reason:'',evidence:[{id,quote}]})});
+ assert.equal((await draft('10')).answer,'I have 10 years of Terraform experience.');
+ await assert.rejects(draft('1'),/citation/);
+ await assert.rejects(draft('11'),/citation/);
+ await assert.rejects(draft('10','99'),/citation/);
+ await assert.rejects(draft('10','1',{'Professional background':'I have 10 years of Terraform experience.'}),/citation/);
+ await assert.rejects(draft(''),/citation/);
+});

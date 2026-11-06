@@ -35,6 +35,9 @@ export function installHistory(db){
  BEGIN SELECT RAISE(ABORT,'Already applied externally: repeat submission blocked'); END;`);
  // Provenance: the original tool's own status label, kept verbatim.
  if(!columns.has('source_status'))db.exec("ALTER TABLE external_application_history ADD COLUMN source_status TEXT NOT NULL DEFAULT ''");
+ // Ambiguous correspondence can be checked against a future job locally without
+ // declaring a submission or assigning the email to a guessed employer or title.
+ db.exec('CREATE TABLE IF NOT EXISTS external_history_review_evidence(user_id TEXT NOT NULL,source_id TEXT NOT NULL,search_text TEXT NOT NULL,PRIMARY KEY(user_id,source_id))');
  // URL aliases: every link a record was known by (board, ATS, LinkedIn, Indeed).
  db.exec(`CREATE TABLE IF NOT EXISTS external_history_urls(user_id TEXT NOT NULL,url_key TEXT NOT NULL,history_id TEXT NOT NULL REFERENCES external_application_history(id),PRIMARY KEY(user_id,url_key));
  INSERT OR IGNORE INTO external_history_urls(user_id,url_key,history_id) SELECT user_id,url_key,id FROM external_application_history WHERE url_key<>'';

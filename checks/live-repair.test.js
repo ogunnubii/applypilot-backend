@@ -13,7 +13,7 @@ const {db}=await import('../db.js');
 await import('../local-policy.js');
 (await import('../answer-library.js')).installLibrary(db);(await import('../answer-drafts.js')).installDrafts(db);(await import('../google-research.js')).installResearch(db);
 const {companyKey,importHistory,historyEmployerHolds,releaseHistoryEmployerHold}=await import('../application-history.js');
-const {employerHold}=await import('../employer-limits.js');
+const {employerHold,historyReviewText}=await import('../employer-limits.js');
 const {normalizeSearchScope,remoteContradiction,isScopeRemote,roleFit,currentScopeAssessment}=await import('../search-scope.js');
 const {prepareFormAnswer}=await import('../form-answer.js');
 const {draftForJob,draftBackoff,resetDraftBackoff,jobIndependentQuestion}=await import('../answer-drafts.js');
@@ -24,6 +24,16 @@ const scope=normalizeSearchScope({roles:['Site Reliability Engineer','DevOps Eng
 db.prepare("INSERT INTO searches(id,user_id,applicant_id,instruction,scope_json,boards_json,enabled,created_at) VALUES('s','u','p','Fixture',?,'[]',1,'2026')").run(JSON.stringify(scope));
 const job=(id,{title,company='Anthropic',url,status='saved',meta={}})=>{db.prepare('INSERT INTO jobs(id,user_id,applicant_id,title,company,url,normalized_url,status,job_metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'u','p',title,company,url,url,status,JSON.stringify(meta),'2026','2026');return db.prepare('SELECT * FROM jobs WHERE id=?').get(id);};
 const ANTHROPIC_TEXT='Location-based hybrid policy: Currently, we expect all staff to be in one of our offices at least 25% of the time. Visa sponsorship: We do sponsor visas.';
+
+test('partial history holds a matching employer and role, isolates accounts, and leaves other roles available',()=>{
+ db.prepare('INSERT INTO external_history_review_evidence VALUES(?,?,?)').run('u','mail:fixture',historyReviewText('Thank you from Example Labs. We received your application for the Sr. Cloud Engineer role.'));
+ const candidate={user_id:'u',applicant_id:'p',company:'Example Labs Inc.',title:'Senior Cloud Engineer',url:'https://jobs.lever.co/example/fixture'};
+ assert.equal(employerHold(db,candidate)?.kind,'history-review');
+ assert.equal(employerHold(db,{...candidate,company:'Other Labs'}),null);
+ assert.equal(employerHold(db,{...candidate,title:'Platform Engineer'}),null);
+ assert.equal(employerHold(db,{...candidate,user_id:'other'}),null);
+ assert.equal(db.prepare('SELECT count(*) n FROM jobs WHERE confirmation IS NOT NULL').get().n,0);
+});
 
 test('companyKey never resolves employer names to Object.prototype members (history import bind failure)',()=>{
  for(const name of ['Constructor','toString','__proto__','hasOwnProperty','valueOf'])assert.equal(typeof companyKey(name),'string',name);

@@ -50,6 +50,23 @@ function New-Secret([int]$bytes) {
 }
 function Test-PortValue([int]$value) { return ($value -ge 1024 -and $value -le 65535) }
 
+function ConvertFrom-GeminiKeyInput([string]$value) {
+  # Keys are opaque tokens. In particular, current Google auth keys contain a
+  # dot (AQ.); do not restrict them to the older standard-key character set.
+  # Trim paste padding, but never allow embedded whitespace or env-file lines.
+  $normalized = $value.Trim()
+  if ($normalized.Length -ge 2 -and
+      (($normalized.StartsWith('"') -and $normalized.EndsWith('"')) -or
+       ($normalized.StartsWith("'") -and $normalized.EndsWith("'")))) {
+    $normalized = $normalized.Substring(1, $normalized.Length - 2).Trim()
+  }
+  if (-not $normalized) { return '' }
+  if ($normalized -cnotmatch '^[A-Za-z0-9_~+./-]{20,4096}={0,2}$') {
+    throw 'The pasted text is not a single API key. Copy only the key from Google AI Studio. Nothing was saved.'
+  }
+  return $normalized
+}
+
 # Port: -Port wins and is saved; otherwise .env.local; otherwise 8080.
 # (PowerShell variable names are case-insensitive, so the resolved port is $appPort, not $port.)
 $portRequested = $Port -ne 0
@@ -153,11 +170,16 @@ switch ($Action) {
     # The key is typed into a hidden prompt and written only to .env.local (git-ignored).
     # It is never printed, logged or sent anywhere except Google's Gemini API.
     Initialize-Env
-    $secure = Read-Host 'Paste your Gemini API key (input hidden; press Enter alone to cancel)' -AsSecureString
-    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    try { $key = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-    if (-not $key) { Write-Host 'No change.'; return }
-    if ($key -notmatch '^[A-Za-z0-9_\-]{20,200}$') { $key = $null; throw 'That does not look like a Gemini API key. Nothing was saved.' }
+    while ($true) {
+      $secure = Read-Host 'Paste your Gemini API key (input hidden; press Enter alone to cancel)' -AsSecureString
+      $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+      try { $rawKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr); $secure.Dispose() }
+      try { $key = ConvertFrom-GeminiKeyInput $rawKey }
+      catch { $rawKey = $null; $key = $null; Write-Host 'That was not a single API key. Nothing was saved. Copy only the key from Google AI Studio, then try again.'; continue }
+      $rawKey = $null
+      if (-not $key) { Write-Host 'No change.'; return }
+      break
+    }
     Set-EnvValues ([ordered]@{ GEMINI_API_KEY = $key })
     $key = $null
     Write-Host 'Gemini key saved to .env.local (not shown). Run ApplyPilot.cmd restart, then turn on Gemini professional-fact drafting in your profile.'

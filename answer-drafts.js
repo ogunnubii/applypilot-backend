@@ -140,7 +140,9 @@ export async function geminiFactAnswer({question,profile,job,answers,experience=
  // PDF extraction wraps otherwise identical evidence over multiple lines.
  // Normalize whitespace only; keep wording, numbers, punctuation and source IDs.
  const quoteText=value=>String(value).replace(/\s+/g,' ').trim();
- if(result.evidence.some(e=>!e||typeof e.quote!=='string'||quoteText(e.quote).length<8||!facts.some(f=>f.id===e.id&&quoteText(f.answer).includes(quoteText(e.quote)))))throw Error('Gemini could not support this answer: a citation did not match its saved source. The answer was not filled.');
+ // A short saved fact (for example a numeric experience answer) can be quoted
+ // in full. Short fragments of a longer fact still cannot support a claim.
+ if(result.evidence.some(e=>!e||typeof e.quote!=='string'||!quoteText(e.quote)||!facts.some(f=>f.id===e.id&&(quoteText(e.quote).length>=8?quoteText(f.answer).includes(quoteText(e.quote)):quoteText(f.answer)===quoteText(e.quote)))))throw Error('Gemini could not support this answer: a citation did not match its saved source. The answer was not filled.');
  if(result.answer.trim()&&!result.evidence.length)throw Error('Gemini returned an answer without supporting saved facts. The answer was not filled.');
  const mismatch=invalidFormat(result.answer,question,{maxLength,fieldHelp,choices,answerFormat});if(mismatch)return {answer:'',reason:mismatch,sources:[],provider:'gemini'};
  const unsupported=unsupportedHistoryChoice(result.answer,question,result.evidence.map(e=>({question:facts.find(f=>f.id===e.id).question,quote:e.quote})),fieldHelp,choices);if(unsupported)return {answer:'',reason:unsupported,sources:[],provider:'gemini'};

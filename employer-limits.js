@@ -45,11 +45,28 @@ export function installEmployerLimits(db){
 }
 // Imported-history hold: an earlier attempt at this employer (from another tool)
 // has an unknown outcome. Account-wide, durable until the applicant releases it.
+export function historyReviewText(value){
+ const normalized=String(value||'').normalize('NFKD').replace(/\p{M}/gu,'').toLowerCase()
+  .replace(/\bsr\.?\b/g,'senior').replace(/\bjr\.?\b/g,'junior')
+  .replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+ return normalized?' '+normalized+' ':'';
+}
+function reviewedPostingHold(db,job){
+ const table=name=>db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
+ if(job.normalized_url&&table('external_history_urls')&&db.prepare('SELECT 1 FROM external_history_urls WHERE user_id=? AND url_key=?').get(job.user_id,job.normalized_url)){
+  return {kind:'history-posting',company:job.company,message:'This posting URL is already protected by imported application history.'};
+ }
+ const name=historyReviewText(String(job.company||'').replace(/\s+(?:incorporated|inc|corporation|corp|limited|ltd|llc)\.?$/i,''));
+ const title=historyReviewText(job.title);
+ if(!name||!title||!table('external_history_review_evidence'))return null;
+ const match=db.prepare('SELECT source_id FROM external_history_review_evidence WHERE user_id=? AND instr(search_text,?)>0 AND instr(search_text,?)>0 LIMIT 1').get(job.user_id,name,title);
+ return match?{kind:'history-review',company:job.company,source:match.source_id,message:'Prior correspondence mentions this employer and role together. Check the original record before applying ('+match.source_id+').'}:null;
+}
 function importedHistoryHold(db,job){
  const name=String(job.company||'').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g,'');
  const keys=[...new Set([employerKey(job),name?'company:'+name:''].filter(Boolean))];if(!keys.length)return null;
  let row;try{row=db.prepare(`SELECT * FROM history_employer_holds WHERE user_id=? AND released_at IS NULL AND employer_key IN (${keys.map(()=>'?').join(',')}) ORDER BY created_at LIMIT 1`).get(job.user_id,...keys);}catch{return null;}
- return row?{kind:'history',employer_key:row.employer_key,company:row.company,source:row.source,observed_at:row.created_at,hold_until:null,message:'Held: '+row.reason+' ('+row.source+'). Review and release this employer before applying again.'}:null;
+ return row?{kind:'history',employer_key:row.employer_key,company:row.company,source:row.source,observed_at:row.created_at,hold_until:null,message:'Held: '+row.reason+' ('+row.source+'). Review and release this employer before applying again.'}:reviewedPostingHold(db,job);
 }
 export function employerHold(db,job,at=new Date().toISOString()){
  if(!job?.user_id||!job.applicant_id)return null;

@@ -11,7 +11,7 @@ ApplyPilot runs on your own computer (`http://localhost:8080` by default, reacha
 4. Create your local account with that registration code.
 5. Optional: run `ApplyPilot.cmd shortcut` to put an ApplyPilot icon on your desktop.
 
-## 2. Install the browser helper (0.7.3)
+## 2. Install the browser helper (0.7.4)
 
 1. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
 2. Choose **Load unpacked** and select the `extension` folder inside the ApplyPilot folder. (`web\applypilot-local.zip` is the same helper packaged for sharing; unzip it first if you use it instead.)
@@ -73,7 +73,7 @@ Some questions never go to Gemini: work authorization, sponsorship, salary, demo
 | LinkedIn | On a LinkedIn **Jobs search** page you are viewing, click **Add N Easy Apply jobs to ApplyPilot**. Only Easy Apply cards you have not applied to are added. |
 | Indeed | On an Indeed **job search** page you are viewing, click **Add N Indeed Apply jobs to ApplyPilot** ("Easily apply" cards only). |
 
-LinkedIn and Indeed offer no job-search access for personal tools, so ApplyPilot does not crawl them in the background or page through results. You add jobs one results page at a time. Each added job is then checked on its own page before any form opens: remote, title in scope, explicitly allowed from your location, B2B/C2C, and pay against your minimum when posted. External "apply on company site" jobs are skipped with a request for the employer link.
+LinkedIn and Indeed offer no job-search access for personal tools, so ApplyPilot does not crawl them in the background or page through results. You add jobs one results page at a time. When ApplyPilot is running, the helper first opens each added job once in a background tab for a **read-only listing check** (no résumé, no form, no click): only jobs that pass the eligibility, history, employer-hold and duplicate checks enter the saved-search queue; the rest show their reason under Held. Listing checks share the board pacing below. Each queued job is checked again on its own page before any form opens: remote, title in scope, explicitly allowed from your location, B2B/C2C, and pay against your minimum when posted. External "apply on company site" jobs are skipped with a request for the employer link.
 
 Openings on each board are spaced at least 2 minutes apart and capped at 25 per day. A board-reported limit pauses that board for 12 hours. Sign-in, MFA, CAPTCHA and "verify you are human" pages always wait for you.
 

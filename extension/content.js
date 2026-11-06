@@ -560,5 +560,19 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{
  if(m.action==='preparation-status'){reply({busy:!!busy,stopped:!!stopped,attempted:!!attempted,started:!!started,jobId:packet?.job?.id,url:location.href,readyForSubmit:!!started&&!busy&&readyForMySubmit()});return;}
  if(m.action==='fill'){resumeFill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}
 });
-begin();
+// Read-only listing inspection (LinkedIn/Indeed job page opened by the helper for
+// one saved job). Reads the posting and reports it; never fills, clicks, uploads
+// or claims. A board limit or verification page is reported, not bypassed.
+async function inspectListing(){
+ const site=nativeSite();if(site!=='linkedin'&&site!=='indeed')return false;
+ let role;try{role=await chrome.runtime.sendMessage({action:'listing-role'});}catch{return false;}
+ if(!role?.ok||role.data?.inspect!==true)return false;
+ for(let i=0;i<24;i++){if(P.nativeBlocker(bodyText()))break;const snap=postingSnapshot();if(snap.title&&snap.company)break;await new Promise(r=>setTimeout(r,500));}
+ const blocker=P.nativeBlocker(bodyText());
+ if(blocker){await send('listing-limit',{kind:blocker.kind}).catch(()=>{});return true;}
+ const text=bodyText(),alreadyApplied=!!P.receipt(text)||P.nativeAlreadyApplied(text);
+ await send('listing-check',{...postingSnapshot(),alreadyApplied}).catch(()=>{});
+ return true;
+}
+inspectListing().then(inspected=>{if(!inspected)begin();}).catch(()=>begin());
 })();

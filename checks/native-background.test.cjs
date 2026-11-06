@@ -7,7 +7,7 @@ function harness(jobs,shared={}){
  shared.store||={};shared.tabs||=[{id:1,url:'https://applypilot-jobs.netlify.app/automate.html'}];shared.calls||=[];shared.posting||={eligible:true};
  const events={},listener=name=>({addListener(fn){events[name]=fn;}});
  const chrome={windows:{update:async()=>{}},storage:{local:{get:async()=>structuredClone(shared.store),set:async v=>Object.assign(shared.store,structuredClone(v)),setAccessLevel:async()=>{}}},alarms:{get:async()=>({name:'queue'}),create:async()=>{},onAlarm:listener('alarm')},runtime:{getManifest:()=>({version:'0.7.0'}),getURL:p=>'chrome-extension://fixture/'+p,onMessage:listener('message'),onStartup:listener('startup'),onInstalled:listener('installed')},
-  tabs:{query:async({url}={})=>shared.tabs.filter(t=>!url||t.url.startsWith('https://applypilot-jobs.netlify.app/')),get:async id=>{const t=shared.tabs.find(t=>t.id===id);if(!t)throw Error('No tab');return t;},create:async props=>{const t={id:shared.tabs.length+1,...props};shared.tabs.push(t);return t;},update:async(id,props)=>Object.assign(shared.tabs.find(t=>t.id===id),props),sendMessage:async()=>({ok:true}),onRemoved:listener('removed')},
+  tabs:{query:async({url}={})=>shared.tabs.filter(t=>!url||t.url.startsWith('https://applypilot-jobs.netlify.app/')),get:async id=>{const t=shared.tabs.find(t=>t.id===id);if(!t)throw Error('No tab');return t;},create:async props=>{const t={id:shared.tabs.length+1,...props};shared.tabs.push(t);return t;},update:async(id,props)=>Object.assign(shared.tabs.find(t=>t.id===id),props),remove:async id=>{shared.removed=[...(shared.removed||[]),id];shared.tabs=shared.tabs.filter(t=>t.id!==id);},sendMessage:async()=>({ok:true}),onRemoved:listener('removed')},
   scripting:{executeScript:async({args})=>{
    if(!args)return [{result:{ready:true}}];
    const [,route,method,data]=args;shared.calls.push({route,method,data});
@@ -117,4 +117,35 @@ test('local port is configurable; only that localhost origin is trusted and used
  assert.equal(h.shared.tabs.at(-1).url,'http://localhost:8088/assistant');
  // Hosted dashboards stay trusted.
  assert.equal((await h.send('dashboard-status',{},dash('https://applypilot-jobs.netlify.app/automate.html'))).ok,true);
+});
+
+test('read-only listing checks: inactive tab bound to the exact job, then closed; timeouts back off; limits pause the board',async()=>{
+ const due=[{id:'c1',url:'https://www.linkedin.com/jobs/view/4012345601'},{id:'c2',url:'https://www.linkedin.com/jobs/view/4012345602'}];
+ const posted=[];
+ const h=harness([],{routes:{'/jobs':()=>({jobs:[],listing_checks:due.filter(j=>!posted.some(p=>p.url===j.url))}),'/jobs/c1/listing-check':data=>{posted.push(data);return {eligible:true};},'/jobs/c2/listing-check':data=>{posted.push(data);return {eligible:false,blocker:'held'};}}});
+ await h.send('start');await h.events.alarm({name:'queue'});
+ const l=h.shared.store.listing;assert.equal(l.jobId,'c1');const tab=h.shared.tabs.find(t=>t.id===l.tabId);assert.equal(tab.active,false,'background tab');assert.equal(tab.url,due[0].url);
+ assert.equal(Object.keys(h.shared.store.records||{}).length,0,'no application record, no claim');
+ assert(!h.shared.calls.some(c=>/\/local\//.test(c.route)),'no claim, packet or fill');
+ const from=(t,url=t.url,frameId=0)=>({tab:{id:t.id},url,frameId});
+ assert.equal((await h.send('listing-role',{},from(tab))).data.inspect,true);
+ assert.equal((await h.send('listing-role',{},from(tab,tab.url,2))).data.inspect,false,'not a sub-frame');
+ assert.equal((await h.send('listing-role',{},from(tab,due[1].url))).data.inspect,false,'not another job');
+ h.shared.tabs.push({id:77,url:due[0].url});assert.equal((await h.send('listing-check',{title:'x'},from(h.shared.tabs.at(-1)))).ok,false,'not another tab');
+ const r=await h.send('listing-check',{title:'Site Reliability Engineer',company:'Acme'},from(tab));assert.equal(r.ok,true);
+ assert.equal(posted.length,1);assert.equal(posted[0].url,due[0].url);assert(h.shared.removed.includes(tab.id),'tab closed');assert.equal(h.shared.store.listing,null);
+ // Board pacing: the second LinkedIn check waits for spacing.
+ await h.events.alarm({name:'queue'});assert.equal(h.shared.store.listing,null,'paced');
+ h.shared.store.listingOpens=h.shared.store.listingOpens.map(o=>({...o,openedAt:Date.now()-200000}));
+ await h.events.alarm({name:'queue'});const l2=h.shared.store.listing;assert.equal(l2.jobId,'c2');
+ // Timeout: the tab is closed and the job backs off instead of looping.
+ h.shared.store.listing={...l2,openedAt:Date.now()-120000};await h.events.alarm({name:'queue'});
+ assert(h.shared.removed.includes(l2.tabId));assert(h.shared.store.listingBackoff.c2>Date.now()+5*3600000);
+ // A board limit pauses that board's checks; nothing is bypassed.
+ h.shared.store.listingOpens=[];h.shared.store.listingBackoff={};const three={id:'c3',url:'https://www.linkedin.com/jobs/view/4012345603'};due.splice(0,2,three);
+ h.shared.routes['/jobs/c3/listing-check']=()=>({eligible:true});
+ await h.events.alarm({name:'queue'});const l3=h.shared.store.listing;assert.equal(l3.jobId,'c3');
+ await h.send('listing-limit',{kind:'rate-limit'},from(h.shared.tabs.find(t=>t.id===l3.tabId)));
+ assert(h.shared.store.listingCooldown['linkedin']>Date.now()+11*3600000);assert.match(h.shared.store.error,/paused for 12 hours/);
+ h.shared.store.listingBackoff={};await h.events.alarm({name:'queue'});assert.equal(h.shared.store.listing,null,'board paused');
 });

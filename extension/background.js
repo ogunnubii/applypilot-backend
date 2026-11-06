@@ -16,7 +16,7 @@ async function trustedDashboard(sender){
  let origin;try{origin=new URL(sender.url).origin;}catch{return false;}
  return HOSTED_DASHBOARDS.includes(origin)||origin===environmentFor(await read()).origin;
 }
-const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','localPort','error','automaticDefault','userPaused'])});
+const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','localPort','error','automaticDefault','userPaused','listing','listingBackoff','listingOpens','listingCooldown'])});
 let responsiveDashboardId;
 // LinkedIn/Indeed pacing for automatic openings. Conservative fixed limits;
 // a board-reported limit pauses that board far longer (see site-error).
@@ -126,6 +126,30 @@ async function followAutopilot(){
  if(remote.running===false&&(s.enabled||!s.userPaused)){for(const r of Object.values(s.records)){r.auto=false;r.siteRetryAt=0;}await chrome.storage.local.set({enabled:false,userPaused:true,records:s.records});}
  else if(remote.running===true&&(!s.enabled||s.userPaused))await chrome.storage.local.set({enabled:true,userPaused:false,error:''});
 }
+// Read-only listing checks for saved LinkedIn/Indeed cards: one at a time, in a
+// background tab, bound to that exact job, paced with the board's openings, and
+// paused on a board limit or verification page. No claim, fill or click.
+const LISTING_TIMEOUT_MS=60000,LISTING_BACKOFF_MS=6*60*60*1000;
+async function finishListing(s,{backoff=false}={}){
+ const l=s.listing;if(!l)return;
+ if(Number.isInteger(l.tabId))await chrome.tabs.remove(l.tabId).catch(()=>{});
+ const listingBackoff={...(s.listingBackoff||{})};if(backoff)listingBackoff[l.jobId]=Date.now()+LISTING_BACKOFF_MS;
+ await chrome.storage.local.set({listing:null,listingBackoff});
+}
+async function runListingCheck(jobs,s){
+ if(s.listing){
+  const tab=await chrome.tabs.get(s.listing.tabId).catch(()=>null);
+  if(tab&&Date.now()-s.listing.openedAt<LISTING_TIMEOUT_MS)return true;
+  await finishListing(s,{backoff:true});return false;
+ }
+ const now=Date.now(),job=jobs.find(j=>j.listing_check_due===true&&P.nativeBoard?.(j.url)&&!((s.listingBackoff||{})[j.id]>now)&&!Object.values(s.records).some(r=>r.id===j.id)&&nativePaced(j,s));
+ if(!job)return false;
+ const tab=await chrome.tabs.create({url:job.url,active:false});
+ const opens=[...(s.listingOpens||[]).filter(o=>now-o.openedAt<86400000),{url:job.url,openedAt:now}];
+ await chrome.storage.local.set({listing:{jobId:job.id,url:job.url,tabId:tab.id,openedAt:now},listingOpens:opens});
+ return true;
+}
+const listingSender=(s,sender)=>!!s.listing&&sender.tab?.id===s.listing.tabId&&sender.frameId===0&&P.sameApplication(sender.url,s.listing.url);
 async function initialize(){const s=await read();if(!s.automaticDefault)await chrome.storage.local.set({automaticDefault:true,enabled:true,userPaused:false});if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
 async function saveRecord(record){const s=await read();s.records[record.id]=record;await chrome.storage.local.set({records:s.records});}
 async function probeForm(record){
@@ -179,7 +203,8 @@ function eligible(j,s){
 }
 function nativePaced(j,s){
  if(!P.nativeBoard?.(j.url))return true;
- const same=Object.values(s.records).filter(o=>o.openedAt&&siteKey(o.url)===siteKey(j.url));
+ const same=[...Object.values(s.records),...(s.listingOpens||[])].filter(o=>o.openedAt&&siteKey(o.url)===siteKey(j.url));
+ if((s.listingCooldown||{})[siteKey(j.url)]>Date.now())return false;
  return !same.some(o=>Date.now()-o.openedAt<NATIVE_SPACING_MS)&&same.filter(o=>Date.now()-o.openedAt<86400000).length<NATIVE_DAILY_CAP;
 }
 async function retrySubmissionRecords(){
@@ -260,14 +285,28 @@ async function tick(){
   }
   waiting.auto=false;waiting.phase='blocked';await saveRecord(waiting);
  }
- const fresh=await read();let jobs,preparation;try{({jobs,preparation}=await api('/jobs'));}catch(e){await chrome.storage.local.set({error:e.message});return;}
+ const fresh=await read();let jobs,preparation,listingChecks;try{({jobs,preparation,listing_checks:listingChecks}=await api('/jobs'));}catch(e){await chrome.storage.local.set({error:e.message});return;}
  if(await recoverPreparation(jobs,preparation,fresh))return;
+ if(await runListingCheck(Array.isArray(listingChecks)?listingChecks.map(j=>({...j,listing_check_due:true})):jobs,fresh))return;
  const candidates=jobs.filter(j=>(!preparation?.enabled||j.preparation)&&eligible(j,fresh));const queue=[...new Set([...fresh.queue,...candidates.map(j=>j.id)])].filter(id=>candidates.some(j=>j.id===id)).sort((a,b)=>(Number(candidates.find(j=>j.id===a)?.queue_position)||Infinity)-(Number(candidates.find(j=>j.id===b)?.queue_position)||Infinity)||Number(candidates.find(j=>j.id===b)?.match_score||0)-Number(candidates.find(j=>j.id===a)?.match_score||0));await chrome.storage.local.set({queue,error:''});const id=queue[0];if(!id)return;
  try{await openJob(id,true);await chrome.storage.local.set({queue:queue.slice(1),error:''});}
  catch(e){if([400,409].includes(e.status)){await saveRecord({id,url:candidates.find(j=>j.id===id).url,auto:false,phase:'blocked',touched:Date.now()});await chrome.storage.local.set({queue:queue.slice(1),error:'Skipped blocked application: '+e.message});}else await chrome.storage.local.set({error:e.message});}
 }
 async function handle(m,sender){
  await initialize();
+ if(m.action==='listing-role'){const s=await read();return {inspect:listingSender(s,sender)};}
+ if(m.action==='listing-check'||m.action==='listing-limit'){
+  const s=await read();if(!listingSender(s,sender))throw Error('This tab is not a listing check.');
+  if(m.action==='listing-limit'){
+   // A board limit pauses checks on that board for 12 hours; a verification page for 1 hour (the applicant must complete it).
+   const board=siteKey(s.listing.url),listingCooldown={...(s.listingCooldown||{}),[board]:Date.now()+(m.kind==='rate-limit'?NATIVE_LIMIT_COOLDOWN_MS:3600000)};
+   await chrome.storage.local.set({listingCooldown,error:m.kind==='rate-limit'?'The job board reported a limit; listing checks on it are paused for 12 hours.':'The job board asked for a security verification; complete it in your browser. Listing checks on it are paused for 1 hour.'});
+   await finishListing(await read(),{backoff:true});return {};
+  }
+  const {action,...snapshot}=m;void action;
+  let result;try{result=await api('/jobs/'+s.listing.jobId+'/listing-check','POST',{...snapshot,url:sender.url});}catch(e){await finishListing(await read(),{backoff:true});throw e;}
+  await finishListing(await read(),{backoff:result.eligible!==true});return result;
+ }
  if(m.action==='board-import'){
   // Only from a top-level LinkedIn/Indeed search page the applicant is viewing.
   let from;try{from=new URL(sender.url);}catch{throw Error('Untrusted page.');}

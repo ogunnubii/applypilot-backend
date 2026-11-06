@@ -93,6 +93,8 @@ function savedSearchProblem(db,job,focus,candidate=false){
  if(job.applicant_id!==focus.queue_applicant_id)return 'This application is outside the selected saved-search profile.';
  const scope=currentSearchScope(db,job),metadata=metadataFor(job);
  if(!scope)return 'An enabled structured search is required.';
+ // LinkedIn/Indeed cards are verified by a read-only listing check in the browser, not by a search run.
+ if(globalThis.ApplyPilotPolicy.nativeBoard(job.url)){const check=metadata.listingCheck;if(check&&!check.eligible&&check.signature===searchScopeSignature(scope))return 'Listing held: '+(check.blocker||'outside the saved scope');if(!check||check.signature!==searchScopeSignature(scope))return 'Waiting for a read-only listing check of this LinkedIn/Indeed job in your browser.';}
  if(metadata.searchScopeSignature!==searchScopeSignature(scope))return 'Run the active structured search to verify this job against its current scope.';
  if(metadata.available!==true||!Number.isFinite(Date.parse(metadata.checkedAt||''))||Date.now()-Date.parse(metadata.checkedAt)>=86400000)return 'A fresh employer posting check is required.';
  const p=db.prepare('SELECT * FROM applicants WHERE id=? AND user_id=?').get(job.applicant_id,job.user_id),intent=scopeIntent(scope);
@@ -133,7 +135,7 @@ export function focusAllowsSubmit(db,job){
  if(job&&(preparationCampaign(db,job.user_id)?.enabled||preparationMember(db,job)))return false;
  return !!job&&inActiveBatch(db,job)&&!!db.prepare('SELECT 1 FROM work_focus WHERE user_id=? AND enabled=1 AND auto_submit=1 AND job_id=?').get(job.user_id,job.id);
 }
-function hasSubmissionEvidence(db,job){
+export function hasSubmissionEvidence(db,job){
  return !!job&&(['submitted','interview','rejected','offer'].includes(job.status)||!!job.local_attempt_at||['verifying','uncertain','submitted'].includes(job.local_phase)||['Unconfirmed submission','Submission in progress'].includes(job.challenge)||
   !!db.prepare('SELECT 1 FROM autonomous_attempts WHERE job_id=?').get(job.id)||
   !!db.prepare("SELECT 1 FROM events WHERE job_id=? AND type IN ('submission_started','manual_submission','automatic_submission','applicant_reported_submission','submitted','manual_confirmation') LIMIT 1").get(job.id));
@@ -146,7 +148,7 @@ function preparationProblem(db,job){
  if(!supported(job.url))return 'Use a supported direct employer application link.';
  if(globalThis.ApplyPilotPolicy.nativeBoard(job.url)&&p.execution_mode==='cloud')return 'LinkedIn and Indeed applications run only in your own signed-in browser. Choose My Windows browser for this profile.';
  if(metadata.available===false)return 'The employer posting is no longer available.';
- if(currentScopeAssessment(db,job)?.eligibility?.eligible===false)return 'This job does not meet the current search scope and work eligibility requirements.';
+ {const scoped=currentScopeAssessment(db,job);if(scoped?.eligibility?.eligible===false){const m=metadataFor(job);return globalThis.ApplyPilotPolicy.nativeBoard(job.url)&&m.listingCheck&&!m.listingCheck.eligible?'Listing held: '+(m.listingCheck.blocker||scoped.eligibility.reason):'This job does not meet the current search scope and work eligibility requirements'+(scoped.eligibility.reason?': '+scoped.eligibility.reason:'')+'.';}}
  if(metadata.eligibility?.eligible===false)return 'This job does not meet the saved work eligibility requirements.';
  if(excludesFrench(db,job.user_id)&&frenchApplication(job))return 'French-language applications are excluded by your preference.';
  if(employerHold(db,job))return employerHold(db,job).message;

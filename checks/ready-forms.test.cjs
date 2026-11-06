@@ -52,7 +52,7 @@ test('popup shows only live ready forms and its single job action never reports 
 test('content readiness probe reads back required values without changing the employer form',()=>{
  const dom=new JSDOM('<form><label>Name<input required value="Fixture"></label><button type="button">Submit application</button></form>',{url:'https://jobs.ashbyhq.com/fixture/role',runScripts:'outside-only'}),w=dom.window;let receive;
  w.HTMLElement.prototype.getClientRects=()=>[{}];Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});w.chrome={runtime:{onMessage:{addListener(fn){receive=fn;}},sendMessage(){throw Error('Probe must not write');}}};
- w.eval(read('extension/policy.js'));w.eval(read('extension/content.js').replace(/begin\(\);\s*\}\)\(\);/,`packet={job:{id:'${id}'},answers:{},profile:{}};started=true;stopped=true;})();`));
+ w.eval(read('extension/policy.js'));w.eval(read('extension/content.js').replace(/(?:begin\(\);|inspectListing\(\)\.then\([^\n]*)\s*\}\)\(\);/,`packet={job:{id:'${id}'},answers:{},profile:{}};started=true;stopped=true;})();`));
  const probe=()=>{let result;receive({action:'preparation-status'},{},r=>result=r);return result;};
  try{assert.equal(probe().readyForSubmit,true);assert.equal(probe().jobId,id);w.document.querySelector('input').value='';assert.equal(probe().readyForSubmit,false);w.document.querySelector('input').value='Fixture';w.document.querySelector('button').textContent='Next';assert.equal(probe().readyForSubmit,false);assert.equal(w.document.querySelector('input').value,'Fixture');}finally{w.close();}
 });

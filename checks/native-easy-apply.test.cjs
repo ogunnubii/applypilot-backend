@@ -27,7 +27,7 @@ function installModal(w,{question,receipt},log){
     d.getElementById('submit').onclick=()=>{log.push('submit');dialog.innerHTML='<h2>Application sent</h2>\n<p>'+receipt+'</p>\n';};};};
  });
 }
-async function run({url=JOB,autonomous=true,posting={eligible:true},fixture={},markup}={}){
+async function run({url=JOB,autonomous=true,posting={eligible:true},fixture={},markup,inspect=false}={}){
  const html=markup||linkedinPage(fixture);
  const dom=new JSDOM(html,{runScripts:'outside-only',url}),w=dom.window,messages=[],log=[];
  Object.defineProperty(w.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});w.HTMLElement.prototype.getClientRects=()=>[{}];
@@ -38,6 +38,7 @@ async function run({url=JOB,autonomous=true,posting={eligible:true},fixture={},m
  w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(structuredClone(m));
   if(m.action==='packet')return {ok:true,data:packet};
   if(m.action==='state')return {ok:true,data:{automatic:true,attempted,autonomousSubmit:autonomous,prepareSteps:true,autofillOnly:!autonomous,refreshEnabled:true}};
+  if(m.action==='listing-role')return {ok:true,data:{inspect}};
   if(m.action==='posting')return {ok:true,data:posting};
   if(m.action==='answer')return {ok:true,data:{answer:'',reason:'Save your answer to this question; LinkedIn and Indeed applications never use generated answers.'}};
   if(m.action==='attempt'){attempted=true;return {ok:true,data:{ok:true,permitted:true}};}
@@ -135,4 +136,28 @@ test('Indeed Apply: a job-specific receipt is required on the continuation page'
    assert.equal(messages.some(m=>m.action==='receipt'),expected,body);assert(!messages.some(m=>m.action==='attempt'));}
   finally{w.close();}
  }
+});
+
+test('read-only listing check: the inspection tab sends one snapshot and never fills, clicks, claims or submits',{timeout:15000},async()=>{
+ const h=await run({inspect:true});
+ try{
+  await h.done(()=>h.messages.some(m=>m.action==='listing-check'));await new Promise(r=>setTimeout(r,300));
+  const snap=h.messages.find(m=>m.action==='listing-check');
+  assert.equal(snap.title,'Senior Site Reliability Engineer');assert.equal(snap.company,'Acme Cloud');assert.equal(snap.workplace,'remote');assert.equal(snap.nativeApply,true);assert.equal(snap.alreadyApplied,false);
+  assert.deepEqual(h.messages.map(m=>m.action).filter(a=>!['listing-role','listing-check'].includes(a)),[],'no packet, state, posting, step or attempt');
+  assert.deepEqual(h.log,[],'Easy Apply never clicked');assert.equal(h.w.document.querySelector('[role=dialog]'),null);
+ }finally{h.w.close();}
+});
+
+test('read-only listing check: a board verification page reports the limit instead of a snapshot',{timeout:15000},async()=>{
+ const h=await run({inspect:true,markup:'<main><h1>Let\'s do a quick security check</h1>\n<p>Verify you are human to continue.</p>\n<div class="g-recaptcha"></div></main>'});
+ try{
+  await h.done(()=>h.messages.some(m=>['listing-limit','listing-check'].includes(m.action)));
+  assert.equal(h.messages.some(m=>m.action==='listing-check'),false);const lim=h.messages.find(m=>m.action==='listing-limit');assert(lim,'limit reported');
+ }finally{h.w.close();}
+});
+
+test('a tab the helper did not open for a listing check runs the normal bound flow',{timeout:15000},async()=>{
+ const h=await run();
+ try{await h.done(()=>h.messages.some(m=>m.action==='posting'));assert(h.messages.some(m=>m.action==='packet'));assert(!h.messages.some(m=>m.action==='listing-check'));}finally{h.w.close();}
 });

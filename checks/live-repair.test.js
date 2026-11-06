@@ -54,7 +54,12 @@ test('role fit: client-application roles are not Cloud/DevOps/SRE/Platform even 
 test('imported history: provenance, URL aliases and durable employer holds; never counted as submissions',()=>{
  const r=importHistory(db,'u',[{company:'Anthropic',title:'Software Engineer, Mobile Client Platform',status:'uncertain',source_status:'Attempted (AP2 retained ledger)',source:'AP2',urls:['https://job-boards.greenhouse.io/anthropic/jobs/5396384008','https://www.linkedin.com/jobs/view/4012345678/?trk=x']},
   {company:'Anthropic',title:'Software Engineer, macOS',status:'applied',source_status:'Employer acknowledgement (Tsenta)',source:'Tsenta',url:'https://job-boards.greenhouse.io/anthropic/jobs/5445625008'}]);
- assert.equal(r.added,2);assert(r.holds>=2,'company and ATS board held');
+ assert.equal(r.added,2);assert.equal(r.holds,0,'an uncertain role is not an employer-wide hold (AP2 ledger v2)');
+ // The uncertain role itself stays protected by title and by every URL alias.
+ assert.equal(job('same-role',{title:'Software Engineer, Mobile Client Platform',url:'https://job-boards.greenhouse.io/anthropic/jobs/5396384999'}).status,'duplicate');
+ assert.equal(employerHold(db,job('unrelated',{title:'Site Reliability Engineer, Inference',url:'https://job-boards.greenhouse.io/anthropic/jobs/777'})),null,'unrelated role not held');
+ // An explicit employer-level hold (limit/exclusion) holds every role there.
+ const e=importHistory(db,'u',[{company:'Anthropic',title:'Employer-level limit',status:'uncertain',employer_hold:true,source:'AP2',urls:['https://job-boards.greenhouse.io/anthropic/jobs/1']}]);assert(e.holds>=2,'company and ATS board held');
  const h=db.prepare("SELECT source_status FROM external_application_history WHERE title='Software Engineer, macOS'").get();assert.equal(h.source_status,'Employer acknowledgement (Tsenta)');
  // Alias: the same posting under its LinkedIn link is a duplicate.
  const viaLinkedIn=job('li-alias',{title:'Mobile Platform Engineer',url:'https://www.linkedin.com/jobs/view/4012345678'});assert.equal(viaLinkedIn.status,'duplicate');

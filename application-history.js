@@ -65,12 +65,16 @@ export function releaseHistoryEmployerHold(db,userId,employerKey){
 }
 export function importHistory(db,uid,rows){
  if(!Array.isArray(rows)||!rows.length||rows.length>500)throw Error('Import 1–500 application records');
- const clean=rows.map(r=>{if(r.interview_stage!==undefined&&!['scheduled','completed','needs_scheduling'].includes(r.interview_stage))throw Error('Choose a valid interview stage');const company=String(r.company||'').trim(),title=String(r.title||'').trim(),status=r.status==='attempted'?'uncertain':r.status||'applied';
+ const clean=rows.map(r=>{if(r.interview_stage!==undefined&&!['scheduled','completed','needs_scheduling'].includes(r.interview_stage))throw Error('Choose a valid interview stage');const company=String(r.company||'').trim(),title=String(r.title||'').trim(),status0=r.status==='attempted'?'uncertain':r.status||'applied';let status=status0;
  const links=[r.url,...(Array.isArray(r.urls)?r.urls:[])].filter(Boolean).slice(0,20);
  if(r.urls!==undefined&&!Array.isArray(r.urls))throw Error('urls for '+company+' must be a list of links');
  const url_keys=[...new Set(links.map(link=>{try{return canonicalJobURL(String(link));}catch{throw Error('Job link for '+company+' is not a valid HTTPS link');}}))],url_key=url_keys[0]||'';
+ if(r.status==='excluded')status='uncertain';
  if(!company||!title||company.length>200||title.length>300||!['applied','uncertain','interview','screening','rejected','offer'].includes(status))throw Error('Each record needs company, title and a valid status');
- return {company,title,status,url_key,url_keys,source_status:String(r.source_status??r.original_status??r.status??'').slice(0,80),employer_hold:r.employer_hold===true||status==='uncertain',interview_stage:r.interview_stage,notes:String(r.notes||'').slice(0,2000),source:String(r.source||'Tsenta — applicant supplied').slice(0,200),work_mode:['remote','hybrid','on-site'].includes(r.work_mode)?r.work_mode:'unknown',country:String(r.country||'').trim().slice(0,100),interview_at:String(r.interview_at||'').trim().slice(0,100)};});
+ return {company,title,status,url_key,url_keys,source_status:String(r.source_status??r.original_status??r.status??'').slice(0,80),// Employer-wide holds only when the source says so (an employer-level limit or
+ // exclusion). An uncertain record protects its role, same title and every URL
+ // alias, not unrelated roles at that employer (AP2 ledger v2 rule).
+ employer_hold:r.employer_hold===true||r.status==='excluded',interview_stage:r.interview_stage,notes:String(r.notes||'').slice(0,2000),source:String(r.source||'Tsenta — applicant supplied').slice(0,200),work_mode:['remote','hybrid','on-site'].includes(r.work_mode)?r.work_mode:'unknown',country:String(r.country||'').trim().slice(0,100),interview_at:String(r.interview_at||'').trim().slice(0,100)};});
  let added=0,updated=0,blocked=0,holds=0;const active=[];const at=new Date().toISOString();
  const urlKeyed=db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='normalized_url');
  db.exec('BEGIN IMMEDIATE');try{

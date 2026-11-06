@@ -9,7 +9,7 @@ import {importHistory} from './application-history.js';
 
 const PROFILE_FIELDS={name:150,email:254,phone:50,location:150,focus:300};
 const clip=(value,max)=>String(value??'').replace(/[\u0000-\u001f]+/g,' ').trim().slice(0,max);
-const HISTORY_STATUS={submitted:'applied',applied:'applied',confirmed:'applied',uncertain:'uncertain',attempted:'uncertain',unknown:'uncertain',pending:'uncertain',interview:'interview',screening:'screening',rejected:'rejected',offer:'offer'};
+const HISTORY_STATUS={excluded:'excluded',submitted:'applied',applied:'applied',confirmed:'applied',uncertain:'uncertain',attempted:'uncertain',unknown:'uncertain',pending:'uncertain',interview:'interview',screening:'screening',rejected:'rejected',offer:'offer'};
 
 export function normalizeBundle(bundle){
  if(!bundle||typeof bundle!=='object'||Array.isArray(bundle))throw Error('The import file must be a JSON object with "profile" and/or "applications".');
@@ -25,7 +25,7 @@ export function normalizeBundle(bundle){
  const fields={};for(const [key,max] of Object.entries(PROFILE_FIELDS))if(profile&&profile[key]!==undefined&&clip(profile[key],max))fields[key]=clip(profile[key],max);
  const history=rows.map((r,i)=>{
   const status=HISTORY_STATUS[String(r?.status||'applied').toLowerCase()];
-  if(!status)throw Error('Application '+(i+1)+' has an unknown status "'+clip(r?.status,40)+'". Use submitted, uncertain, interview, screening, rejected or offer.');
+  if(!status)throw Error('Application '+(i+1)+' has an unknown status "'+clip(r?.status,40)+'". Use submitted, uncertain, excluded, interview, screening, rejected or offer.');
   if(r.urls!==undefined&&!Array.isArray(r.urls))throw Error('Application '+(i+1)+' has "urls" that is not a list.');
   return {company:clip(r.company,200),title:clip(r.title,300),status,url:r.url?clip(r.url,2000):undefined,urls:Array.isArray(r.urls)?r.urls.slice(0,20).map(u=>clip(u,2000)).filter(Boolean):undefined,source_status:clip(r.status||'applied',80),employer_hold:r.employer_hold===true,notes:clip([r.notes,r.appliedAt?'Applied '+clip(r.appliedAt,40):'',r.confirmation?'Recorded confirmation: '+clip(r.confirmation,300):''].filter(Boolean).join(' · '),2000),source:clip(r.source||'Imported application history',200),work_mode:r.work_mode,country:r.country};
  });

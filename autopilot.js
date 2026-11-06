@@ -5,6 +5,13 @@
 import {setPipeline} from './application-pipeline.js';
 export function installAutopilot(db){
  db.exec('CREATE TABLE IF NOT EXISTS autopilot_state(user_id TEXT PRIMARY KEY REFERENCES users(id),running INTEGER NOT NULL,updated_at TEXT NOT NULL,source TEXT NOT NULL)');
+ db.exec('CREATE TABLE IF NOT EXISTS browser_helper_checkins(user_id TEXT PRIMARY KEY REFERENCES users(id),last_seen_at TEXT NOT NULL)');
+}
+export function recordBrowserCheckin(db,userId,device){
+ // The signed-in helper attaches its device header on its normal queue poll.
+ // Ordinary dashboard reads do not count. Only the timestamp is retained.
+ if(typeof device!=='string'||!/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(device))return;
+ db.prepare('INSERT INTO browser_helper_checkins(user_id,last_seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at').run(userId,new Date().toISOString());
 }
 export function autopilotState(db,userId){
  const row=db.prepare('SELECT running,updated_at,source FROM autopilot_state WHERE user_id=?').get(userId);

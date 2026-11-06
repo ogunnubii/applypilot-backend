@@ -32,6 +32,10 @@ export function doctorReport({env=process.env,db=null,version=process.versions.n
  try{const scopes=db.prepare('SELECT COUNT(*) AS n FROM searches WHERE enabled=1 AND scope_json IS NOT NULL').get().n;add('Search scope',scopes>0,scopes+' enabled structured search(es)',scopes?'':'Save a structured search scope (roles, remote places, authorization).');}catch{}
  try{const a=db.prepare('SELECT running FROM autopilot_state').all();add('Start/Stop',null,a.length?(a.some(r=>r.running)?'Running':'Stopped'):'Not started yet');}catch{}
  try{
+  const last=db.prepare('SELECT max(last_seen_at) AS at FROM browser_helper_checkins').get().at;
+  add('Chrome helper',last&&Date.now()-Date.parse(last)<120000?true:null,last?'Last authenticated helper check-in '+last:'Waiting for the signed-in helper to check in');
+ }catch{}
+ try{
   const history=db.prepare('SELECT COUNT(*) AS n FROM external_application_history').get().n,holds=db.prepare('SELECT COUNT(*) AS n FROM history_employer_holds WHERE released_at IS NULL').get().n;
   add('Imported history',null,history+' protection record(s) (not counted as submissions) · '+holds+' active employer hold(s)');
  }catch{}

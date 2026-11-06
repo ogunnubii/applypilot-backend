@@ -25,7 +25,7 @@ import {installSavedRecovery,recoverSavedAnswers,savedRecoveryStatus} from './sa
 import {applicationLimit,applicationQuota,employerHold,employerLimits,employerQuotas,recordEmployerLimit} from './employer-limits.js';
 import {companyApplicationPolicy,deferForCompanyLimit,isCompanyApplicationPolicyError,markExactRequisitionDuplicate} from './company-application-policy.js';
 import {pipelineStatus,setPipeline,queueFoundApplications,queueEnabledPipelines} from './application-pipeline.js';
-import {autopilotState,setAutopilot,autopilotStopped} from './autopilot.js';
+import {autopilotState,setAutopilot,autopilotStopped,recordBrowserCheckin} from './autopilot.js';
 import {importBundle} from './profile-import.js';
 import {priorApplication} from './application-dedup.js';
 import {prioritizeApplications} from './application-diversity.js';
@@ -237,7 +237,10 @@ if(heldRoute&&(req.method==='POST'||heldRoute[2]==='local/packet'&&req.method===
  }
 }
 if(path==='/api/language-preference'&&req.method==='PUT'){const x=JSON.parse(await body(req));return send(res,200,setFrenchExclusion(db,uid,x.excludeFrench));}
-if(path==='/api/autopilot'&&req.method==='GET')return send(res,200,autopilotState(db,uid));
+if(path==='/api/autopilot'&&req.method==='GET'){
+ recordBrowserCheckin(db,uid,req.headers['x-applypilot-device']);
+ return send(res,200,autopilotState(db,uid));
+}
 if(path==='/api/autopilot'&&req.method==='PUT'){const x=JSON.parse(await body(req));try{return send(res,200,setAutopilot(db,uid,x.running,x.source));}catch(error){return send(res,400,{error:error.message});}}
 if(path==='/api/pipeline'&&req.method==='GET'){const rows=db.prepare("SELECT * FROM jobs WHERE user_id=? AND status='saved'").all(uid),visible=splitApplicationCooldowns(db,uid,prioritizeApplications(db,uid,rows));return send(res,200,{...pipelineStatus(db,uid),found:visible.jobs.length,deferred:visible.deferred.length});}
 if(path==='/api/pipeline'&&req.method==='PUT'){const x=JSON.parse(await body(req));if(x.enabled===true&&autopilotStopped(db,uid))return send(res,409,{error:'ApplyPilot is stopped. Start it to queue found jobs automatically.'});try{return send(res,200,setPipeline(db,uid,x.enabled));}catch(error){return send(res,400,{error:error.message});}}

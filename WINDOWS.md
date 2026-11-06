@@ -11,7 +11,7 @@ ApplyPilot runs on your own computer (`http://localhost:8080` by default, reacha
 4. Create your local account with that registration code.
 5. Optional: run `ApplyPilot.cmd shortcut` to put an ApplyPilot icon on your desktop.
 
-## 2. Install the browser helper (0.7.2)
+## 2. Install the browser helper (0.7.3)
 
 1. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
 2. Choose **Load unpacked** and select the `extension` folder inside the ApplyPilot folder. (`web\applypilot-local.zip` is the same helper packaged for sharing; unzip it first if you use it instead.)
@@ -28,10 +28,34 @@ On the dashboard (`http://localhost:<port>/assistant`, for example `http://local
 1. **Profile**: name, email, phone, location (for example Thornhill, Ontario, Canada), resume, consent, and **My Windows browser** as the execution mode.
 2. **Search scope**: roles (Cloud, DevOps, SRE, Platform); remote places Canada / Thornhill; authorized countries `canada` only; `preferBusinessContract: true`, `allowEmploymentFallback: false` (Canada = incorporated / B2B / C2C, never T4); `preferRemote: true`; `minimumAnnualCAD` (for example 60000).
    * **Roles outside Canada** (dashboard search panel, or `foreignSponsorship: true` with `foreignWorkplaces`): a role abroad qualifies only when its posting explicitly offers visa sponsorship for its own, single named country. "Remote" or silence is never treated as sponsorship. Choose *remote* only, or *remote, hybrid or on-site* if you will relocate once the visa is granted. Ranking puts remote first, then Canadian incorporated work ahead of sponsored roles abroad.
-   * In **Profile → approved answers**, set *Authorized to work in Canada* = Yes, *Require visa sponsorship in Canada* = No, *Authorized to work in countries other than Canada* = No and *Require visa sponsorship for countries other than Canada* = Yes. The outside-Canada answers are used only when the job is in one named country other than Canada, or the question names one; anything unclear stops for you.
+   * In **Profile → approved answers**, set only what you have confirmed: *Authorized to work in Canada* = Yes and *Require visa sponsorship for countries other than Canada* = Yes. Leave *Require visa sponsorship in Canada* and *Authorized to work in countries other than Canada* as **Not provided** unless you know the answer. Questions about an unset fact stop that job and ask you; they are never answered automatically.
 3. **Saved answers**: answer the screening questions you want reused. Unknown questions are never guessed. The job stops with the question listed, and once you save the answer the next job reuses it.
 4. **Import** (optional): **Import profile and history** accepts a JSON file (format below). From a terminal: `ApplyPilot.cmd import -File C:\path\to\applypilot-import.json`.
 5. **Submitted-application email** (optional): enter an address under notification settings. This needs a configured sender (`RESEND_API_KEY`, `BLOCKER_EMAIL_FROM`) and an HTTPS `PUBLIC_ORIGIN`, so on a purely local install with no sender configured, summaries are saved but not sent.
+
+## 3b. Gemini for routine professional questions (optional)
+
+1. Get a Gemini API key from Google AI Studio.
+2. Run `ApplyPilot.cmd gemini` and paste the key at the hidden prompt. It is written only to `.env.local` (git-ignored); it is never shown, logged or sent anywhere except Google's API. Never paste keys into chat.
+3. Run `ApplyPilot.cmd restart`, then turn on **Gemini professional-fact drafting** in your profile.
+
+How answers are chosen, in order:
+1. Your saved facts and saved answers, exactly.
+2. Gemini, only for required routine professional questions, for example "Describe your Kubernetes experience". Gemini must quote your saved facts as evidence; an answer it cannot support is not filled. It is used on direct employer forms, LinkedIn and Indeed alike, with no web research on LinkedIn/Indeed.
+3. Otherwise the job stops and lists the question.
+
+Some questions never go to Gemini: work authorization, sponsorship, salary, demographics, legal declarations and anything personal. Optional questions are left blank. Answers that don't depend on the employer are cached and reused across jobs. At most 30 Gemini drafts are made per day. After a Gemini rate limit or outage, ApplyPilot waits 1 to 30 minutes before trying again.
+
+## 3c. Check your setup
+
+`ApplyPilot.cmd doctor` lists what is configured and what will stop applications:
+* Node.js version, port and address
+* Gemini (configured or not; the key is never printed)
+* each profile's consent and active resume (size and SHA-256)
+* which work-authorization facts are saved and which will ask you
+* the search scope and Start/Stop state
+* imported-history protections and employer holds
+* applications split into confirmed, submitted without a confirmed receipt, blocked and prepared
 
 ## 4. Run it
 
@@ -77,7 +101,7 @@ Openings on each board are spaced at least 2 minutes apart and capped at 25 per 
 }
 ```
 
-`status` is one of `submitted`, `uncertain` (or `attempted`), `interview`, `screening`, `rejected` or `offer`. Only values in the file are used. Existing profile values and saved answers are kept, and differing imported values are reported, not applied. A new profile created by import starts without consent; confirm consent and add your resume on the dashboard.
+`status` is one of `submitted`, `uncertain` (or `attempted`), `interview`, `screening`, `rejected` or `offer`; the original wording is kept as provenance. Add `"urls": ["…", "…"]` for every link the same application was known by (employer board, LinkedIn, Indeed); each one blocks a repeat. An `uncertain` record, or one with `"employer_hold": true`, holds the whole employer until you release it on the dashboard or with `POST /api/employer-holds/release`. Imported records are protections only and are never counted as submissions. Only values in the file are used. Existing profile values and saved answers are kept, and differing imported values are reported, not applied. A new profile created by import starts without consent; confirm consent and add your resume on the dashboard.
 
 ## Before relying on it unattended
 

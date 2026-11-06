@@ -65,3 +65,12 @@ test('import uses the same .env.local (and therefore the same database and port)
  const importer=readFileSync(new URL('../import-local.js',import.meta.url),'utf8');
  assert.match(importer,/process\.env\.PUBLIC_ORIGIN/);
 });
+
+test('Gemini key setup reads a hidden prompt, writes only .env.local and never prints the key',()=>{
+ const start=ps1.search(/^\s+'gemini'\s+\{/m),block=ps1.slice(start,ps1.slice(start).search(/^\s+'shortcut'\s+\{/m)+start);
+ assert(start>0&&block.length>100,'gemini command block found');
+ assert.match(block,/Read-Host [^\n]*-AsSecureString/);assert.match(block,/ZeroFreeBSTR/);
+ assert.match(block,/Set-EnvValues \(\[ordered\]@\{ GEMINI_API_KEY = \$key \}\)/);
+ for(const [,printed] of block.matchAll(/(?:Write-Host|Write-Output|Out-File|Add-Content)\s+([^;}\r\n]+)/g))assert(!/\$key\b/.test(printed),'key printed: '+printed);
+ assert.match(ps1,/'doctor'\s+\{ Assert-Node; Initialize-Env; & node --env-file=\.env\.local doctor\.js \}/);
+});

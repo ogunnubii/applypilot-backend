@@ -12,7 +12,7 @@ test('extension package includes every manifest-referenced file and the current 
  while(zip.readUInt32LE(at)===0x04034b50){const size=zip.readUInt32LE(at+18),len=zip.readUInt16LE(at+26),name=zip.subarray(at+30,at+30+len).toString();names.push(name);
   const data=zip.subarray(at+30+len,at+30+len+size);assert.deepEqual(data,await readFile(new URL('../extension/'+name,import.meta.url)),name);at+=30+len+size;}
  assert.deepEqual(names,[...EXTENSION_FILES]);
- assert.equal(manifest.version,'0.7.2');void inflateRawSync;
+ assert.equal(manifest.version,'0.7.3');void inflateRawSync;
 });
 
 test('manifest grants localhost on any port but injects the dashboard bridge only on ApplyPilot pages',async()=>{

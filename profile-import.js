@@ -26,7 +26,8 @@ export function normalizeBundle(bundle){
  const history=rows.map((r,i)=>{
   const status=HISTORY_STATUS[String(r?.status||'applied').toLowerCase()];
   if(!status)throw Error('Application '+(i+1)+' has an unknown status "'+clip(r?.status,40)+'". Use submitted, uncertain, interview, screening, rejected or offer.');
-  return {company:clip(r.company,200),title:clip(r.title,300),status,url:r.url?clip(r.url,2000):undefined,notes:clip([r.notes,r.appliedAt?'Applied '+clip(r.appliedAt,40):'',r.confirmation?'Recorded confirmation: '+clip(r.confirmation,300):''].filter(Boolean).join(' · '),2000),source:clip(r.source||'Imported application history',200),work_mode:r.work_mode,country:r.country};
+  if(r.urls!==undefined&&!Array.isArray(r.urls))throw Error('Application '+(i+1)+' has "urls" that is not a list.');
+  return {company:clip(r.company,200),title:clip(r.title,300),status,url:r.url?clip(r.url,2000):undefined,urls:Array.isArray(r.urls)?r.urls.slice(0,20).map(u=>clip(u,2000)).filter(Boolean):undefined,source_status:clip(r.status||'applied',80),employer_hold:r.employer_hold===true,notes:clip([r.notes,r.appliedAt?'Applied '+clip(r.appliedAt,40):'',r.confirmation?'Recorded confirmation: '+clip(r.confirmation,300):''].filter(Boolean).join(' · '),2000),source:clip(r.source||'Imported application history',200),work_mode:r.work_mode,country:r.country};
  });
  return {fields,answers,history};
 }

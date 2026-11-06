@@ -1,5 +1,5 @@
 param(
-  [ValidateSet('start','stop','status','restart','foreground','import','package','shortcut')]
+  [ValidateSet('start','stop','status','restart','foreground','import','package','shortcut','doctor','gemini')]
   [string]$Action = 'start',
   [string]$File,
   [string]$Account,
@@ -147,6 +147,20 @@ switch ($Action) {
     $importArgs = @('--env-file=.env.local', 'import-local.js', $File); if ($Account) { $importArgs += $Account }
     & node @importArgs
     if ($LASTEXITCODE -ne 0) { throw 'Import failed.' }
+  }
+  'doctor'     { Assert-Node; Initialize-Env; & node --env-file=.env.local doctor.js }
+  'gemini'     {
+    # The key is typed into a hidden prompt and written only to .env.local (git-ignored).
+    # It is never printed, logged or sent anywhere except Google's Gemini API.
+    Initialize-Env
+    $secure = Read-Host 'Paste your Gemini API key (input hidden; press Enter alone to cancel)' -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try { $key = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+    if (-not $key) { Write-Host 'No change.'; return }
+    if ($key -notmatch '^[A-Za-z0-9_\-]{20,200}$') { $key = $null; throw 'That does not look like a Gemini API key. Nothing was saved.' }
+    Set-EnvValues ([ordered]@{ GEMINI_API_KEY = $key })
+    $key = $null
+    Write-Host 'Gemini key saved to .env.local (not shown). Run ApplyPilot.cmd restart, then turn on Gemini professional-fact drafting in your profile.'
   }
   'shortcut'   {
     $shell = New-Object -ComObject WScript.Shell

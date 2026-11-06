@@ -43,8 +43,17 @@ export function installEmployerLimits(db){
  db.exec("CREATE TRIGGER IF NOT EXISTS employer_limit_queue_insert BEFORE INSERT ON jobs WHEN NEW.status IN ('queued','running') AND "+match+" BEGIN SELECT RAISE(ABORT,'Employer application limit: automatic applications are paused for this employer'); END;");
  db.exec("CREATE TRIGGER IF NOT EXISTS employer_limit_queue_update BEFORE UPDATE OF status ON jobs WHEN NEW.status IN ('queued','running') AND OLD.status!=NEW.status AND "+match+" BEGIN SELECT RAISE(ABORT,'Employer application limit: automatic applications are paused for this employer'); END;");
 }
+// Imported-history hold: an earlier attempt at this employer (from another tool)
+// has an unknown outcome. Account-wide, durable until the applicant releases it.
+function importedHistoryHold(db,job){
+ const name=String(job.company||'').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g,'');
+ const keys=[...new Set([employerKey(job),name?'company:'+name:''].filter(Boolean))];if(!keys.length)return null;
+ let row;try{row=db.prepare(`SELECT * FROM history_employer_holds WHERE user_id=? AND released_at IS NULL AND employer_key IN (${keys.map(()=>'?').join(',')}) ORDER BY created_at LIMIT 1`).get(job.user_id,...keys);}catch{return null;}
+ return row?{kind:'history',employer_key:row.employer_key,company:row.company,source:row.source,observed_at:row.created_at,hold_until:null,message:'Held: '+row.reason+' ('+row.source+'). Review and release this employer before applying again.'}:null;
+}
 export function employerHold(db,job,at=new Date().toISOString()){
  if(!job?.user_id||!job.applicant_id)return null;
+ const imported=importedHistoryHold(db,job);if(imported)return imported;
  const security=securityHolds(db,job.user_id).find(row=>row.applicant_id===job.applicant_id&&row.employer_key===employerKey(job));if(security)return security;
  const row=db.prepare('SELECT * FROM employer_limits WHERE user_id=? AND applicant_id=? AND employer_key=?').get(job.user_id,job.applicant_id,employerKey(job));
  if(!row)return null;

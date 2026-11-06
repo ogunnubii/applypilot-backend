@@ -394,7 +394,7 @@ async function handle(m,sender){
  if(m.action==='progress'){
   if(Number(m.filled)>0){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;}
   b.touched=Date.now();b.interrupted=false;if(m.blocked){b.phase=m.readyForSubmit===true?'prepared':'blocked';b.auto=false;}await saveRecord(b);
-  const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,filled:m.filled,progress:m.progress,formLanguage:m.formLanguage,readyForSubmit:m.readyForSubmit===true,url:sender.url});if(m.blocked)await tick();return result;
+  const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,step:Number.isInteger(m.step)?m.step:undefined,filled:m.filled,progress:m.progress,formLanguage:m.formLanguage,readyForSubmit:m.readyForSubmit===true,url:sender.url});if(m.blocked)await tick();return result;
  }
  if(m.action==='capture')return api('/jobs/'+b.id+'/local/capture','POST',{fields:m.fields});
  if(m.action==='autosave'){if(typeof m.question!=='string'||typeof m.answer!=='string'||!m.answer.trim()||m.answer.length>4000||P.sensitive(m.question)||/password|one.?time|verification code|captcha|API key|access token/i.test(m.question))throw Error('This answer cannot be saved automatically.');b.pendingAnswers=b.pendingAnswers||{};Object.defineProperty(b.pendingAnswers,m.question,{value:{answer:m.answer.trim(),resume:m.resume===true},enumerable:true,configurable:true,writable:true});await saveRecord(b);return flushAnswerOutbox(b);}

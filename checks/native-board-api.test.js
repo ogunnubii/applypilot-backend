@@ -19,7 +19,7 @@ test('native board API: canonical job, posting gate, one reserved attempt, emplo
  const scope=normalizeSearchScope({roles:['Site Reliability Engineer'],localPlaces:[],remotePlaces:['canada','thornhill'],remoteFromCountry:'canada',authorizedCountries:['canada'],preferBusinessContract:true,allowEmploymentFallback:false,minimumAnnualCAD:60000});
  db.prepare("INSERT INTO searches(id,user_id,applicant_id,instruction,scope_json,boards_json,enabled,created_at) VALUES('s','u','p','Fixture',?,'[]',1,'2026')").run(JSON.stringify(scope));
  const listener=createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));const base='http://127.0.0.1:'+port;
- const child=spawn(process.execPath,['server.js'],{cwd:resolve('.'),env:{...process.env,PORT:String(port),BIND_HOST:'127.0.0.1',PUBLIC_ORIGIN:base,GEMINI_API_KEY:'fixture-not-used',OPENAI_API_KEY:'fixture-not-used',OPENAI_MODEL:'fixture'},stdio:['ignore','pipe','pipe']});let log='';child.stdout.on('data',x=>log+=x);child.stderr.on('data',x=>log+=x);const exited=new Promise(r=>child.once('exit',r));
+ const child=spawn(process.execPath,['server.js'],{cwd:resolve('.'),env:{...process.env,PORT:String(port),BIND_HOST:'127.0.0.1',PUBLIC_ORIGIN:base,GEMINI_API_KEY:'',OPENAI_API_KEY:'',OPENAI_MODEL:''},stdio:['ignore','pipe','pipe']});let log='';child.stdout.on('data',x=>log+=x);child.stderr.on('data',x=>log+=x);const exited=new Promise(r=>child.once('exit',r));
  const api=async(path,method='GET',data)=>{const r=await fetch(base+'/api'+path,{method,signal:AbortSignal.timeout(5000),headers:{Authorization:'Bearer '+issueToken('u'),'Content-Type':'application/json','X-ApplyPilot-Device':'11111111-1111-1111-1111-111111111111'},body:data===undefined?undefined:JSON.stringify(data)});return {status:r.status,data:await r.json()};};
  const LI='https://www.linkedin.com/jobs/view/4012345678';
  const b2b='Remote within Canada. Engagement: B2B contract with an incorporated consultant. C2C accepted.';
@@ -35,9 +35,10 @@ test('native board API: canonical job, posting gate, one reserved attempt, emplo
   assert.equal((await api('/jobs','POST',{applicant_id:'p',url:'https://www.linkedin.com/jobs/search/?currentJobId=4012345678'})).status,400,'search pages are not jobs');
   assert.equal((await api('/work-focus','PUT',{enabled:true,auto_submit:true})).data.job_id,id,'unchecked native job is selectable; its eligibility is unknown, not assumed');
   assert.equal((await api('/jobs/'+id+'/local/claim','POST',{})).status,200);
-  const packet=(await api('/jobs/'+id+'/local/packet')).data;assert.equal(packet.aiAssistance,false);assert.equal(packet.nativeBoard,'linkedin');
+  const packet=(await api('/jobs/'+id+'/local/packet')).data;assert.equal(packet.aiAssistance,false,'no Gemini key configured');assert.equal(packet.nativeBoard,'linkedin');
   assert.equal((await api('/jobs/'+id+'/local/research-answer','POST',{question:'Why do you want to work at Acme Cloud?'})).status,403);
-  const draft=(await api('/jobs/'+id+'/local/answer','POST',{question:'Why do you want to work at Acme Cloud?'})).data;assert.equal(draft.answer,'');assert.match(draft.reason,/never use generated answers/);
+  const draft=(await api('/jobs/'+id+'/local/answer','POST',{question:'Describe your experience operating Kubernetes in production.'})).data;assert.equal(draft.answer,'');assert.match(draft.reason,/Gemini/,'without a key: save the answer or configure Gemini');
+  const held=(await api('/jobs/'+id+'/local/answer','POST',{question:'Will you now or in the future require visa sponsorship?'})).data;assert.equal(held.answer,'');
   const attempt=()=>api('/jobs/'+id+'/local/attempt','POST',{url:LI+'/',before:'Review your application',automatic:true,human:false,clickId:randomUUID()});
   const early=await attempt();assert.equal(early.status,409);assert.match(early.data.error,/fresh eligible/);
   const hybridResponse=await api('/jobs/'+id+'/local/posting','POST',page({workplace:'hybrid'})),hybrid=hybridResponse.data;assert.equal(hybrid.eligible,false,JSON.stringify(hybridResponse));assert.match(hybrid.blocker,/remote/);

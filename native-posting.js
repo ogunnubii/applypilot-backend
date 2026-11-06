@@ -5,7 +5,7 @@
 // is a heuristic for which eligible job to try first; it is never presented
 // as an interview, response or hiring probability.
 import './local-policy.js';
-import {scopeIntent,scopedWorkEligibility,isScopeRemote,postingCountry} from './search-scope.js';
+import {scopeIntent,scopedWorkEligibility,isScopeRemote,postingCountry,roleFit} from './search-scope.js';
 import {matchAssessment} from './matching.js';
 import {compensation} from './job-intelligence.js';
 
@@ -74,7 +74,10 @@ export function assessNativePosting(job,input,scope,{date=Date.now(),profileFocu
  const same=(a,b)=>String(a||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()===String(b||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
  if(job.company&&!same(job.company,snapshot.company))return fail('The posting’s company does not match the saved job. Review this job before applying.');
  if(!NATIVE_ROLE_FAMILY.test(snapshot.title)||NATIVE_ROLE_EXCLUSION.test(snapshot.title))return fail('Outside the Cloud, DevOps, SRE and Platform role scope.');
- reasons.push('Cloud/DevOps/SRE/Platform title');
+ // Same deterministic role fit as direct employer jobs (client-app "platform" roles excluded).
+ const roleCheck=scope?roleFit(snapshot.title,{...scope,includeRelatedRoles:true}):{fit:true,reason:'Cloud/DevOps/SRE/Platform title'};
+ if(!roleCheck.fit)return fail('Weak role fit: '+roleCheck.reason+'.');
+ reasons.push(roleCheck.reason);
  const posting={title:snapshot.title,location:[snapshot.workplace==='remote'?'Remote':snapshot.workplace,snapshot.location].filter(Boolean).join(' · '),description:snapshot.description,remote:snapshot.workplace==='remote'};
  const abroad=scope?.foreignSponsorship?postingCountry(snapshot.location):null;
  const sponsoredAbroad=!!abroad&&abroad!=='canada';

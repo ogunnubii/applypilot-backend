@@ -84,7 +84,7 @@ function renderCurrentResume(){
   if(resumeBlobUrl)URL.revokeObjectURL(resumeBlobUrl);
   resumeBlobUrl=URL.createObjectURL(new Blob([Uint8Array.from(atob(data.base64),c=>c.charCodeAt(0))],{type:data.mime}));
   $('#resume-preview-title').textContent=data.applicant+' · Current resume';
-  $('#resume-preview-note').textContent=data.name+' · '+Math.round(data.bytes/1024)+' KB. This is the saved file attached to new applications. '+(data.previewNotice||'Text preview below; download the original to see its formatting.');
+  $('#resume-preview-note').textContent=data.name+' · '+Math.round(data.bytes/1024)+' KB'+(data.sha256?' · SHA-256 '+data.sha256.slice(0,16)+'…':'')+'. This is the exact file attached to new applications'+(data.sha256?' (the helper checks this file name and size before Submit)':'')+'. '+(data.previewNotice||'Text preview below; download the original to see its formatting.');
   $('#resume-original').href=resumeBlobUrl;$('#resume-original').download=data.name;
   $('#resume-previous').hidden=!data.hasPrevious;$('#resume-previous').onclick=async e=>{if(!$('#resume-previous').href){e.preventDefault();try{const previous=await api('/applicants/'+p.id+'/resume-previous');if(generation!==profileGeneration||p.id!==$('#profiles').value)return;if(previousResumeBlobUrl)URL.revokeObjectURL(previousResumeBlobUrl);previousResumeBlobUrl=URL.createObjectURL(new Blob([Uint8Array.from(atob(previous.base64),c=>c.charCodeAt(0))],{type:previous.mime}));$('#resume-previous').href=previousResumeBlobUrl;$('#resume-previous').download=previous.name;$('#resume-previous').click();}catch(error){notice(error.message);}}};$('#resume-previous').removeAttribute('href');
   $('#resume-preview-text').textContent=data.text||'No readable text found.';

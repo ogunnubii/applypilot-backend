@@ -33,6 +33,11 @@ function descriptors(e,metadata=true){
 }
 const label=e=>descriptors(e)[0];
 const protectedField=e=>descriptors(e).some(protectedQuestion)||protectedQuestion(referencedText(e,'aria-describedby'));
+function controlHasValue(e){
+ if(!e)return false;if(e.type==='checkbox'||e.type==='radio')return !!e.checked;if(e.type==='file')return !!e.files?.length;
+ if(e.isContentEditable)return !!compact(e.textContent);if(e.tagName==='SELECT')return [...e.selectedOptions].some(o=>o.value&&!o.disabled);
+ return typeof e.value==='string'&&!!e.value.trim();
+}
 function ambiguousHelp(e,fields=controls()){
  const question=normalizeDescriptor(label(e)),help=referencedText(e,'aria-describedby');
  if(help&&/^(?:additional (?:details|information)|details|please explain|please describe|answer)$/.test(question))return true;
@@ -75,7 +80,9 @@ function postingSnapshot(){
   applicantsText:(top.match(/(?:over\s+)?(?<!\d)\d[\d,]*\+?\s+(?:applicants|people clicked apply)/i)||[''])[0],
   signals,nativeApply,external:!nativeApply&&externalApply(site)};
 }
-let postingChecked=false,nativeStepsVerified=0;
+let postingChecked=false,nativeStepsVerified=0,stepsAdvanced=0;
+// Bounded multi-step progression: a form that keeps offering Next is stopped for review.
+const MAX_FORM_STEPS=12;
 // LinkedIn/Indeed end with a read-only review page. It is accepted as final
 // only after this run verified every earlier step and the page is open in the
 // bound application (modal or Indeed Apply).
@@ -261,8 +268,11 @@ function review(){
  const fields=controls(),required=fields.filter(isRequired),captcha=[...document.querySelectorAll('iframe[src*="captcha"],iframe[title*="challenge" i],.g-recaptcha,.h-captcha,[data-sitekey]')].some(visible);
  const login=fields.some(e=>e.type==='password'||e.autocomplete==='one-time-code'||/\b(verification code|authentication code|one.time code)\b/i.test(label(e)));
  const sensitive=required.some(protectedField),custom=required.some(e=>['combobox','checkbox','radio'].includes(controlRole(e))&&!controlComplete(e,fields));
- const missing=[...new Set(fields.filter(e=>(isRequired(e)||ambiguousHelp(e,fields)||nativeExpected.has(e)||multiExpected.has(e)||e.getAttribute('aria-invalid')==='true'||e.willValidate&&e.validity?.valid===false)&&!controlComplete(e,fields)).map(label))];
- const ambiguous=fields.filter(e=>ambiguousHelp(e,fields));
+ // An optional field is never a blocker: unknown optional answers stay blank.
+ // Ambiguous wording matters only on a required field or one already holding a value.
+ const optionalBlank=e=>!isRequired(e)&&!nativeExpected.has(e)&&!multiExpected.has(e)&&!controlHasValue(e);
+ const missing=[...new Set(fields.filter(e=>(isRequired(e)||ambiguousHelp(e,fields)&&!optionalBlank(e)||nativeExpected.has(e)||multiExpected.has(e)||e.getAttribute('aria-invalid')==='true'||e.willValidate&&e.validity?.valid===false)&&!controlComplete(e,fields)).map(label))];
+ const ambiguous=fields.filter(e=>ambiguousHelp(e,fields)&&!optionalBlank(e));
  const errors=[...document.querySelectorAll('[aria-invalid="true"],[role="alert"]')].filter(visible).filter(e=>e.getAttribute('aria-invalid')==='true'||/required|invalid|error/i.test(e.innerText||''));
  const embedded=[...document.querySelectorAll('iframe')].filter(visible).some(e=>!/captcha|challenge/i.test(e.src)&&e.getBoundingClientRect().height>150);
  const pending=[...(applicationRoot()?.querySelectorAll('form[aria-busy="true"],[role="form"][aria-busy="true"],input[aria-busy="true"],.application-question [aria-busy="true"],.field-wrapper [aria-busy="true"],.ashby-application-form-field-entry [aria-busy="true"],form [role="progressbar"],form progress')||[])].some(e=>visible(e)&&(e.tagName!=='PROGRESS'||!e.hasAttribute('value')||e.value<e.max));
@@ -317,6 +327,8 @@ async function prepareMissingAnswers(){
  for(const e of controls()){
   const fields=controls(),q=label(e),key=norm(q);
   if(isCoverLetterField(e))continue;
+  // Optional questions are never drafted: unknown optional answers stay blank.
+  if(!isRequired(e))continue;
   if(prepared>=12)break;
   const dropdown=e.tagName==='SELECT'||controlRole(e)==='combobox';
   if(attempted||!visible(e)||e.maxLength===0||controlComplete(e,fields)||protectedField(e)||ambiguousHelp(e,fields)||!dropdown&&answer(e)!==null||e.multiple||isCustomMulti(e)||q==='Required field'||q.length<3||q.length>4000||['file','password','checkbox','hidden','submit'].includes(e.type)||e.type==='button'&&!dropdown||controlRole(e)==='checkbox')continue;
@@ -365,14 +377,27 @@ async function fillWithFacts(){
  }
  return total;
 }
-async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}await send('progress',{fields,message:reason,blocked,progress:formProgress(),readyForSubmit:blocked&&fields.length===0&&readyForMySubmit()});if(blocked)await updateAttentionPosition();}
+async function report(reason,fields=[],blocked=true){note.textContent=reason;if(blocked&&!attempted){stopped=true;clearInterval(timer);}
+ // The exact blocker is persisted once; an identical repeat is not re-sent.
+ const reportKey=JSON.stringify([location.href,reason,[...fields].sort(),blocked]);if(blocked&&reportKey===lastBlockedReport)return;lastBlockedReport=blocked?reportKey:'';
+ await send('progress',{fields,message:reason,blocked,step:stepsAdvanced+1,progress:formProgress(),readyForSubmit:blocked&&fields.length===0&&readyForMySubmit()});if(blocked)await updateAttentionPosition();}
 function signature(){return location.href+'|'+controls().map(e=>label(e)+':'+e.type+':'+controlRole(e)).join('|')+'|'+buttons().map(e=>buttonName(e)).join('|');}
 function buttons(){const root=P.customApplication?.(location.href)||nativeSite()?applicationRoot():document;return [...(root?.querySelectorAll('button,input[type="submit"],[role="button"]')||[])].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');}
 const buttonName=e=>compact(e.innerText||e.value||e.getAttribute('aria-label'));
 const isSubmitAction=e=>/^(?:submit(?: my| your| the)?(?: application)?|send(?: my| the)? application|complete application)$/i.test(buttonName(e))||!!P.customApplication?.(location.href)&&hasApplicationFields()&&/^(?:apply|apply now)$/i.test(buttonName(e));
 const isNextAction=e=>/^(?:next(?: step)?|continue(?: application)?|save\s*(?:&|and)\s*continue|save and next|review(?: application)?|proceed)$/i.test(buttonName(e))||!!nativeSite()&&/^(?:review your application|continue to next step)$/i.test(buttonName(e));
 function hasApplicationFields(){return controls().some(e=>!['hidden','submit','button','reset','image','search'].includes(e.type)&&e.getAttribute('role')!=='searchbox');}
-function readyForMySubmit(){const check=review(),actions=buttons(),p=formProgress(),reviewOnly=p.required===0&&nativeReviewOnly();return !attempted&&!initialReceipt&&(hasApplicationFields()||reviewOnly)&&!check.reason&&(p.required>0&&p.required===p.filled||reviewOnly)&&actions.filter(isSubmitAction).length===1&&!actions.some(isNextAction);}
+// Submit only when a visible resume upload actually holds the saved resume (same
+// file name and size), or the board already shows a selected resume.
+function resumeAttachment(){
+ const inputs=[...(applicationRoot()?.querySelectorAll('input[type="file"]')||[])].filter(e=>controlVisible(e)&&!/cover|portfolio/i.test(label(e)+' '+e.name+' '+e.id)&&/resume|cv|curriculum/i.test(label(e)+' '+e.name+' '+e.id));
+ if(!inputs.length)return {ok:true};
+ if(nativeSite()&&nativeResumeSelected())return {ok:true};
+ const r=packet?.resume,expectedSize=r?.base64?Math.floor(r.base64.replace(/=+$/,'').length*3/4):null;
+ for(const e of inputs){const f=e.files?.[0];if(!f)continue;if(!r?.name||f.name===r.name&&(expectedSize===null||f.size===expectedSize))return {ok:true};return {ok:false,reason:'The attached resume ('+f.name+') is not your saved resume. Check it before submitting.'};}
+ return inputs.some(isRequired)||r?.base64?{ok:false,reason:'Your resume is not attached to this form.'}:{ok:true};
+}
+function readyForMySubmit(){if(!resumeAttachment().ok)return false;const check=review(),actions=buttons(),p=formProgress(),reviewOnly=p.required===0&&nativeReviewOnly();return !attempted&&!initialReceipt&&(hasApplicationFields()||reviewOnly)&&!check.reason&&(p.required>0&&p.required===p.filled||reviewOnly)&&actions.filter(isSubmitAction).length===1&&!actions.some(isNextAction);}
 function preparationMessage(check){
  if(check.reason)return check.reason;
  if(!hasApplicationFields())return 'The application form is not open yet. Open Application or Apply to begin autofill.';
@@ -430,14 +455,14 @@ async function advance(){
  if(!controls().length&&!bs.some(b=>isSubmitAction(b)||isNextAction(b)||/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(b)))&&Date.now()-pageWaitAt<20000){note.textContent='Waiting for the employer form to load…';return;}
  if(submit.length===1&&next.length===0){
   if(!controls().length&&!document.querySelector('form')&&!nativeReviewOnly())return report('Cannot identify the final application form.');await send('capture',{fields:formAnswers()});const finalCheck=review();if(finalCheck.reason)return report(finalCheck.reason,finalCheck.fields);
-  const finalButtons=buttons(),finalSubmit=finalButtons.filter(isSubmitAction);if(finalSubmit.length!==1||finalButtons.some(isNextAction))return report('The form changed before final review. Review this step.');if(!readyForMySubmit())return report('Review the employer form: required fields or the final action could not be verified.',[],true);if(packet.autonomousSubmit!==true||state.autonomousSubmit!==true)return report('Ready to submit — all supported fields are filled. Review the form, then click Submit.',[],true);
+  const finalButtons=buttons(),finalSubmit=finalButtons.filter(isSubmitAction);if(finalSubmit.length!==1||finalButtons.some(isNextAction))return report('The form changed before final review. Review this step.');{const attachment=resumeAttachment();if(!attachment.ok)return report(attachment.reason,['Resume'],true);}if(!readyForMySubmit())return report('Review the employer form: required fields or the final action could not be verified.',[],true);if(packet.autonomousSubmit!==true||state.autonomousSubmit!==true)return report('Ready to submit — all supported fields are filled. Review the form, then click Submit.',[],true);
   if(P.submissionDeclaration(bodyText()))return report('The final Submit action includes an employer declaration. Review and submit this form yourself.');
   const before=bodyText(),grant=await send('attempt',{before,automatic:true,human:false,clickId:crypto.randomUUID()});
   attempted=true;submitAt=Date.now();if(grant?.permitted!==true)return report('Submission authorization was not confirmed. Check the employer receipt before retrying.');
   const recheck=review();if(recheck.reason)return report('Form changed after submission authorization. '+recheck.reason,recheck.fields);
   automaticSubmissionInProgress=true;finalSubmit[0].click();note.textContent='Submitted to the employer; waiting for its receipt.';startReceiptMonitor();return;
  }
- if(next.length===1&&submit.length===0){if(!controls().length&&!nativeFormOpen())return report('Cannot identify fields for this step.');await send('capture',{fields:formAnswers()});await send('step');if(nativeSite()){const p=formProgress();if(p.required===p.filled)nativeStepsVerified++;}lastStep=signatureNow;stepAt=Date.now();next[0].click();return;}
+ if(next.length===1&&submit.length===0){if(!controls().length&&!nativeFormOpen())return report('Cannot identify fields for this step.');if(stepsAdvanced>=MAX_FORM_STEPS)return report('Stopped after '+MAX_FORM_STEPS+' form steps without reaching the final step. Review this application yourself.');stepsAdvanced++;await send('capture',{fields:formAnswers()});await send('step');if(nativeSite()){const p=formProgress();if(p.required===p.filled)nativeStepsVerified++;}lastStep=signatureNow;stepAt=Date.now();next[0].click();return;}
  const apply=bs.filter(e=>/^(?:apply|apply now|apply for this job|start application)$/i.test(buttonName(e)));if(!controls().length&&apply.length===1&&lastStep===''){await send('step');lastStep=signatureNow;stepAt=Date.now();apply[0].click();return;}await report('Application action is unfamiliar or ambiguous. Continue manually.');
 }
 function startReceiptMonitor(){stopped=false;clearInterval(timer);timer=setInterval(monitor,2500);}
@@ -459,6 +484,10 @@ async function monitor(){if(!started||busy||stopped||Date.now()<monitorRetryAt)r
 // Recheck saved answers in the existing form. Explicit preparation campaigns may
 // advance non-submit steps; the final action still requires its separate grant.
 let savedRefreshBusy=false,lastRefreshSignature='',formChanged=false,formChangeTimer;
+// Loop guards: ApplyPilot's own edits are not "form changes"; an unchanged
+// answer set is refilled at most MAX_REFILLS times; an identical blocker is
+// reported once. New saved answers or a genuinely different form reset them.
+const MAX_REFILLS=2;let selfEditUntil=0,refills=0,refillSnapshot='',lastBlockedReport='';
 const answerSnapshot=p=>JSON.stringify([p?.profile,p?.answers,p?.aiAssistance,p?.applicationOnlyQuestions,p?.autonomousSubmit,p?.prepareSteps]);
 async function refreshPausedAnswers(){
  if(document.activeElement?.matches?.('input,select,textarea,[contenteditable="true"]'))return;
@@ -469,10 +498,14 @@ async function refreshPausedAnswers(){
   const latest=await send('packet');if(latest.job.attempted){attempted=true;if(!latest.autofillOnly)return;}
   const formSignature=signature();
   if(answerSnapshot(latest)===answerSnapshot(packet)&&formSignature===lastRefreshSignature&&!formChanged){const check=review();await report(preparationMessage(check),check.fields,true);return;}
+  const snapshotNow=answerSnapshot(latest);
+  if(snapshotNow!==refillSnapshot){refillSnapshot=snapshotNow;refills=0;}
+  if(refills>=MAX_REFILLS){const check=review();await report(preparationMessage(check),check.fields,true);return;}
+  refills++;
   lastRefreshSignature=formSignature;formChanged=false;
   packet=latest;busy=true;attemptedCustom=new WeakMap();
   // Reuse saved facts and bounded AI preparation, preserving existing field values.
-  await fill();const check=review();
+  selfEditUntil=Date.now()+60000;try{await fill();}finally{selfEditUntil=Date.now()+1500;}const check=review();
   if((packet.autonomousSubmit===true||packet.prepareSteps===true)&&state.refreshEnabled&&!check.reason){stopped=false;await advance();if(!stopped)startReceiptMonitor();}else await report(preparationMessage(check),check.fields,true);
  }catch{/* Keep the existing form and edits intact when the connection is unavailable. */}
  finally{busy=false;savedRefreshBusy=false;}
@@ -480,6 +513,7 @@ async function refreshPausedAnswers(){
 if(!siteIssue()){
  setInterval(refreshPausedAnswers,30000);
  new MutationObserver(changes=>{
+  if(busy||Date.now()<selfEditUntil)return;
   if(!changes.some(c=>!bar?.contains(c.target)&&(c.type==='attributes'||[...c.addedNodes,...c.removedNodes].some(n=>n!==bar))))return;
   formChanged=true;clearTimeout(formChangeTimer);
   formChangeTimer=setTimeout(()=>{if(packet?.autofillOnly)refreshPausedAnswers();},750);

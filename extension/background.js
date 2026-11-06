@@ -152,6 +152,24 @@ async function runListingCheck(jobs,s){
 const listingSender=(s,sender)=>!!s.listing&&sender.tab?.id===s.listing.tabId&&sender.frameId===0&&P.sameApplication(sender.url,s.listing.url);
 async function initialize(){const s=await read();if(!s.automaticDefault)await chrome.storage.local.set({automaticDefault:true,enabled:true,userPaused:false});if(!s.device)await chrome.storage.local.set({device:crypto.randomUUID()});await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});if(!await chrome.alarms.get('queue'))await chrome.alarms.create('queue',{periodInMinutes:0.5});}
 async function saveRecord(record){const s=await read();s.records[record.id]=record;await chrome.storage.local.set({records:s.records});}
+// Continue binds to the one open tab showing this exact job. A stored tab id
+// can be stale (tab closed, browser restarted, helper reloaded); it is rebound
+// only to exactly one matching tab. Never opens a tab or a second form.
+async function liveTabFor(record){
+ const id=recordTabId(record),stored=Number.isInteger(id)?await chrome.tabs.get(id).catch(()=>null):null;
+ if(stored&&tabHolds(stored,record))return stored;
+ const tabs=await chrome.tabs.query({});
+ if(Number.isInteger(record.flowTabId))throw Error('The Indeed Apply tab for this job is no longer open. Check Indeed for this application; ApplyPilot will not start it again.');
+ const matches=tabs.filter(t=>P.sameApplication(t.url,record.url));
+ if(!matches.length)throw Error('No open tab shows this job. Open the job page yourself, then press Continue. ApplyPilot did not open a new form.');
+ if(matches.length>1)throw Error('Several open tabs show this job. Close the extra tabs, then press Continue. Nothing was filled.');
+ record.tabId=matches[0].id;record.frameId=0;await saveRecord(record);return matches[0];
+}
+// Re-read the live form in that tab (its content script re-runs every check).
+function recheckLive(tab,record){
+ const frameId=tab.id===record.flowTabId?0:record.frameId||0;
+ chrome.tabs.sendMessage(tab.id,{action:'fill'},{frameId}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[frameId]},files:['policy.js','content.js']})).catch(e=>chrome.storage.local.set({error:'Could not recheck the employer form: '+e.message}));
+}
 async function probeForm(record){
  let timer;try{return await Promise.race([chrome.tabs.sendMessage(recordTabId(record),{action:'preparation-status'},{frameId:Number.isInteger(record.flowTabId)?0:record.frameId||0}),new Promise(resolve=>{timer=setTimeout(()=>resolve(null),2000);})]);}catch{return null;}finally{clearTimeout(timer);}
 }
@@ -331,18 +349,23 @@ async function handle(m,sender){
   if(Object.values(s.records).some(r=>r.id!==m.id&&r.auto&&['ready','verifying'].includes(r.phase)))throw Error('Another application is running. Your answers are saved; resume this one after it finishes.');
   const {jobs}=await api('/jobs'),job=jobs.find(j=>j.id===m.id);
   if(!job||job.status!=='local_browser'||job.local_attempt_at||['Unconfirmed submission','Submission in progress'].includes(job.challenge))throw Error('A submission may already have occurred. Check the employer receipt.');
-  return openJob(m.id,true);
+  // The stored blocker (for example a CAPTCHA already solved) is not consulted:
+  // the live form in the one matching tab is rechecked instead.
+  const tab=await liveTabFor(record);
+  const claim=await api('/jobs/'+m.id+'/local/claim','POST',{});
+  if(claim.attempted){record.attempted=true;record.phase='verifying';record.auto=false;await saveRecord(record);throw Error('A submission may already have occurred. Check the employer receipt.');}
+  Object.assign(record,{auto:true,manualOpen:false,phase:'ready',touched:Date.now(),interrupted:false});await saveRecord(record);
+  recheckLive(tab,record);return {continued:true,rechecked:true};
  }
  if(m.action==='focus-existing'){
   if(!await trustedDashboard(sender))throw Error('Untrusted dashboard.');
   const s=await read(),record=s.records[m.id];
-  if(!Number.isInteger(recordTabId(record)))throw Error('The original employer tab is no longer open. Open ApplyPilot Local to review this application before restarting it.');
-  const tab=await chrome.tabs.get(recordTabId(record)).catch(()=>null);
-  if(!tabHolds(tab,record))throw Error('The original employer form is no longer available. Open ApplyPilot Local to review it; no application was restarted.');
-  await chrome.tabs.update(tab.id,{active:true});await chrome.windows.update(tab.windowId,{focused:true});
+  if(!record)throw Error('This application is not tracked in this browser. Open ApplyPilot Local to review it; no application was restarted.');
+  const tab=await liveTabFor(record);
+  await chrome.tabs.update(tab.id,{active:true});if(Number.isInteger(tab.windowId))await chrome.windows.update(tab.windowId,{focused:true});
   // Filling requests its packet through this same serialized message queue.
   // Release the queue before waiting on content-script work to avoid deadlock.
-  chrome.tabs.sendMessage(tab.id,{action:'fill'},{frameId:tab.id===record.flowTabId?0:record.frameId||0}).catch(()=>chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[tab.id===record.flowTabId?0:record.frameId||0]},files:['policy.js','content.js']})).catch(e=>chrome.storage.local.set({error:'Could not refill the employer form: '+e.message}));return {focused:true};
+  recheckLive(tab,record);return {focused:true};
  }
  const popup=!sender.tab&&sender.url===chrome.runtime.getURL('popup.html');
  if(popup){

@@ -65,7 +65,15 @@ test('fresh LinkedIn/Indeed cards reach the saved-search queue only through a re
   const ops=(await api('/operations')).data;assert.equal(ops.bySource.linkedin.confirmed,0);assert.equal(ops.totals.confirmed,0);
   // Scope change makes the stamp stale: due again rather than trusted.
   db.prepare("UPDATE searches SET scope_json=? WHERE id='s'").run(JSON.stringify(normalizeSearchScope({roles:['Site Reliability Engineer','Platform Engineer'],localPlaces:[],remotePlaces:['canada'],remoteFromCountry:'canada',authorizedCountries:['canada'],allowEmploymentFallback:false,includeRelatedRoles:true})));
-  const other=(await api('/jobs/board-import','POST',{board:'indeed',jobs:[{url:'https://www.indeed.com/viewjob?jk=0123456789abcdef',title:'Senior Site Reliability Engineer',company:'Indeed Co'}]}));
-  if(other.status===429){db.prepare("UPDATE events SET at='2000-01-01T00:00:00.000Z' WHERE type='board_import'").run();}
+  // Canadian Indeed: the regional link is kept for opening; the canonical key dedupes.
+  const unpace=()=>db.prepare("UPDATE events SET at='2000-01-01T00:00:00.000Z' WHERE type='board_import'").run();unpace();
+  const ca=await api('/jobs/board-import','POST',{board:'indeed',jobs:[{url:'https://ca.indeed.com/viewjob?jk=0123456789ABCDEF&from=serp&vjs=3',title:'Site Reliability Engineer',company:'Indeed Co'}]});
+  assert.equal(ca.data.added,1,JSON.stringify(ca.data));
+  assert.deepEqual({...db.prepare('SELECT url,normalized_url FROM jobs WHERE id=?').get(ca.data.ids[0])},{url:'https://ca.indeed.com/viewjob?jk=0123456789abcdef',normalized_url:'https://www.indeed.com/viewjob?jk=0123456789abcdef'});
+  assert((await api('/jobs')).data.listing_checks.some(j=>j.id===ca.data.ids[0]&&j.url.startsWith('https://ca.indeed.com/')),'the regional job gets its listing check on its own site');
+  unpace();const again=await api('/jobs/board-import','POST',{board:'indeed',jobs:[{url:'https://www.indeed.com/viewjob?jk=0123456789abcdef'}]});
+  assert.equal(again.data.added,0);assert.equal(again.data.existing,1,'same job id on another Indeed site is the same job');
+  // The listing check binds the regional page to the job; a different job id is refused.
+  assert.equal((await api('/jobs/'+ca.data.ids[0]+'/listing-check','POST',{...page('x'),url:'https://ca.indeed.com/viewjob?jk=fedcba9876543210'})).status,409);
  }finally{child.kill();await exited;db.close();}
 });

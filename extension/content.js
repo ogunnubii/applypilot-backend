@@ -58,8 +58,13 @@ function easyApplyButtons(){
  return new Set(found.map(e=>e.getAttribute('aria-label')||'')).size<=1?found:[];
 }
 function indeedApplyButtons(){
- const found=[...document.querySelectorAll('#indeedApplyButton,button,[role="button"]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true'&&(e.id==='indeedApplyButton'||/^apply now$/i.test(buttonName(e))));
- return [...new Set(found)];
+ // Indeed Apply is a button, or (on regional sites such as ca.indeed.com) an
+ // anchor to smartapply.indeed.com. An anchor counts only when it continues
+ // this exact job (no jk, or the page's jk); another job's link never does.
+ const smartApply=e=>e.tagName==='A'&&!!e.href&&P.nativeContinuation?.(e.href)&&P.continuationOf?.(e.href,location.href);
+ const found=[...document.querySelectorAll('#indeedApplyButton,button,[role="button"],a[href]')].filter(e=>!bar?.contains(e)&&visible(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true'&&(e.tagName==='A'?smartApply(e)&&(e.id==='indeedApplyButton'||/^apply now\b/i.test(buttonName(e))):e.id==='indeedApplyButton'||/^apply now$/i.test(buttonName(e))));
+ // A button wrapping its own anchor is one control.
+ return [...new Set(found)].filter((e,_,all)=>!all.some(o=>o!==e&&o.contains(e)));
 }
 const externalApply=site=>[...document.querySelectorAll('a,button,[role="button"]')].some(e=>!bar?.contains(e)&&visible(e)&&(site==='linkedin'?/^apply$/i.test(buttonName(e))&&/company website|on company site|external/i.test(e.getAttribute('aria-label')||e.getAttribute('title')||'apply on company website'):/^apply on company site$/i.test(buttonName(e))));
 // A read-only snapshot of the bound job page; nothing is clicked or filled.
@@ -67,9 +72,13 @@ function postingSnapshot(){
  const site=nativeSite(),top=textOf('.job-details-jobs-unified-top-card__container--two-pane,.jobs-unified-top-card,.job-details-jobs-unified-top-card__primary-description-container,[data-testid="jobsearch-JobInfoHeader"],.jobsearch-JobInfoHeader-title-container')||compact(bodyText()).slice(0,1500);
  const title=textOf(site==='linkedin'?'.job-details-jobs-unified-top-card__job-title h1,.jobs-unified-top-card__job-title,h1':'[data-testid="jobsearch-JobInfoHeader-title"],.jobsearch-JobInfoHeader-title,h1').replace(/\s*-\s*job post$/i,'');
  const company=textOf(site==='linkedin'?'.job-details-jobs-unified-top-card__company-name,.jobs-unified-top-card__company-name,[data-company-name="true"]':'[data-testid="inlineHeader-companyName"],[data-company-name="true"],.jobsearch-CompanyInfoContainer a');
- const where=textOf(site==='linkedin'?'[data-testid="job-location"],.job-details-jobs-unified-top-card__bullet,.job-details-jobs-unified-top-card__primary-description-container .tvm__text:first-child':'[data-testid="inlineHeader-companyLocation"],[data-testid="job-location"],#jobLocationText');
+ const where=textOf(site==='linkedin'?'[data-testid="job-location"],.job-details-jobs-unified-top-card__bullet,.job-details-jobs-unified-top-card__primary-description-container .tvm__text:first-child,.job-details-jobs-unified-top-card__tertiary-description-container .tvm__text:first-child':'[data-testid="inlineHeader-companyLocation"],[data-testid="job-location"],#jobLocationText');
  const pills=[...document.querySelectorAll('button,span,li,div')].filter(e=>!bar?.contains(e)&&visible(e)&&e.children.length<=2).map(e=>compact(e.innerText||e.textContent)).filter(t=>t&&t.length<=40);
- const places=new Set(pills.map(t=>t.toLowerCase()).filter(t=>['remote','hybrid','on-site','onsite'].includes(t)).map(t=>t==='onsite'?'on-site':t));
+ // LinkedIn's current header shows workplace and job type as preference pills.
+ // Read them from the header so "Hybrid" in a similar-jobs list cannot interfere.
+ const header=site==='linkedin'?[...document.querySelectorAll('.job-details-fit-level-preferences,.job-details-preferences-and-skills,.job-details-jobs-unified-top-card__job-insight')].filter(visible):[];
+ const headerPills=header.flatMap(h=>[...h.querySelectorAll('button,span,li,strong')].map(e=>compact(e.innerText||e.textContent)).filter(t=>t&&t.length<=40));
+ const places=new Set((headerPills.some(t=>/^(?:remote|hybrid|on-?site)$/i.test(t))?headerPills:pills).map(t=>t.toLowerCase()).filter(t=>['remote','hybrid','on-site','onsite'].includes(t)).map(t=>t==='onsite'?'on-site':t));
  const workplace=/\bhybrid\b/i.test(where)?'hybrid':/\bon-?site\b|\bin-person\b/i.test(where)?'on-site':places.size===1?[...places][0]:/\bremote\b/i.test(where)&&!places.size?'remote':'';
  const salaryText=pills.find(t=>/\$\s?[\d,.]+\s*k?[^$]{0,24}(?:-|–|—|to)\s*\$\s?[\d,.]+\s*k?\s*(?:\/\s*|\s+(?:a|an|per)\s+)(?:yr|year|hr|hour|mo|month|week|day)\b/i.test(t))||'';
  const description=textOf(site==='linkedin'?'#job-details,.jobs-description__content,.jobs-box__html-content':'#jobDescriptionText,[data-testid="jobDescriptionText"]').slice(0,24000);
@@ -88,9 +97,19 @@ const MAX_FORM_STEPS=12;
 // bound application (modal or Indeed Apply).
 const nativeFormOpen=()=>nativeSite()==='linkedin'&&!!applicationRoot()||nativeSite()==='indeed-apply';
 const nativeReviewOnly=()=>nativeFormOpen()&&nativeStepsVerified>0&&[...(applicationRoot()?.querySelectorAll('h1,h2,h3,h4,[role="heading"]')||[])].some(e=>visible(e)&&/^review your application$/i.test(compact(e.textContent)));
+// A challenge, sign-in or board limit visible right now. Always read live,
+// never from an earlier report.
+function liveChallenge(){
+ const native=nativeSite()?P.nativeBlocker(bodyText()):null;if(native)return native;
+ if([...document.querySelectorAll('iframe[src*="captcha"],iframe[title*="challenge" i],.g-recaptcha,.h-captcha,[data-sitekey]')].some(visible))return {kind:'verification',message:'CAPTCHA requires you'};
+ return null;
+}
 async function checkNativePosting(){
  const site=nativeSite();if(postingChecked||attempted||!['linkedin','indeed'].includes(site))return true;
- const result=await send('posting',postingSnapshot());postingChecked=true;
+ // A verification page is not the posting: report it, never assess it.
+ const challenge=liveChallenge();
+ if(challenge){if(!bar)mount();started=true;if(challenge.kind==='rate-limit'){stopped=true;clearInterval(timer);await send('site-error',{code:429,native:true,empty:false,initial:false});note.textContent=challenge.message;return false;}await report(challenge.message,[],true);return false;}
+ const result=await send('posting',postingSnapshot());postingChecked=result.eligible===true;
  if(result.eligible===true)return true;
  if(!bar)mount();started=true;await report(result.blocker||'This posting is outside your saved scope.',[],true);return false;
 }
@@ -504,6 +523,7 @@ async function refreshPausedAnswers(){
   refills++;
   lastRefreshSignature=formSignature;formChanged=false;
   packet=latest;busy=true;attemptedCustom=new WeakMap();
+  if(!await checkNativePosting())return;
   // Reuse saved facts and bounded AI preparation, preserving existing field values.
   selfEditUntil=Date.now()+60000;try{await fill();}finally{selfEditUntil=Date.now()+1500;}const check=review();
   if((packet.autonomousSubmit===true||packet.prepareSteps===true)&&state.refreshEnabled&&!check.reason){stopped=false;await advance();if(!stopped)startReceiptMonitor();}else await report(preparationMessage(check),check.fields,true);
@@ -557,7 +577,7 @@ document.addEventListener('submit',e=>{
  if(submitter&&Date.now()-lastNativeSubmitClickAt>1000){recordAssistance();void observeManualSubmission();}
 },true);
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{
- if(m.action==='preparation-status'){reply({busy:!!busy,stopped:!!stopped,attempted:!!attempted,started:!!started,jobId:packet?.job?.id,url:location.href,readyForSubmit:!!started&&!busy&&readyForMySubmit()});return;}
+ if(m.action==='preparation-status'){reply({busy:!!busy,stopped:!!stopped,attempted:!!attempted,started:!!started,jobId:packet?.job?.id,url:location.href,readyForSubmit:!!started&&!busy&&readyForMySubmit(),challenge:liveChallenge()?.message||''});return;}
  if(m.action==='fill'){resumeFill().then(()=>reply({ok:true})).catch(e=>reply({error:e.message}));return true;}
 });
 // Read-only listing inspection (LinkedIn/Indeed job page opened by the helper for

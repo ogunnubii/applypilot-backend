@@ -25,7 +25,7 @@
    for(const node of document.querySelectorAll('[data-jk]')){
     const jk=String(node.getAttribute('data-jk')||'').toLowerCase();if(!/^[a-f0-9]{16}$/.test(jk)||found.has(jk))continue;
     const card=node.closest('.job_seen_beacon,.cardOutline,li,td')||node;
-    found.set(jk,{url:'https://www.indeed.com/viewjob?jk='+jk,title:textIn(card,'h2.jobTitle span[title],h2.jobTitle,[id^="jobTitle"]')||compact(node.textContent),
+    found.set(jk,{url:'https://'+(/^[a-z]{2}\.indeed\.com$/.test(location.hostname)?location.hostname:'www.indeed.com')+'/viewjob?jk='+jk,title:textIn(card,'h2.jobTitle span[title],h2.jobTitle,[id^="jobTitle"]')||compact(node.textContent),
      company:textIn(card,'[data-testid="company-name"],.companyName'),location:textIn(card,'[data-testid="text-location"],.companyLocation'),
      nativeApply:hasLabel(card,/^(?:easily apply|indeed apply|easily apply to this job)$/i),applied:hasLabel(card,/^applied\b/i)});
    }

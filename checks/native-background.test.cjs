@@ -7,7 +7,7 @@ function harness(jobs,shared={}){
  shared.store||={};shared.tabs||=[{id:1,url:'https://applypilot-jobs.netlify.app/automate.html'}];shared.calls||=[];shared.posting||={eligible:true};
  const events={},listener=name=>({addListener(fn){events[name]=fn;}});
  const chrome={windows:{update:async()=>{}},storage:{local:{get:async()=>structuredClone(shared.store),set:async v=>Object.assign(shared.store,structuredClone(v)),setAccessLevel:async()=>{}}},alarms:{get:async()=>({name:'queue'}),create:async()=>{},onAlarm:listener('alarm')},runtime:{getManifest:()=>({version:'0.7.0'}),getURL:p=>'chrome-extension://fixture/'+p,onMessage:listener('message'),onStartup:listener('startup'),onInstalled:listener('installed')},
-  tabs:{query:async({url}={})=>shared.tabs.filter(t=>!url||t.url.startsWith('https://applypilot-jobs.netlify.app/')),get:async id=>{const t=shared.tabs.find(t=>t.id===id);if(!t)throw Error('No tab');return t;},create:async props=>{const t={id:shared.tabs.length+1,...props};shared.tabs.push(t);return t;},update:async(id,props)=>Object.assign(shared.tabs.find(t=>t.id===id),props),remove:async id=>{shared.removed=[...(shared.removed||[]),id];shared.tabs=shared.tabs.filter(t=>t.id!==id);},sendMessage:async()=>({ok:true}),onRemoved:listener('removed')},
+  tabs:{query:async({url}={})=>shared.tabs.filter(t=>!url||t.url.startsWith('https://applypilot-jobs.netlify.app/')),get:async id=>{const t=shared.tabs.find(t=>t.id===id);if(!t)throw Error('No tab');return t;},create:async props=>{const t={id:shared.tabs.length+1,...props};shared.tabs.push(t);return t;},update:async(id,props)=>Object.assign(shared.tabs.find(t=>t.id===id),props),remove:async id=>{shared.removed=[...(shared.removed||[]),id];shared.tabs=shared.tabs.filter(t=>t.id!==id);},sendMessage:async(id,msg,opts)=>{(shared.sent||=[]).push({id,msg,frameId:opts?.frameId});return {ok:true};},onRemoved:listener('removed')},
   scripting:{executeScript:async({args})=>{
    if(!args)return [{result:{ready:true}}];
    const [,route,method,data]=args;shared.calls.push({route,method,data});
@@ -148,4 +148,46 @@ test('read-only listing checks: inactive tab bound to the exact job, then closed
  await h.send('listing-limit',{kind:'rate-limit'},from(h.shared.tabs.find(t=>t.id===l3.tabId)));
  assert(h.shared.store.listingCooldown['linkedin']>Date.now()+11*3600000);assert.match(h.shared.store.error,/paused for 12 hours/);
  h.shared.store.listingBackoff={};await h.events.alarm({name:'queue'});assert.equal(h.shared.store.listing,null,'board paused');
+});
+
+// Continue after a human step: one exact, already-open tab; never a new form.
+const DASH={tab:{id:1},frameId:0,url:'https://applypilot-jobs.netlify.app/automate.html'};
+function continueHarness({record={},tabs=[],job={}}={}){
+ const h=harness([{...{id:'a',status:'local_browser',execution_mode:'local',url:LI,title:'Senior SRE',company:'Acme Cloud',local_attempt_at:null,challenge:null},...job}],{tabs:[{id:1,url:DASH.url},...tabs],store:{records:{a:{id:'a',url:LI,tabId:5,phase:'blocked',auto:false,...record}}}});
+ const created=()=>h.shared.tabs.filter(t=>t.id!==1&&!tabs.some(o=>o.id===t.id)).length;
+ const claims=()=>h.shared.calls.filter(c=>c.route==='/jobs/a/local/claim').length;
+ const fills=()=>(h.shared.sent||[]).filter(x=>x.msg.action==='fill');
+ return {...h,created,claims,fills};
+}
+test('Continue after a reload rebinds a stale tab id to the one open tab showing this job and rechecks the live form there',async()=>{
+ for(const action of ['resume-existing','focus-existing']){
+  const h=continueHarness({tabs:[{id:9,url:LI+'/?trk=public_jobs',windowId:1}]});
+  const r=await h.send(action,{id:'a'},DASH);assert.equal(r.ok,true,action+': '+r.error);
+  assert.equal(h.shared.store.records.a.tabId,9,'rebound to the open tab');assert.equal(h.created(),0,'no new tab');
+  assert.deepEqual(h.fills().map(x=>x.id),[9],'live recheck in that tab only');
+  if(action==='resume-existing'){assert.equal(h.claims(),1);assert.equal(h.shared.store.records.a.auto,true);assert.equal(h.shared.store.records.a.phase,'ready');}
+  else assert.equal(h.claims(),0,'focus never claims');
+  assert(!h.shared.calls.some(c=>/\/local\/(?:step|attempt|submitted)$/.test(c.route)),'no step, reservation or submission');
+ }
+});
+test('Continue with no matching tab, or several, says so and opens or fills nothing',async()=>{
+ for(const [tabs,pattern] of [[[],/No open tab shows this job[\s\S]*did not open a new form/],[[{id:9,url:LI},{id:10,url:LI+'?refId=x'}],/Several open tabs show this job/],[[{id:9,url:'https://www.linkedin.com/jobs/view/4099999999'}],/No open tab shows this job/]])
+  for(const action of ['resume-existing','focus-existing']){
+   const h=continueHarness({tabs});const r=await h.send(action,{id:'a'},DASH);
+   assert.equal(r.ok,false);assert.match(r.error,pattern);assert.equal(h.created(),0);assert.equal(h.fills().length,0);assert.equal(h.claims(),0);assert.equal(h.shared.store.records.a.tabId,5,'not rebound');
+  }
+ // A lost Indeed Apply tab cannot be identified again; it is not restarted from the job page.
+ const h=continueHarness({record:{url:IN,flowTabId:12},job:{url:IN},tabs:[{id:9,url:IN}]});
+ const r=await h.send('resume-existing',{id:'a'},DASH);assert.match(r.error,/Indeed Apply tab for this job is no longer open/);assert.equal(h.fills().length,0);assert.equal(h.created(),0);
+});
+test('Continue never restarts an attempted or confirmed application',async()=>{
+ const cases=[[{record:{attempted:true}},/cannot automatically restart/],[{record:{phase:'submitted',attempted:true}},/cannot automatically restart/],[{job:{local_attempt_at:'2026-11-05T00:00:00Z'}},/submission may already have occurred/],[{job:{challenge:'Unconfirmed submission'}},/submission may already have occurred/],[{job:{status:'submitted'}},/submission may already have occurred/]];
+ for(const [opts,pattern] of cases){
+  const h=continueHarness({...opts,tabs:[{id:9,url:LI}]});const r=await h.send('resume-existing',{id:'a'},DASH);
+  assert.equal(r.ok,false);assert.match(r.error,pattern);assert.equal(h.fills().length,0);assert.equal(h.claims(),0);assert.equal(h.created(),0);
+ }
+ // The server reports an attempt at claim time: the record becomes verification-only.
+ const h=continueHarness({tabs:[{id:9,url:LI}]});h.shared.routes={'/jobs/a/local/claim':()=>({ok:true,attempted:true})};
+ const r=await h.send('resume-existing',{id:'a'},DASH);assert.match(r.error,/submission may already have occurred/);
+ assert.equal(h.shared.store.records.a.attempted,true);assert.equal(h.shared.store.records.a.phase,'verifying');assert.equal(h.fills().length,0);
 });

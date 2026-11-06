@@ -6,6 +6,14 @@ export function pickResumeField(fields){
  if(fields.length===1&&!/cover[ _-]?letter|portfolio|certificate/i.test(candidates[0].label))return 0;
  return -1;
 }
+// The link that opens a native-board job. A regional Indeed site (for example
+// ca.indeed.com) is kept so the applicant lands on their own site; tracking
+// parameters are dropped. Identity and duplicates use canonicalJobURL.
+export function nativeOpenURL(value){
+ const canonical=canonicalJobURL(value),u=new URL(value);
+ if(canonical.startsWith('https://www.indeed.com/viewjob?jk=')&&/^[a-z]{2}\.indeed\.com$/.test(u.hostname))return 'https://'+u.hostname+'/viewjob?jk='+canonical.split('jk=')[1];
+ return canonical;
+}
 export function canonicalJobURL(value){
  const u=new URL(value);if(u.protocol!=='https:')throw Error('Use an HTTPS job link');u.hash='';
  // Native board jobs keep only the board's own job id, so a tracked job and

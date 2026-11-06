@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ApplyPilot Local",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "Prepare supported application fields, including LinkedIn Easy Apply and Indeed Apply, from your saved facts.",
   "minimum_chrome_version": "120",
   "permissions": [

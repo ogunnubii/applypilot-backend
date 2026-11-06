@@ -21,12 +21,12 @@ test('LinkedIn results: Easy Apply cards only, one click, canonical job ids',asy
   assert.match(h.w.document.querySelector('[data-applypilot-import] [role="status"]').textContent,/Added 1.*skipped 2/);
  }finally{h.w.close();}
 });
-test('Indeed results: Indeed Apply ("Easily apply") cards only',async()=>{
+test('Indeed results: Indeed Apply ("Easily apply") cards only, keeping the regional site',async()=>{
  const h=load(`<div class="job_seen_beacon"><h2 class="jobTitle"><a data-jk="0123456789abcdef"><span title="DevOps Engineer">DevOps Engineer</span></a></h2><span data-testid="company-name">Hooli</span><div data-testid="text-location">Remote in Canada</div><span>Easily apply</span></div>
   <div class="job_seen_beacon"><h2 class="jobTitle"><a data-jk="fedcba9876543210"><span title="SRE">SRE</span></a></h2><span data-testid="company-name">Initech</span></div>`,'https://ca.indeed.com/jobs?q=devops&l=Remote');
  try{
   assert.equal(h.button().textContent,'Add 1 Indeed Apply job to ApplyPilot');h.button().click();await new Promise(r=>setTimeout(r,20));
-  assert.deepEqual(JSON.parse(JSON.stringify(h.messages[0].jobs)),[{url:'https://www.indeed.com/viewjob?jk=0123456789abcdef',title:'DevOps Engineer',company:'Hooli',location:'Remote in Canada'}]);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.messages[0].jobs)),[{url:'https://ca.indeed.com/viewjob?jk=0123456789abcdef',title:'DevOps Engineer',company:'Hooli',location:'Remote in Canada'}]);
  }finally{h.w.close();}
 });
 test('a page without job cards shows nothing',()=>{

@@ -35,7 +35,8 @@ async function run({url=JOB,autonomous=true,posting={eligible:true},fixture={},m
  if(!w.crypto?.randomUUID)Object.defineProperty(w,'crypto',{value:require('node:crypto').webcrypto});
  let attempted=false;
  const packet={job:{id:'j',title:'Senior Site Reliability Engineer',company:'Acme Cloud',url:JOB,attempted:false},profile:{phone:'+1 416 555 0100',location:'Thornhill, Ontario, Canada'},answers:{},savedFactsAvailable:true,aiAssistance:false,autonomousSubmit:autonomous,prepareSteps:true,autofillOnly:!autonomous,nativeBoard:'linkedin'};
- w.chrome={runtime:{onMessage:{addListener(){}},async sendMessage(m){messages.push(structuredClone(m));
+ const listeners=[];
+ w.chrome={runtime:{onMessage:{addListener(fn){listeners.push(fn);}},async sendMessage(m){messages.push(structuredClone(m));
   if(m.action==='packet')return {ok:true,data:packet};
   if(m.action==='state')return {ok:true,data:{automatic:true,attempted,autonomousSubmit:autonomous,prepareSteps:true,autofillOnly:!autonomous,refreshEnabled:true}};
   if(m.action==='listing-role')return {ok:true,data:{inspect}};
@@ -45,7 +46,8 @@ async function run({url=JOB,autonomous=true,posting={eligible:true},fixture={},m
   return {ok:true,data:{}};}}};
  if(!markup)installModal(w,{question:'City',receipt:'Your application was sent to Acme Cloud!',...fixture},log);
  w.eval(read('extension/policy.js'));w.eval(read('extension/content.js'));
- return {w,messages,log,done:async(pred,ms=6000)=>{const end=Date.now()+ms;while(Date.now()<end&&!pred())await new Promise(r=>setTimeout(r,20));}};
+ const tell=m=>new Promise(resolve=>{let done=false;for(const fn of listeners)if(fn(m,{},r=>{done=true;resolve(r);})!==true&&!done)resolve(undefined);});
+ return {w,messages,log,tell,done:async(pred,ms=6000)=>{const end=Date.now()+ms;while(Date.now()<end&&!pred())await new Promise(r=>setTimeout(r,20));}};
 }
 
 test('LinkedIn Easy Apply: posting checked first, saved facts fill each step, one reserved Submit, employer-specific receipt',{timeout:15000},async()=>{
@@ -160,4 +162,76 @@ test('read-only listing check: a board verification page reports the limit inste
 test('a tab the helper did not open for a listing check runs the normal bound flow',{timeout:15000},async()=>{
  const h=await run();
  try{await h.done(()=>h.messages.some(m=>m.action==='posting'));assert(h.messages.some(m=>m.action==='packet'));assert(!h.messages.some(m=>m.action==='listing-check'));}finally{h.w.close();}
+});
+
+const CHALLENGE='<main><h1>Let\'s do a quick security check</h1>\n<p>Verify you are human to continue.</p>\n<div class="g-recaptcha"></div></main>';
+test('Continue after a solved challenge rechecks the live page: no posting check ran on the challenge, a fresh one runs now',{timeout:15000},async()=>{
+ const h=await run({autonomous:false,markup:CHALLENGE});
+ try{
+  await h.done(()=>h.messages.some(m=>m.action==='progress'&&m.blocked));
+  assert.equal(h.messages.filter(m=>m.action==='posting').length,0,'a challenge page is never assessed as the posting');
+  assert.match(h.messages.find(m=>m.action==='progress'&&m.blocked).message,/security verification|CAPTCHA|verify/i);
+  assert.match((await h.tell({action:'preparation-status'})).challenge,/verif|CAPTCHA/i,'status reads the live challenge');
+  // The applicant completes the challenge; the job page is now shown.
+  h.w.document.body.innerHTML=linkedinPage();installModal(h.w,{question:'City',receipt:'Your application was sent to Acme Cloud!'},h.log);
+  assert.equal((await h.tell({action:'preparation-status'})).challenge,'','solved: nothing stale reported');
+  await h.tell({action:'fill'});await h.done(()=>h.messages.some(m=>m.action==='step'));
+  const posting=h.messages.filter(m=>m.action==='posting');assert.equal(posting.length,1);assert.equal(posting[0].title,'Senior Site Reliability Engineer');
+  assert(h.messages.findIndex(m=>m.action==='posting')<h.messages.findIndex(m=>m.action==='step'),'fresh posting check before the form opens');
+  assert(!h.log.includes('submit'),'prepare-only: never submitted');assert.equal(h.messages.filter(m=>m.action==='attempt').length,0);
+ }finally{h.w.close();}
+});
+test('Continue while the challenge is still shown stays paused: no posting, no form, no click',{timeout:15000},async()=>{
+ const h=await run({markup:CHALLENGE});
+ try{
+  await h.done(()=>h.messages.some(m=>m.action==='progress'&&m.blocked));
+  await h.tell({action:'fill'});await new Promise(r=>setTimeout(r,400));
+  assert.equal(h.messages.filter(m=>['posting','step','attempt'].includes(m.action)).length,0);assert.deepEqual(h.log,[]);
+  assert.match((await h.tell({action:'preparation-status'})).challenge,/verif|CAPTCHA/i);
+ }finally{h.w.close();}
+});
+test('current LinkedIn job header: title, company, location, workplace pill, posted and applicants',{timeout:15000},async()=>{
+ const markup=`<main><div class="job-details-jobs-unified-top-card__container--two-pane">
+ <div class="job-details-jobs-unified-top-card__company-name"><a href="/company/acme">Acme Cloud</a></div>
+ <div class="job-details-jobs-unified-top-card__job-title"><h1><a href="/jobs/view/4012345678/">Site Reliability Engineer</a></h1></div>
+ <div class="job-details-jobs-unified-top-card__tertiary-description-container"><span class="tvm__text tvm__text--low-emphasis">Canada</span>
+ <span class="tvm__text"> · </span><span class="tvm__text">Reposted 3 days ago</span>
+ <span class="tvm__text"> · </span><span class="tvm__text">Over 100 people clicked apply</span></div>
+ <div class="job-details-fit-level-preferences"><button><span><strong>Remote</strong></span></button>
+ <button><span><strong>Full-time</strong></span></button></div>
+ <button id="jobs-apply-button-id" class="jobs-apply-button" aria-label="Easy Apply to Site Reliability Engineer at Acme Cloud"><span>Easy Apply</span></button></div>
+ <div id="job-details">Remote within Canada. B2B contract.</div>
+ <section class="similar-jobs"><span>Hybrid</span><span>On-site</span></section></main>`;
+ const h=await run({inspect:true,markup});
+ try{
+  await h.done(()=>h.messages.some(m=>m.action==='listing-check'));const p=h.messages.find(m=>m.action==='listing-check');
+  assert.equal(p.title,'Site Reliability Engineer');assert.equal(p.company,'Acme Cloud');assert.equal(p.location,'Canada');assert.equal(p.workplace,'remote','header pill, not the similar-jobs list');
+  assert.match(p.postedText,/3 days ago/);assert.match(p.applicantsText,/100 people clicked apply/);assert.equal(p.nativeApply,true);
+ }finally{h.w.close();}
+});
+test('Canadian Indeed: a SmartApply anchor for this job is the Indeed Apply control; another job\'s anchor is not',{timeout:20000},async()=>{
+ const CA='https://ca.indeed.com/viewjob?jk=0123456789abcdef&from=serp';
+ const page=anchor=>`<main><div data-testid="jobsearch-JobInfoHeader-title-container"><h1 data-testid="jobsearch-JobInfoHeader-title">Site Reliability Engineer - job post</h1>
+ <div data-testid="inlineHeader-companyName"><a>Acme Cloud</a></div>
+ <div data-testid="inlineHeader-companyLocation">Remote</div></div>
+ <div id="jobDescriptionText">Remote within Canada. B2B contract with an incorporated consultant.</div>
+ ${anchor}<aside class="other-jobs"><a href="https://smartapply.indeed.com/beta/indeedapply/form/contact-info?jk=fedcba9876543210">Apply now</a></aside></main>`;
+ const own='<div id="applyButtonLinkContainer"><a href="https://smartapply.indeed.com/beta/indeedapply/form/contact-info?jk=0123456789ABCDEF&amp;from=viewjob" target="_blank" aria-label="Apply now (opens in a new tab)">Apply now</a></div>';
+ for(const [anchor,expected] of [[own,true],['',false]]){
+  const h=await run({inspect:true,url:CA,markup:page(anchor)});
+  try{
+   await h.done(()=>h.messages.some(m=>m.action==='listing-check'));const p=h.messages.find(m=>m.action==='listing-check');
+   assert.equal(p.url,CA,'regional page kept');assert.equal(p.title,'Site Reliability Engineer');assert.equal(p.company,'Acme Cloud');assert.equal(p.workplace,'remote');
+   assert.equal(p.nativeApply,expected,anchor?'own SmartApply anchor':'only another job\'s anchor');
+  }finally{h.w.close();}
+ }
+});
+test('regional Indeed URL keeps one canonical identity for duplicates and continuations',()=>{
+ const {JSDOM}=require('jsdom'),w=new JSDOM('',{runScripts:'outside-only'}).window;w.eval(read('extension/policy.js'));const P=w.ApplyPilotPolicy;
+ const CA='https://ca.indeed.com/viewjob?jk=0123456789ABCDEF&from=serp&vjs=3',WWW='https://www.indeed.com/viewjob?jk=0123456789abcdef';
+ assert.equal(P.identity(CA),WWW);assert.equal(P.sameApplication(CA,WWW),true);assert.equal(P.nativeBoard(CA),'indeed');
+ assert.equal(P.continuationOf('https://smartapply.indeed.com/beta/indeedapply/form/questions?jk=0123456789abcdef',CA),true);
+ assert.equal(P.continuationOf('https://smartapply.indeed.com/beta/indeedapply/form/questions?jk=fedcba9876543210',CA),false);
+ assert.equal(P.sameApplication('https://uk.indeed.com/viewjob?jk=0123456789abcdef',CA),true,'same job id on any regional site is one job');
+ w.close();
 });

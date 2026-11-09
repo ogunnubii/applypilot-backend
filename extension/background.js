@@ -16,7 +16,7 @@ async function trustedDashboard(sender){
  let origin;try{origin=new URL(sender.url).origin;}catch{return false;}
  return HOSTED_DASHBOARDS.includes(origin)||origin===environmentFor(await read()).origin;
 }
-const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','localPort','error','automaticDefault','userPaused','listing','listingBackoff','listingOpens','listingCooldown'])});
+const read=async()=>({records:{},queue:[],enabled:false,...await chrome.storage.local.get(['records','queue','enabled','device','environment','localPort','error','automaticDefault','userPaused','listing','listingBackoff','listingOpens','listingCooldown','presentReady'])});
 let responsiveDashboardId;
 // LinkedIn/Indeed pacing for automatic openings. Conservative fixed limits;
 // a board-reported limit pauses that board far longer (see site-error).
@@ -80,6 +80,35 @@ async function readyJobs(onlyId){
   }catch{unavailable++;}
  }
  return {...data,jobs,unavailable};
+}
+// Bring a filled form to the front for the applicant's own Submit. Focus only:
+// the exact tab is re-probed first, and nothing is clicked, filled or submitted.
+// One form at a time, each once, so Chrome never keeps jumping between tabs.
+async function presentReady(id){
+ const s=await read(),record=s.records[id];
+ if(s.presentReady===false||s.userPaused||!record||record.phase!=='prepared'||record.attempted||record.presentedAt)return {presented:false};
+ for(const other of Object.values(s.records)){
+  if(other.id===id||other.phase!=='prepared'||!other.presentedAt||other.attempted)continue;
+  const open=await chrome.tabs.get(recordTabId(other)).catch(()=>null);
+  if(tabHolds(open,other))return {presented:false,reason:'waiting'};
+ }
+ const tab=Number.isInteger(recordTabId(record))?await chrome.tabs.get(recordTabId(record)).catch(()=>null):null;
+ if(!tabHolds(tab,record))return {presented:false,reason:'tab'};
+ if(!Number.isInteger(record.flowTabId)&&(await chrome.tabs.query({})).filter(t=>P.sameApplication(t.url,record.url)).length!==1)return {presented:false,reason:'duplicates'};
+ const live=await probeForm(record);
+ if(!live?.readyForSubmit||!live.started||live.busy||live.attempted||live.jobId!==id||!P.boundApplication?.(live.url,record.url))return {presented:false,reason:'not-ready'};
+ const latest=(await read()).records[id];
+ if(!latest||latest.phase!=='prepared'||latest.attempted||latest.presentedAt)return {presented:false};
+ latest.presentedAt=Date.now();await saveRecord(latest);
+ await chrome.tabs.update(tab.id,{active:true});
+ if(Number.isInteger(tab.windowId))await chrome.windows.update(tab.windowId,{focused:true,drawAttention:true}).catch(()=>{});
+ return {presented:true};
+}
+async function presentNextReady(){
+ const s=await read();
+ if(s.presentReady===false||s.userPaused)return;
+ const next=Object.values(s.records).filter(r=>r.phase==='prepared'&&!r.presentedAt&&!r.attempted).sort((a,b)=>(a.touched||0)-(b.touched||0));
+ for(const record of next)if((await presentReady(record.id).catch(()=>({}))).presented||(await read()).records[record.id]?.presentedAt)return;
 }
 async function reviewPrepared(id){
  if(typeof id!=='string'||!/^[-a-f0-9]{36}$/.test(id))throw Error('Choose a prepared application.');
@@ -276,6 +305,7 @@ async function tick(){
  await retryReceipts();
 
  await followAutopilot();
+ await presentNextReady().catch(()=>{});
  const s=await read();if(!s.enabled||s.userPaused)return;
  const active=Object.values(s.records).find(r=>r.auto&&['ready','verifying'].includes(r.phase));
  if(active){
@@ -380,6 +410,7 @@ async function handle(m,sender){
   }
   if(m.action==='funnel'){const s=await read();return chrome.tabs.create({url:environmentFor(s).dashboard+'?view=funnel'});}
   if(m.action==='dashboard'){const s=await read();return chrome.tabs.create({url:environmentFor(s).dashboard});}
+  if(m.action==='present-ready'){if(typeof m.value!=='boolean')throw Error('Choose on or off.');await chrome.storage.local.set({presentReady:m.value});return {presentReady:m.value};}
   if(m.action==='environment'){
    if(!['hosted','local'].includes(m.value))throw Error('Unknown environment');
    const port=m.port===undefined?undefined:Number(m.port);
@@ -455,8 +486,8 @@ async function handle(m,sender){
  }
  if(m.action==='progress'){
   if(Number(m.filled)>0){b.formTouched=true;b.safeInitialLoad=false;b.siteRetryAt=0;}
-  b.touched=Date.now();b.interrupted=false;if(m.blocked){b.phase=m.readyForSubmit===true?'prepared':'blocked';b.auto=false;}await saveRecord(b);
-  const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,step:Number.isInteger(m.step)?m.step:undefined,filled:m.filled,progress:m.progress,formLanguage:m.formLanguage,readyForSubmit:m.readyForSubmit===true,url:sender.url});if(m.blocked)await tick();return result;
+  b.touched=Date.now();b.interrupted=false;if(m.blocked){const phase=m.readyForSubmit===true?'prepared':'blocked';if(phase!=='prepared'||b.phase!=='prepared')b.presentedAt=0;b.phase=phase;b.auto=false;}await saveRecord(b);
+  const result=await api('/jobs/'+b.id+'/local/progress','POST',{fields:m.fields,message:m.message,blocked:m.blocked,step:Number.isInteger(m.step)?m.step:undefined,filled:m.filled,progress:m.progress,formLanguage:m.formLanguage,readyForSubmit:m.readyForSubmit===true,url:sender.url});if(m.blocked){await tick();if(m.readyForSubmit===true)await presentReady(b.id).catch(()=>{});}return result;
  }
  if(m.action==='capture')return api('/jobs/'+b.id+'/local/capture','POST',{fields:m.fields});
  if(m.action==='autosave'){if(typeof m.question!=='string'||typeof m.answer!=='string'||!m.answer.trim()||m.answer.length>4000||P.sensitive(m.question)||/password|one.?time|verification code|captcha|API key|access token/i.test(m.question))throw Error('This answer cannot be saved automatically.');b.pendingAnswers=b.pendingAnswers||{};Object.defineProperty(b.pendingAnswers,m.question,{value:{answer:m.answer.trim(),resume:m.resume===true},enumerable:true,configurable:true,writable:true});await saveRecord(b);return flushAnswerOutbox(b);}

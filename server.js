@@ -220,7 +220,7 @@ const continuationCheck=job=>employerHold(db,job)?.message||(researchConsentWith
 if(path==='/api/answers-inbox'&&req.method==='GET')return send(res,200,answersInbox(db,uid));
 if(path==='/api/answers-inbox/answer'&&req.method==='POST'){
  let x;try{x=JSON.parse(await body(req));}catch{return send(res,400,{error:'Invalid answer request'});}
- try{return send(res,200,saveInboxAnswer(db,uid,String(x?.jobId||''),{question:x?.question,answer:x?.answer,remember:x?.remember===true,formKey:x?.formKey,check:continuationCheck}));}
+ try{return send(res,200,saveInboxAnswer(db,uid,String(x?.jobId||''),{question:x?.question,answer:x?.answer,remember:x?.remember===true,formKey:x?.formKey,also:x?.also??[],check:continuationCheck}));}
  catch(error){return send(res,error.status||400,{error:error.message});}
 }
 if(path==='/api/continuations'&&req.method==='GET')return send(res,200,{requests:listContinuations(db,uid)});

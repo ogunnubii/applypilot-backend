@@ -139,3 +139,39 @@ test('the last browser answer queues one continuation; holds and hosted forms ne
  const left=saveInboxAnswer(db,uid,employer,{question:ADDRESS,answer:'55 Fixture Street',formKey:keyOf(employer)});
  assert.equal(left.resume.state,'employer');assert.equal(continuation(employer),undefined,'a consent on the employer page keeps the form parked');
 });
+
+test('one typed answer can be copied, by choice, to the other listed forms asking the same question',()=>{
+ const owner=randomUUID(),person=randomUUID(),STREET='Street address',WORK=WHY;
+ db.prepare('INSERT INTO users VALUES(?,?,?,?)').run(owner,'copy@example.test','x','2026');
+ db.prepare("INSERT INTO applicants(id,user_id,name,email,resume_path,answers_json,consent,created_at) VALUES(?,?,'Copy Person','copy@example.test','/tmp/copy.pdf','{}',1,'2026')").run(person,owner);
+ const mine=extra=>job({user:owner,applicant:person,...extra});
+ const a=mine({questions:[STREET,WORK]}),b=mine({questions:['street address *']}),hosted=mine({status:'paused',phase:'ready',questions:[STREET]});
+ const busy=mine({questions:[STREET]});db.prepare('INSERT INTO answer_save_state(job_id,question,editing) VALUES(?,?,1)').run(busy,STREET);
+ const changed=mine({questions:[STREET]}),strangerJob=job({questions:[STREET]});
+ const list=answersInbox(db,owner),entry=list.jobs.find(j=>j.id===a),street=entry.questions.find(q=>q.question===STREET);
+ assert.deepEqual(street.elsewhere.map(o=>o.id).sort(),[b,hosted,changed].sort(),'a form being edited in its tab is not offered');
+ assert.equal(entry.questions.find(q=>q.question===WORK).elsewhere,undefined,'employer-specific questions are never offered for copying');
+ const key=id=>list.jobs.find(j=>j.id===id).formKey;
+
+ const before=row(a).answers_json;
+ assert.throws(()=>saveInboxAnswer(db,owner,a,{question:WORK,answer:'Fixture reason',formKey:key(a),also:[{id:b,formKey:key(b)}]}),/specific to one application/);
+ assert.equal(row(a).answers_json,before,'a refused copy writes nothing, not even the first form');
+ assert.throws(()=>saveInboxAnswer(db,owner,a,{question:STREET,answer:'55 Fixture Street',formKey:'stale',also:[{id:b,formKey:key(b)}]}),/form changed/);
+ assert.equal(row(b).answers_json,'{}','copies never run when the first save fails');
+
+ db.prepare('UPDATE jobs SET required_fields_json=? WHERE id=?').run(JSON.stringify([STREET,'Phone number']),changed);
+ const result=saveInboxAnswer(db,owner,a,{question:STREET,answer:'55 Fixture Street',formKey:key(a),also:[b,hosted,changed,busy,strangerJob].map(id=>({id,formKey:id===strangerJob?'x':id===busy?'busy':key(id)}))});
+ assert.equal(JSON.parse(row(a).answers_json)[STREET],'55 Fixture Street');
+ assert.equal(JSON.parse(row(b).answers_json)['street address *'],'55 Fixture Street','each form stores the copy under its own question wording');
+ assert.equal(JSON.parse(row(hosted).answers_json)[STREET],'55 Fixture Street');
+ assert.equal(row(hosted).status,'paused','a copy never restarts a paused form');
+ const by=Object.fromEntries(result.also.map(c=>[c.id,c]));
+ assert.equal(by[b].saved,true);assert.equal(by[b].resume.state,'queued');assert.equal(continuation(b),'queued');
+ assert.equal(by[hosted].saved,true);assert.equal(by[hosted].resume.state,'manual');
+ assert.equal(by[changed].saved,false);assert.match(by[changed].message,/form changed/);assert.equal(row(changed).answers_json,'{}');
+ assert.equal(by[busy].saved,false);assert.equal(row(busy).answers_json,'{}');
+ assert.equal(by[strangerJob].saved,false);assert.equal(by[strangerJob].message,'Application not found.');assert.equal(row(strangerJob).answers_json,'{}');
+ assert.equal(JSON.parse(db.prepare('SELECT answers_json FROM applicants WHERE id=?').get(person).answers_json)[STREET],undefined,'copies never become a profile fact');
+ assert.match(db.prepare("SELECT message FROM events WHERE job_id=? AND type='answer_saved'").get(b).message,/chose to use the same typed answer/);
+ assert.throws(()=>saveInboxAnswer(db,owner,a,{question:WORK,answer:'x',formKey:key(a),also:Array.from({length:21},(_,i)=>({id:'j'+i,formKey:'k'}))}),/up to 20/);
+});

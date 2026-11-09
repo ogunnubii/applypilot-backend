@@ -54,6 +54,7 @@ test('answers inbox and connection status over the real local server',{timeout:4
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(job).status,'local_browser');
   assert(!db.prepare('SELECT 1 FROM continuation_requests WHERE job_id=?').get(job),'a form with an employer-page question stays parked');
   assert.equal((await post({jobId:job,question:'Mailing address',answer:'overwrite',formKey})).status,409,'a saved answer is never overwritten from a stale list');
+  assert.equal((await post({jobId:job,question:'Mailing address',answer:'x',formKey,also:'not a list'})).status,400,'a malformed copy list is refused');
 
   const status=await api('/api/status',{token});
   assert.equal(status.status,200);assert.equal(status.data.workerOnline,false,'existing field unchanged');

@@ -29,13 +29,24 @@
   let reuse=null;
   if(item.reuse){const wrap=node('label','','display:block;margin:6px 0;font-size:13px');reuse=node('input');reuse.type='checkbox';wrap.append(reuse,document.createTextNode(' Use this answer for future applications'));row.append(wrap);}
   else row.append(node('small','Kept with this application only.','display:block;margin:6px 0;color:#59685e'));
+  // Opt-in, unticked by default: copy the same typed text to the named forms only.
+  let copy=null;const others=Array.isArray(item.elsewhere)?item.elsewhere:[];
+  if(others.length){
+   const wrap=node('label','','display:block;margin:6px 0;font-size:13px');copy=node('input');copy.type='checkbox';
+   wrap.append(copy,document.createTextNode(' Also use this answer for '+plural(others.length,'other parked form')+' asking the same question'));
+   row.append(wrap,node('small',others.map(o=>o.company+' · '+o.title).join('; '),'display:block;margin:0 0 6px 22px;color:#59685e'));
+  }
   const save=node('button','Save answer'),status=node('p','','margin:6px 0 0;font-size:13px');save.type='button';save.disabled=!!job.editing;status.setAttribute('role','status');
   save.onclick=async()=>{
    const answer=input.value.trim();if(!answer){status.textContent='Type your answer first.';return;}
    save.disabled=input.disabled=true;saving++;status.textContent='Saving…';
    try{
-    const result=await api('/answers-inbox/answer','POST',{jobId:job.id,question:item.question,answer,remember:!!reuse?.checked,formKey:job.formKey});
-    const parts=[result?.resume?.message||'Answer saved.'];
+    const also=copy?.checked?others.map(o=>({id:o.id,formKey:o.formKey})):[];
+    const result=await api('/answers-inbox/answer','POST',{jobId:job.id,question:item.question,answer,remember:!!reuse?.checked,formKey:job.formKey,also});
+    const parts=[result?.resume?.message||'Answer saved.'],copies=Array.isArray(result?.also)?result.also:[];
+    const copied=copies.filter(c=>c.saved).length,skipped=copies.filter(c=>!c.saved);
+    if(copied)parts.push('Also saved for '+plural(copied,'other form')+'.');
+    for(const c of skipped)parts.push('Not copied to '+(c.company||'one form')+': '+c.message);
     if(result?.remembered)parts.push('Kept for future applications.');
     if(result?.profileConflict)parts.push('Your profile already has a different saved answer, so it was not replaced. Review it in the answer library.');
     notice=job.company+' · '+parts.join(' ');input.dataset.dirty='false';input.blur();status.textContent=parts.join(' ');

@@ -21,6 +21,12 @@ export const inboxCanReuse=question=>typeof question==='string'&&canReuse(questi
 // Consents, declarations, demographic, credential and payment questions are
 // answered by the applicant on the employer page, never stored here.
 export const employerOnly=question=>!canCapture(question)||/^required field\s*[*?]?$/i.test(String(question).trim());
+// One typed answer may be copied, by explicit choice, to other parked forms asking
+// the same question. Each application keeps its own copy; nothing goes to the profile.
+// Employer-specific, salary, sponsorship and similar questions are never copied.
+export const canCopyAcross=question=>typeof question==='string'&&!employerOnly(question)&&canReuse(question);
+export const sameQuestionKey=question=>String(question).toLowerCase().replace(/\s+/g,' ').replace(/[\s*:?]+$/,'').trim();
+const MAX_COPIES=20;
 
 const tableExists=(db,name)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 const formKey=job=>createHash('sha256').update(JSON.stringify([job.id,job.url,job.required_fields_json])).digest('hex').slice(0,24);
@@ -61,18 +67,44 @@ export function answersInbox(db,uid){
   total+=answerable;employer+=questions.length-answerable;
   jobs.push({id:job.id,company:job.company,title:job.title,url:job.url,mode:job.status==='local_browser'?'browser':'hosted',formKey:formKey(job),editing:editing(db,job.id),questions});
  }
+ // Point each copyable question at the other listed forms that ask it too.
+ for(const job of jobs)for(const item of job.questions){
+  if(item.kind!=='answer'||!canCopyAcross(item.question)||draftBacked(db,job.id,item.question))continue;
+  const key=sameQuestionKey(item.question);
+  const others=jobs.filter(other=>other.id!==job.id&&!other.editing&&other.questions.some(q=>q.kind==='answer'&&sameQuestionKey(q.question)===key)).slice(0,MAX_COPIES);
+  if(others.length)item.elsewhere=others.map(other=>({id:other.id,company:other.company,title:other.title,formKey:other.formKey}));
+ }
  return {jobs,total,employer};
 }
 
 function fail(message,status=400){const error=Error(message);error.status=status;return error;}
 
-// Save one typed answer. Optimistic checks keep a stale dashboard, a second tab
-// or a helper write from being overwritten.
-export function saveInboxAnswer(db,uid,jobId,{question,answer,remember=false,formKey:expected,check=()=>'',continueJob=requestContinuation}={}){
+// Save one typed answer, and optionally the same text for other listed forms.
+// Optimistic checks keep a stale dashboard, a second tab or a helper write from
+// being overwritten; every copy passes the same checks on its own form.
+export function saveInboxAnswer(db,uid,jobId,{question,answer,remember=false,formKey:expected,also=[],check=()=>'',continueJob=requestContinuation}={}){
  if(typeof jobId!=='string'||!jobId)throw fail('Choose an application.');
  if(typeof question!=='string'||!question.trim())throw fail('Choose a question to answer.');
  if(typeof answer!=='string'||!answer.trim()||answer.length>4000)throw fail('Enter an answer up to 4000 characters.');
- const value=answer.trim(),at=new Date().toISOString();
+ if(!Array.isArray(also)||also.length>MAX_COPIES||also.some(x=>!x||typeof x.id!=='string'||!x.id||typeof x.formKey!=='string'))throw fail('Choose up to '+MAX_COPIES+' other applications.');
+ const targets=[...new Map(also.filter(x=>x.id!==jobId).map(x=>[x.id,x])).values()];
+ if(targets.length&&!canCopyAcross(question))throw fail('This answer is specific to one application and cannot be copied to others.',400);
+ const value=answer.trim();
+ const saved=writeAnswer(db,uid,jobId,question,value,{remember,expected});
+ const copies=targets.map(target=>{
+  const job=db.prepare('SELECT company,title,required_fields_json FROM jobs WHERE id=? AND user_id=?').get(target.id,uid);
+  if(!job)return {id:target.id,saved:false,message:'Application not found.'};
+  const own=questionsOf(job).find(q=>sameQuestionKey(q)===sameQuestionKey(question));
+  if(!own)return {id:target.id,company:job.company,saved:false,message:'That question is not on this form.'};
+  try{writeAnswer(db,uid,target.id,own,value,{remember:false,expected:target.formKey,source:'copied'});}
+  catch(error){return {id:target.id,company:job.company,saved:false,message:error.message};}
+  return {id:target.id,company:job.company,saved:true,resume:resumeAfterAnswer(db,uid,target.id,{check,continueJob})};
+ });
+ return {ok:true,...saved,resume:resumeAfterAnswer(db,uid,jobId,{check,continueJob}),also:copies};
+}
+
+function writeAnswer(db,uid,jobId,question,value,{remember=false,expected,source='typed'}={}){
+ const at=new Date().toISOString();
  let remembered=false,profileConflict=false;
  db.exec('BEGIN IMMEDIATE');
  try{
@@ -82,6 +114,7 @@ export function saveInboxAnswer(db,uid,jobId,{question,answer,remember=false,for
   if(expected!==formKey(job))throw fail('This form changed since the list loaded. Refresh Answers needed.',409);
   if(!questionsOf(job).includes(question))throw fail('That question is not on this form.',409);
   if(employerOnly(question))throw fail('Answer this question yourself on the employer page.',400);
+  if(source==='copied'&&(!canCopyAcross(question)||draftBacked(db,job.id,question)))throw fail('This question on this form stays with you.',400);
   if(editing(db,job.id))throw fail('This answer is being edited in the employer tab. Finish it there first.',409);
   const answers=parse(job.answers_json,{});
   if(!answers||typeof answers!=='object'||Array.isArray(answers))throw fail('Saved answers for this application could not be read.',409);
@@ -98,10 +131,10 @@ export function saveInboxAnswer(db,uid,jobId,{question,answer,remember=false,for
    else if(String(facts[question]??'').trim()&&String(facts[question]).trim()!==value)profileConflict=true;
    else{Object.defineProperty(facts,question,{value,enumerable:true,configurable:true,writable:true});db.prepare('UPDATE applicants SET answers_json=? WHERE id=? AND user_id=?').run(JSON.stringify(facts),job.applicant_id,uid);remembered=true;}
   }
-  db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(job.id,at,'answer_saved',remembered?'Saved from Answers needed and kept for future applications':'Saved from Answers needed for this application only');
+  db.prepare('INSERT INTO events(job_id,at,type,message) VALUES(?,?,?,?)').run(job.id,at,'answer_saved',source==='copied'?'Saved from Answers needed: the applicant chose to use the same typed answer for this application':remembered?'Saved from Answers needed and kept for future applications':'Saved from Answers needed for this application only');
   db.exec('COMMIT');
  }catch(error){db.exec('ROLLBACK');throw error;}
- return {ok:true,remembered,profileConflict,resume:resumeAfterAnswer(db,uid,jobId,{check,continueJob})};
+ return {remembered,profileConflict};
 }
 
 // After the last answer, a browser form joins the existing continuation queue,

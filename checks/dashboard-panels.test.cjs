@@ -54,7 +54,7 @@ test('saving posts exactly the typed answer, scoped unless reuse is ticked',asyn
  assert.equal(calls.length,1,'an empty answer is never sent');
  address.value='  55 Fixture Street ';address.dispatchEvent(new w.Event('input'));
  saveAddress.click();await new Promise(r=>setTimeout(r,0));
- assert.deepEqual(JSON.parse(JSON.stringify(calls[1])),{url:'/answers-inbox/answer',method:'POST',data:{jobId:'job-a',question:'Mailing address',answer:'55 Fixture Street',remember:false,formKey:'key-a'}});
+ assert.deepEqual(JSON.parse(JSON.stringify(calls[1])),{url:'/answers-inbox/answer',method:'POST',data:{jobId:'job-a',question:'Mailing address',answer:'55 Fixture Street',remember:false,formKey:'key-a',also:[]}});
  assert.equal(refreshed,1);
  years.value='5';years.dispatchEvent(new w.Event('input'));d.querySelector('#answers-needed input[type=checkbox]').checked=true;
  saveYears.click();await new Promise(r=>setTimeout(r,0));
@@ -86,4 +86,22 @@ test('the dashboard loads the panels before its own script and calls them on ref
  const html=fs.readFileSync(path.join(root,'assistant-page.html'),'utf8'),client=fs.readFileSync(path.join(root,'assistant-client.js'),'utf8');
  assert(html.indexOf('src="/dashboard-panels.js"')>0&&html.indexOf('src="/dashboard-panels.js"')<html.indexOf('src="/assistant.js"'));
  assert.match(client,/globalThis\.ApplyPilotPanels\?\.update\(\{api,place:placeWorkspacePanel,refresh:\(\)=>refresh\(true\),connection:health\.connection\}\)/);
+});
+
+test('copying to other forms is opt-in, names each form and reports what was skipped',async()=>{
+ const {window:w}=page(),d=w.document,calls=[];
+ const data={total:1,employer:0,jobs:[{id:'job-a',company:'Fixture Labs',title:'Platform Engineer',url:'https://jobs.lever.co/fixture/a',formKey:'key-a',editing:false,questions:[
+  {question:'Street address',kind:'answer',reuse:false,elsewhere:[{id:'job-b',company:'Second Fixture',title:'SRE',formKey:'key-b'},{id:'job-c',company:'<i>Third</i>',title:'DevOps',formKey:'key-c'}]}]}]};
+ const api=async(url,method,body)=>{calls.push(JSON.parse(JSON.stringify({url,method,body})));return url==='/answers-inbox'?data:{ok:true,resume:{state:'queued',message:'Answers saved.'},also:[{id:'job-b',company:'Second Fixture',saved:true},{id:'job-c',company:'<i>Third</i>',saved:false,message:'This form changed since the list loaded. Refresh Answers needed.'}]};};
+ await w.ApplyPilotPanels.update({api});
+ const box=d.querySelector('#answers-needed'),[copy]=box.querySelectorAll('input[type=checkbox]');
+ assert.equal(copy.checked,false,'unticked by default');
+ assert.match(box.textContent,/Also use this answer for 2 other parked forms asking the same question/);
+ assert.match(box.textContent,/Second Fixture · SRE; <i>Third<\/i> · DevOps/);assert.equal(box.querySelector('i'),null);
+ const input=box.querySelector('textarea'),save=box.querySelector('button');
+ input.value='55 Fixture Street';input.dispatchEvent(new w.Event('input'));save.click();await new Promise(r=>setTimeout(r,0));
+ assert.deepEqual(calls[1].body.also,[],'nothing is copied unless chosen');
+ input.disabled=false;save.disabled=false;copy.checked=true;save.click();await new Promise(r=>setTimeout(r,0));
+ assert.deepEqual(calls[2].body.also,[{id:'job-b',formKey:'key-b'},{id:'job-c',formKey:'key-c'}]);
+ assert.match(save.nextElementSibling.textContent,/Also saved for 1 other form\. Not copied to <i>Third<\/i>: This form changed/);
 });

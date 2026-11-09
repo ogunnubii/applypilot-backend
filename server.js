@@ -57,6 +57,8 @@ import {installAccounts,allowAuthAttempt,authClientAddress,normalizeEmail,create
 installAccounts(db);authClientAddress({socket:{},headers:{}});
 import {parseBoards,parseIntent,profileSearchInstruction,runSearch,SEARCH_INTERVAL_SECONDS} from './discovery.js';
 import {resumeRoles,resumeText} from './resume.js';
+import {answersInbox,saveInboxAnswer} from './answers-inbox.js';
+import {connectionStatus} from './connection-status.js';
 installNotifications(db);installLibrary(db);installDrafts(db);installResearch(db);db.exec('CREATE TABLE IF NOT EXISTS work_focus(user_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,job_id TEXT)');
 installArchive(db);installLanguagePolicy(db);installManualSubmitRecords(db);installContinuations(db);installPublicFill(db);installResumeEditor(db);installSavedRecovery(db);installReceiptSync(db);installCoverLetters(db);
 installFunnel(db);let funnelBusy=false;async function funnelTick(){if(funnelBusy)return;funnelBusy=true;try{await processFunnel(db);}catch(error){console.error('Job funnel:',error.message);}finally{funnelBusy=false}}
@@ -104,6 +106,7 @@ const allowedOrigins=new Set([origin,process.env.SERVICE_ORIGIN,'https://applypi
 createServer(async(req,res)=>{res.setHeader('x-robots-tag','noindex, nofollow');res.setHeader('referrer-policy','no-referrer');res.setHeader('x-content-type-options','nosniff');const requestOrigin=req.headers.origin;if(requestOrigin&&!allowedOrigins.has(requestOrigin))return send(res,403,{error:'Origin not allowed'});res.setHeader('access-control-allow-origin',requestOrigin||origin);res.setHeader('vary','Origin');res.setHeader('access-control-allow-headers','authorization,content-type,x-applypilot-device');res.setHeader('access-control-allow-methods','GET,POST,PUT,DELETE,OPTIONS');if(req.method==='OPTIONS'){res.writeHead(204);res.end();return}
 try{let path=new URL(req.url,'http://localhost').pathname;if(await servePublicSite(req,res))return;if(req.method==='GET'&&['/assistant','/signup','/login','/assistant.js'].includes(path)){res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'"});res.end(await readFile(new URL(path.endsWith('.js')?'./assistant-client.js':'./assistant-page.html',import.meta.url)));return;}
 if(req.method==='GET'&&path==='/form-policy.js'){res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./extension/policy.js',import.meta.url)));return;}
+if(req.method==='GET'&&path==='/dashboard-panels.js'){res.writeHead(200,{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(await readFile(new URL('./web/dashboard-panels.js',import.meta.url)));return;}
 if(req.method==='GET'&&['/preparation-handoff','/preparation-handoff.js'].includes(path)){
  res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});res.end(await readFile(new URL(path.endsWith('.js')?'./web/preparation-handoff.js':'./web/preparation-handoff.html',import.meta.url)));return;
 }
@@ -212,8 +215,14 @@ if(path==='/api/preparation-campaign'&&['GET','POST','PUT'].includes(req.method)
  }catch(error){return send(res,409,{error:error.message});}
 }
 if(path==='/api/chat'&&req.method==='POST')return send(res,200,await chat(uid,JSON.parse(await body(req))));
-if(path==='/api/status'&&req.method==='GET'){const heartbeat=db.prepare('SELECT heartbeat FROM worker_status WHERE id=1').get()?.heartbeat;return send(res,200,{workerOnline:!!heartbeat&&Date.now()-Date.parse(heartbeat)<45000,heartbeat:heartbeat||null,queue:db.prepare("SELECT status,COUNT(*) AS count FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived') GROUP BY status").all(uid)});}
+if(path==='/api/status'&&req.method==='GET'){const heartbeat=db.prepare('SELECT heartbeat FROM worker_status WHERE id=1').get()?.heartbeat;return send(res,200,{workerOnline:!!heartbeat&&Date.now()-Date.parse(heartbeat)<45000,heartbeat:heartbeat||null,queue:db.prepare("SELECT status,COUNT(*) AS count FROM jobs WHERE user_id=? AND status NOT IN ('duplicate','archived') GROUP BY status").all(uid),connection:connectionStatus(db,uid)});}
 const continuationCheck=job=>employerHold(db,job)?.message||(researchConsentWithdrawn(db,job.id,job.applicant_id)?'Drafting consent changed. Review saved answers before continuing.':'');
+if(path==='/api/answers-inbox'&&req.method==='GET')return send(res,200,answersInbox(db,uid));
+if(path==='/api/answers-inbox/answer'&&req.method==='POST'){
+ let x;try{x=JSON.parse(await body(req));}catch{return send(res,400,{error:'Invalid answer request'});}
+ try{return send(res,200,saveInboxAnswer(db,uid,String(x?.jobId||''),{question:x?.question,answer:x?.answer,remember:x?.remember===true,formKey:x?.formKey,check:continuationCheck}));}
+ catch(error){return send(res,error.status||400,{error:error.message});}
+}
 if(path==='/api/continuations'&&req.method==='GET')return send(res,200,{requests:listContinuations(db,uid)});
 if(path==='/api/continuations/claim'&&req.method==='POST')return send(res,200,{request:claimContinuation(db,uid,continuationCheck)});
 const continuationRoute=path.match(/^\/api\/jobs\/([a-f0-9-]+)\/continuation$/);
